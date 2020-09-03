@@ -17,21 +17,28 @@
  */
 package org.apache.ambari.server.checks;
 
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 
+import org.apache.ambari.annotations.UpgradeCheckInfo;
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.controller.PrereqCheckRequest;
 import org.apache.ambari.server.orm.entities.HostVersionEntity;
-import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
-import org.apache.ambari.server.orm.entities.StackEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.MaintenanceState;
 import org.apache.ambari.server.state.RepositoryVersionState;
 import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.state.stack.PrereqCheckStatus;
-import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.spi.RepositoryVersion;
+import org.apache.ambari.spi.upgrade.UpgradeCheckDescription;
+import org.apache.ambari.spi.upgrade.UpgradeCheckGroup;
+import org.apache.ambari.spi.upgrade.UpgradeCheckRequest;
+import org.apache.ambari.spi.upgrade.UpgradeCheckResult;
+import org.apache.ambari.spi.upgrade.UpgradeCheckStatus;
+import org.apache.ambari.spi.upgrade.UpgradeCheckType;
+import org.apache.ambari.spi.upgrade.UpgradeType;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.inject.Singleton;
 
 /**
@@ -41,30 +48,34 @@ import com.google.inject.Singleton;
  * orchstration, so no warning is required.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.REPOSITORY_VERSION, required = true)
-public class HostsRepositoryVersionCheck extends AbstractCheckDescriptor {
+@UpgradeCheckInfo(
+    group = UpgradeCheckGroup.REPOSITORY_VERSION,
+    required = { UpgradeType.ROLLING, UpgradeType.NON_ROLLING, UpgradeType.HOST_ORDERED })
+public class HostsRepositoryVersionCheck extends ClusterCheck {
 
-  static final String KEY_NO_REPO_VERSION = "no_repo_version";
+  static final UpgradeCheckDescription HOSTS_REPOSITORY_VERSION = new UpgradeCheckDescription("HOSTS_REPOSITORY_VERSION",
+      UpgradeCheckType.HOST,
+      "All hosts should have target version installed",
+      new ImmutableMap.Builder<String, String>()
+        .put(UpgradeCheckDescription.DEFAULT,
+            "The following hosts must have version {{version}} installed: {{fails}}.").build());
+
 
   /**
    * Constructor.
    */
   public HostsRepositoryVersionCheck() {
-    super(CheckDescription.HOSTS_REPOSITORY_VERSION);
+    super(HOSTS_REPOSITORY_VERSION);
   }
 
   @Override
-  public boolean isApplicable(PrereqCheckRequest request) throws AmbariException {
-    return super.isApplicable(request) && request.getRepositoryVersion() != null;
-  }
-
-  @Override
-  public void perform(PrerequisiteCheck prerequisiteCheck, PrereqCheckRequest request)
+  public UpgradeCheckResult perform(UpgradeCheckRequest request)
       throws AmbariException {
+    UpgradeCheckResult result = new UpgradeCheckResult(this);
+
     final String clusterName = request.getClusterName();
     final Cluster cluster = clustersProvider.get().getCluster(clusterName);
     final Map<String, Host> clusterHosts = clustersProvider.get().getHostsForCluster(clusterName);
-    final StackId stackId = cluster.getDesiredStackVersion();
 
     for (Host host : clusterHosts.values()) {
       // hosts in MM will produce a warning if they do not have the repo version
@@ -73,47 +84,30 @@ public class HostsRepositoryVersionCheck extends AbstractCheckDescriptor {
         continue;
       }
 
-      if (null != request.getRepositoryVersion()) {
-        boolean found = false;
-        for (HostVersionEntity hve : hostVersionDaoProvider.get().findByHost(host.getHostName())) {
+      RepositoryVersion repositoryVersion = request.getTargetRepositoryVersion();
+      StackId repositoryStackId = new StackId(repositoryVersion.getStackId());
 
-          if (hve.getRepositoryVersion().getVersion().equals(request.getRepositoryVersion())
-              && (hve.getState() == RepositoryVersionState.INSTALLED || hve.getState() == RepositoryVersionState.NOT_REQUIRED)) {
-            found = true;
-            break;
-          }
-        }
+      // get the host version entity for this host and repository
+      final HostVersionEntity hostVersion = hostVersionDaoProvider.get().findByClusterStackVersionAndHost(
+          clusterName, repositoryStackId, repositoryVersion.getVersion(), host.getHostName());
 
-        if (!found) {
-          prerequisiteCheck.getFailedOn().add(host.getHostName());
-        }
-      } else {
-        final RepositoryVersionEntity repositoryVersion = repositoryVersionDaoProvider.get().findByStackAndVersion(
-            stackId, request.getRepositoryVersion());
-        if (repositoryVersion == null) {
-          prerequisiteCheck.setStatus(PrereqCheckStatus.FAIL);
-          prerequisiteCheck.setFailReason(
-              getFailReason(KEY_NO_REPO_VERSION, prerequisiteCheck, request));
-          prerequisiteCheck.getFailedOn().addAll(clusterHosts.keySet());
-          return;
-        }
+      // the repo needs to either be installed or not required
+      Set<RepositoryVersionState> okStates = EnumSet.of(RepositoryVersionState.INSTALLED,
+          RepositoryVersionState.NOT_REQUIRED);
 
-        StackEntity repositoryStackEntity = repositoryVersion.getStack();
-        StackId repositoryStackId = new StackId(repositoryStackEntity.getStackName(),
-            repositoryStackEntity.getStackVersion());
+      if (hostVersion == null || !okStates.contains(hostVersion.getState())) {
+        result.getFailedOn().add(host.getHostName());
 
-        final HostVersionEntity hostVersion = hostVersionDaoProvider.get().findByClusterStackVersionAndHost(
-            clusterName, repositoryStackId, repositoryVersion.getVersion(), host.getHostName());
-
-        if (hostVersion == null || hostVersion.getState() != RepositoryVersionState.INSTALLED) {
-          prerequisiteCheck.getFailedOn().add(host.getHostName());
-        }
+        result.getFailedDetail().add(
+            new HostDetail(host.getHostId(), host.getHostName()));
       }
     }
 
-    if (!prerequisiteCheck.getFailedOn().isEmpty()) {
-      prerequisiteCheck.setStatus(PrereqCheckStatus.FAIL);
-      prerequisiteCheck.setFailReason(getFailReason(prerequisiteCheck, request));
+    if (!result.getFailedOn().isEmpty()) {
+      result.setStatus(UpgradeCheckStatus.FAIL);
+      result.setFailReason(getFailReason(result, request));
     }
+
+    return result;
   }
 }

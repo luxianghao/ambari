@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,36 +18,62 @@
 
 package org.apache.ambari.server.controller;
 
+import org.apache.ambari.server.state.RepositoryVersionState;
+import org.apache.ambari.server.state.StackId;
+
+import io.swagger.annotations.ApiModelProperty;
 
 public class ServiceResponse {
 
   private Long clusterId;
   private String clusterName;
   private String serviceName;
-  private String desiredStackVersion;
+  private StackId desiredStackId;
+  private String desiredRepositoryVersion;
+  private Long desiredRepositoryVersionId;
+  private RepositoryVersionState repositoryVersionState;
   private String desiredState;
   private String maintenanceState;
   private boolean credentialStoreSupported;
   private boolean credentialStoreEnabled;
+  private final boolean ssoIntegrationSupported;
+  private final boolean ssoIntegrationDesired;
+  private final boolean ssoIntegrationEnabled;
+  private final boolean ssoIntegrationRequiresKerberos;
+  private final boolean kerberosEnabled;
+  private final boolean ldapIntegrationSupported;
+  private final boolean ldapIntegrationEnabled;
+  private final boolean ldapIntegrationDesired;
 
-  public ServiceResponse(Long clusterId, String clusterName,
-                         String serviceName,
-                         String desiredStackVersion, String desiredState,
-                         boolean credentialStoreSupported, boolean credentialStoreEnabled) {
+  public ServiceResponse(Long clusterId, String clusterName, String serviceName,
+                         StackId desiredStackId, String desiredRepositoryVersion,
+                         RepositoryVersionState repositoryVersionState, String desiredState,
+                         boolean credentialStoreSupported, boolean credentialStoreEnabled, boolean ssoIntegrationSupported,
+                         boolean ssoIntegrationDesired, boolean ssoIntegrationEnabled, boolean ssoIntegrationRequiresKerberos,
+                         boolean kerberosEnabled, boolean ldapIntegrationSupported,  boolean ldapIntegrationEnabled, boolean ldapIntegrationDesired) {
     this.clusterId = clusterId;
     this.clusterName = clusterName;
     this.serviceName = serviceName;
-    this.setDesiredStackVersion(desiredStackVersion);
-    this.setDesiredState(desiredState);
+    this.desiredStackId = desiredStackId;
+    this.repositoryVersionState = repositoryVersionState;
+    this.ssoIntegrationSupported = ssoIntegrationSupported;
+    this.ssoIntegrationDesired = ssoIntegrationDesired;
+    this.ssoIntegrationEnabled = ssoIntegrationEnabled;
+    setDesiredState(desiredState);
+    this.desiredRepositoryVersion = desiredRepositoryVersion;
     this.credentialStoreSupported = credentialStoreSupported;
     this.credentialStoreEnabled = credentialStoreEnabled;
+    this.ssoIntegrationRequiresKerberos = ssoIntegrationRequiresKerberos;
+    this.kerberosEnabled = kerberosEnabled;
+    this.ldapIntegrationSupported = ldapIntegrationSupported;
+    this.ldapIntegrationEnabled = ldapIntegrationEnabled;
+    this.ldapIntegrationDesired = ldapIntegrationDesired;
   }
-  
-  
 
   /**
    * @return the serviceName
    */
+  @ApiModelProperty(name = "service_name")
   public String getServiceName() {
     return serviceName;
   }
@@ -62,6 +88,7 @@ public class ServiceResponse {
   /**
    * @return the clusterId
    */
+  @ApiModelProperty(hidden = true)
   public Long getClusterId() {
     return clusterId;
   }
@@ -76,6 +103,7 @@ public class ServiceResponse {
   /**
    * @return the clusterName
    */
+  @ApiModelProperty(name = "cluster_name")
   public String getClusterName() {
     return clusterName;
   }
@@ -90,6 +118,7 @@ public class ServiceResponse {
   /**
    * @return the desiredState
    */
+  @ApiModelProperty(name = "state")
   public String getDesiredState() {
     return desiredState;
   }
@@ -102,23 +131,41 @@ public class ServiceResponse {
   }
 
   /**
-   * @return the desiredStackVersion
+   * @return the desired stack ID.
    */
-  public String getDesiredStackVersion() {
-    return desiredStackVersion;
+  @ApiModelProperty(hidden = true)
+  public String getDesiredStackId() {
+    return desiredStackId.getStackId();
+
   }
 
   /**
-   * @param desiredStackVersion the desiredStackVersion to set
+   * Gets the desired repository version.
+   *
+   * @return the desired repository version.
    */
-  public void setDesiredStackVersion(String desiredStackVersion) {
-    this.desiredStackVersion = desiredStackVersion;
+  public String getDesiredRepositoryVersion() {
+    return desiredRepositoryVersion;
+  }
+
+  /**
+   * Gets the calculated repository version state from the components of this
+   * service.
+   *
+   * @return the desired repository version state
+   */
+  public RepositoryVersionState getRepositoryVersionState() {
+    return repositoryVersionState;
   }
 
   @Override
   public boolean equals(Object o) {
-    if (this == o) return true;
-    if (o == null || getClass() != o.getClass()) return false;
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
 
     ServiceResponse that = (ServiceResponse) o;
 
@@ -137,11 +184,12 @@ public class ServiceResponse {
 
     return true;
   }
-  
+
   public void setMaintenanceState(String state) {
     maintenanceState = state;
   }
-  
+
+  @ApiModelProperty(name = "maintenance_state")
   public String getMaintenanceState() {
     return maintenanceState;
   }
@@ -152,6 +200,7 @@ public class ServiceResponse {
    *
    * @return true or false
    */
+  @ApiModelProperty(name = "credential_store_supported")
   public boolean isCredentialStoreSupported() {
     return credentialStoreSupported;
   }
@@ -172,6 +221,7 @@ public class ServiceResponse {
    *
    * @return true or false
    */
+  @ApiModelProperty(name = "credential_store_enabled")
   public boolean isCredentialStoreEnabled() {
     return credentialStoreEnabled;
   }
@@ -188,10 +238,96 @@ public class ServiceResponse {
 
   @Override
   public int hashCode() {
-    int result = clusterId != null? clusterId.intValue() : 0;
+    int result = clusterId != null ? clusterId.intValue() : 0;
     result = 71 * result + (clusterName != null ? clusterName.hashCode() : 0);
     result = 71 * result + (serviceName != null ? serviceName.hashCode() : 0);
     return result;
+  }
+
+  /**
+   * Indicates if this service supports single sign-on integration.
+   */
+  @ApiModelProperty(name = "sso_integration_supported")
+  public boolean isSsoIntegrationSupported() {
+    return ssoIntegrationSupported;
+  }
+
+  /**
+   * Indicates whether the service is chosen for SSO integration or not
+   */
+  @ApiModelProperty(name = "sso_integration_desired")
+  public boolean isSsoIntegrationDesired() {
+    return ssoIntegrationDesired;
+  }
+
+  /**
+   * Indicates whether the service is configured for SSO integration or not
+   */
+  @ApiModelProperty(name = "sso_integration_enabled")
+  public boolean isSsoIntegrationEnabled() {
+    return ssoIntegrationEnabled;
+  }
+
+  /**
+   * Indicates if Kerberos is required for SSO integration
+   */
+  @ApiModelProperty(name = "sso_integration_requires_kerberos")
+  public boolean isSsoIntegrationRequiresKerberos() {
+    return ssoIntegrationRequiresKerberos;
+  }
+
+  /**
+   * Indicates whether the service is configured for Kerberos or not
+   */
+  @ApiModelProperty(name = "kerberos_enabled")
+  public boolean isKerberosEnabled() {
+    return kerberosEnabled;
+  }
+  
+  /**
+   * Indicates if this service supports LDAP integration.
+   */
+  @ApiModelProperty(name = "ldap_integration_supported")
+  public boolean isLdapIntegrationSupported() {
+    return ldapIntegrationSupported;
+  }
+
+  /**
+   * Indicates whether the service is configured for LDAP integration or not
+   */
+  @ApiModelProperty(name = "ldap_integration_enabled")
+  public boolean isLdapIntegrationEnabled() {
+    return ldapIntegrationEnabled;
+  }
+
+  /**
+   * Indicates whether the service is chosen for LDAP integration or not
+   */
+  @ApiModelProperty(name = "ldap_integration_desired")
+  public boolean isLdapIntegrationDesired() {
+    return ldapIntegrationDesired;
+  }
+
+  /**
+   * Interface to help correct Swagger documentation generation
+   */
+  public interface ServiceResponseSwagger extends ApiModel {
+    @ApiModelProperty(name = "ServiceInfo")
+    ServiceResponse getServiceResponse();
+  }
+
+  /**
+   * @param id the desired repository id
+   */
+  public void setDesiredRepositoryVersionId(Long id) {
+    desiredRepositoryVersionId = id;
+  }
+
+  /**
+   * @return the desired repository id
+   */
+  public Long getDesiredRepositoryVersionId() {
+    return desiredRepositoryVersionId;
   }
 
 }

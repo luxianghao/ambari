@@ -38,8 +38,9 @@ from ambari_commons.logging_utils import get_debug_mode, print_info_msg, print_w
   set_debug_mode
 from ambari_server.properties import Properties
 from ambari_server.userInput import get_validated_string_input
-from ambari_server.utils import compare_versions, locate_file
+from ambari_server.utils import compare_versions, locate_file, on_powerpc
 from ambari_server.ambariPath import AmbariPath
+from ambari_server.userInput import get_YN_input
 
 
 OS_VERSION = OSCheck().get_os_major_version()
@@ -87,6 +88,12 @@ JCE_NAME_PROPERTY = "jce.name"
 JDK_DOWNLOAD_SUPPORTED_PROPERTY = "jdk.download.supported"
 JCE_DOWNLOAD_SUPPORTED_PROPERTY = "jce.download.supported"
 
+# Stack JDK
+STACK_JAVA_HOME_PROPERTY = "stack.java.home"
+STACK_JDK_NAME_PROPERTY = "stack.jdk.name"
+STACK_JCE_NAME_PROPERTY = "stack.jce.name"
+STACK_JAVA_VERSION = "stack.java.version"
+
 
 #TODO property used incorrectly in local case, it was meant to be dbms name, not postgres database name,
 # has workaround for now, as we don't need dbms name if persistence_type=local
@@ -104,6 +111,7 @@ JDBC_RCA_PASSWORD_FILENAME = "rca_password.dat"
 
 CLIENT_API_PORT_PROPERTY = "client.api.port"
 CLIENT_API_PORT = "8080"
+CLIENT_SECURITY = "client.security"
 
 SERVER_VERSION_FILE_PATH = "server.version.file"
 
@@ -150,12 +158,8 @@ RESOURCES_DIR_PROPERTY = "resources.dir"
 STACK_LOCATION_KEY = 'metadata.path'
 
 # LDAP security
-IS_LDAP_CONFIGURED = "ambari.ldap.isConfigured"
 LDAP_MGR_PASSWORD_ALIAS = "ambari.ldap.manager.password"
-LDAP_MGR_PASSWORD_PROPERTY = "authentication.ldap.managerPassword"
-LDAP_MGR_PASSWORD_FILENAME = "ldap-password.dat"
-LDAP_MGR_USERNAME_PROPERTY = "authentication.ldap.managerDn"
-LDAP_PRIMARY_URL_PROPERTY = "authentication.ldap.primaryUrl"
+LDAP_MGR_PASSWORD_PROPERTY = "ambari.ldap.connectivity.bind_password"
 
 # SSL truststore
 SSL_TRUSTSTORE_PASSWORD_ALIAS = "ambari.ssl.trustStore.password"
@@ -174,19 +178,27 @@ CHECK_AMBARI_KRB_JAAS_CONFIGURATION_PROPERTY = "kerberos.check.jaas.configuratio
 # JDK
 JDK_RELEASES="java.releases"
 
+if on_powerpc():
+  JDK_RELEASES += ".ppc64le"
+
 VIEWS_DIR_PROPERTY = "views.dir"
 
 ACTIVE_INSTANCE_PROPERTY = "active.instance"
+
+# web server startup timeout
+WEB_SERVER_STARTUP_TIMEOUT = "server.startup.web.timeout"
 
 #Common setup or upgrade message
 SETUP_OR_UPGRADE_MSG = "- If this is a new setup, then run the \"ambari-server setup\" command to create the user\n" \
                        "- If this is an upgrade of an existing setup, run the \"ambari-server upgrade\" command.\n" \
                        "Refer to the Ambari documentation for more information on setup and upgrade."
 
+GPL_LICENSE_PROMPT_TEXT = """GPL License for LZO: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
+Enable Ambari Server to download and install GPL Licensed LZO packages [y/n] (n)? """
+
 DEFAULT_DB_NAME = "ambari"
 
 SECURITY_KEYS_DIR = "security.server.keys_dir"
-DASHBOARD_PATH_PROPERTY = 'dashboards.path'
 EXTENSION_PATH_PROPERTY = 'extensions.path'
 COMMON_SERVICES_PATH_PROPERTY = 'common.services.path'
 MPACKS_STAGING_PATH_PROPERTY = 'mpacks.staging.path'
@@ -198,12 +210,22 @@ BOOTSTRAP_SETUP_AGENT_SCRIPT = 'bootstrap.setup_agent.script'
 STACKADVISOR_SCRIPT = 'stackadvisor.script'
 PID_DIR_PROPERTY = 'pid.dir'
 SERVER_TMP_DIR_PROPERTY = "server.tmp.dir"
+GPL_LICENSE_ACCEPTED_PROPERTY = 'gpl.license.accepted'
+
 REQUIRED_PROPERTIES = [OS_FAMILY_PROPERTY, OS_TYPE_PROPERTY, COMMON_SERVICES_PATH_PROPERTY, SERVER_VERSION_FILE_PATH,
                        WEBAPP_DIR_PROPERTY, STACK_LOCATION_KEY, SECURITY_KEYS_DIR, JDBC_DATABASE_NAME_PROPERTY,
                        NR_USER_PROPERTY, JAVA_HOME_PROPERTY, JDBC_PASSWORD_PROPERTY, SHARED_RESOURCES_DIR,
                        JDBC_USER_NAME_PROPERTY, BOOTSTRAP_SCRIPT, RESOURCES_DIR_PROPERTY, CUSTOM_ACTION_DEFINITIONS,
                        BOOTSTRAP_SETUP_AGENT_SCRIPT, STACKADVISOR_SCRIPT, BOOTSTRAP_DIR_PROPERTY, PID_DIR_PROPERTY,
                        MPACKS_STAGING_PATH_PROPERTY]
+
+# if these properties are available 'ambari-server setup -s' is not triggered again.
+SETUP_DONE_PROPERTIES = [OS_FAMILY_PROPERTY, OS_TYPE_PROPERTY, JDK_NAME_PROPERTY, JDBC_DATABASE_PROPERTY,
+                         NR_USER_PROPERTY, PERSISTENCE_TYPE_PROPERTY
+]
+
+def get_default_views_dir():
+  return AmbariPath.get("/var/lib/ambari-server/resources/views")
 
 def get_conf_dir():
   try:
@@ -398,8 +420,8 @@ class ServerConfigDefaults(object):
     self.EXTENSION_LOCATION_DEFAULT = ""
     self.COMMON_SERVICES_LOCATION_DEFAULT = ""
     self.MPACKS_STAGING_LOCATION_DEFAULT = ""
-    self.DASHBOARD_LOCATION_DEFAULT = ""
     self.SERVER_TMP_DIR_DEFAULT = ""
+    self.DASHBOARD_DIRNAME = "dashboards"
 
     self.DEFAULT_VIEWS_DIR = ""
 
@@ -470,7 +492,6 @@ class ServerConfigDefaultsWindows(ServerConfigDefaults):
     self.EXTENSION_LOCATION_DEFAULT = "resources\\extensions"
     self.COMMON_SERVICES_LOCATION_DEFAULT = "resources\\common-services"
     self.MPACKS_STAGING_LOCATION_DEFAULT = "resources\\mpacks"
-    self.DASHBOARD_LOCATION_DEFAULT = "resources\\dashboards"
     self.SERVER_TMP_DIR_DEFAULT = "data\\tmp"
 
     self.DEFAULT_VIEWS_DIR = "resources\\views"
@@ -521,6 +542,9 @@ class ServerConfigDefaultsLinux(ServerConfigDefaults):
       (AmbariPath.get("/var/lib/ambari-server/keys/.ssh"), "700", "{0}", False),
       (AmbariPath.get("/var/lib/ambari-server/resources/common-services/"), "755", "{0}", True),
       (AmbariPath.get("/var/lib/ambari-server/resources/stacks/"), "755", "{0}", True),
+      (AmbariPath.get("/var/lib/ambari-server/resources/extensions/"), "755", "{0}", True),
+      (AmbariPath.get("/var/lib/ambari-server/resources/dashboards/"), "755", "{0}", True),
+      (AmbariPath.get("/var/lib/ambari-server/resources/mpacks/"), "755", "{0}", True),
       (AmbariPath.get("/var/lib/ambari-server/resources/custom_actions/"), "755", "{0}", True),
       (AmbariPath.get("/var/lib/ambari-server/resources/host_scripts/"), "755", "{0}", True),
       (AmbariPath.get("/var/lib/ambari-server/resources/views/*"), "644", "{0}", True),
@@ -539,6 +563,11 @@ class ServerConfigDefaultsLinux(ServerConfigDefaults):
       (AmbariPath.get("/var/lib/ambari-server/data/tmp/"), "755", "{0}", False),
       (AmbariPath.get("/var/lib/ambari-server/data/cache/"), "600", "{0}", True),
       (AmbariPath.get("/var/lib/ambari-server/data/cache/"), "700", "{0}", False),
+      (AmbariPath.get("/var/lib/ambari-server/resources/common-services/STORM/0.9.1/package/files/wordCount.jar"), "644", "{0}", False),
+      (AmbariPath.get("/var/lib/ambari-server/resources/stacks/HDP/2.1.GlusterFS/services/STORM/package/files/wordCount.jar"), "644", "{0}", False),
+      (AmbariPath.get("/var/lib/ambari-server/resources/stack-hooks/before-START/files/fast-hdfs-resource.jar"), "644", "{0}", False),
+      (AmbariPath.get("/var/lib/ambari-server/resources/stacks/HDP/2.1/services/SMARTSENSE/package/files/view/smartsense-ambari-view-1.4.0.0.60.jar"), "644", "{0}", False),
+      (AmbariPath.get("/var/lib/ambari-server/resources/stacks/HDP/3.0/hooks/before-START/files/fast-hdfs-resource.jar"), "644", "{0}", False),
       # Also, /etc/ambari-server/conf/password.dat
       # is generated later at store_password_file
     ]
@@ -557,7 +586,6 @@ class ServerConfigDefaultsLinux(ServerConfigDefaults):
     self.EXTENSION_LOCATION_DEFAULT = AmbariPath.get("/var/lib/ambari-server/resources/extensions")
     self.COMMON_SERVICES_LOCATION_DEFAULT = AmbariPath.get("/var/lib/ambari-server/resources/common-services")
     self.MPACKS_STAGING_LOCATION_DEFAULT = AmbariPath.get("/var/lib/ambari-server/resources/mpacks")
-    self.DASHBOARD_LOCATION_DEFAULT = AmbariPath.get("/var/lib/ambari-server/resources/dashboards")
     self.SERVER_TMP_DIR_DEFAULT = AmbariPath.get("/var/lib/ambari-server/data/tmp")
 
     self.DEFAULT_VIEWS_DIR = AmbariPath.get("/var/lib/ambari-server/resources/views")
@@ -580,6 +608,7 @@ SECURITY_KEY_IS_PERSISTED = "security.master.key.ispersisted"
 SECURITY_KEY_ENV_VAR_NAME = "AMBARI_SECURITY_MASTER_KEY"
 SECURITY_MASTER_KEY_FILENAME = "master"
 SECURITY_IS_ENCRYPTION_ENABLED = "security.passwords.encryption.enabled"
+SECURITY_SENSITIVE_DATA_ENCRYPTON_ENABLED = "security.server.encrypt_sensitive_data"
 SECURITY_KERBEROS_JASS_FILENAME = "krb5JAASLogin.conf"
 
 SECURITY_PROVIDER_GET_CMD = "{0} -cp {1} " + \
@@ -595,6 +624,11 @@ SECURITY_PROVIDER_PUT_CMD = "{0} -cp {1} " + \
 SECURITY_PROVIDER_KEY_CMD = "{0} -cp {1} " + \
                             "org.apache.ambari.server.security.encryption" + \
                             ".MasterKeyServiceImpl {2} {3} {4} " + \
+                            "> " + configDefaults.SERVER_OUT_FILE + " 2>&1"
+
+SECURITY_SENSITIVE_DATA_ENCRYPTON_CMD = "{0} -cp {1} " + \
+                            "org.apache.ambari.server.security.encryption.SensitiveDataEncryption" + \
+                            " {2} " + \
                             "> " + configDefaults.SERVER_OUT_FILE + " 2>&1"
 
 
@@ -812,7 +846,7 @@ def update_database_name_property(upgrade=False):
     if properties == -1:
       err = "Error getting ambari properties"
       raise FatalException(-1, err)
-    print_warning_msg("{0} property isn't set in {1} . Setting it to default value - {3}".format(JDBC_DATABASE_NAME_PROPERTY, AMBARI_PROPERTIES_FILE, configDefaults.DEFAULT_DB_NAME))
+    print_warning_msg("{0} property isn't set in {1} . Setting it to default value - {2}".format(JDBC_DATABASE_NAME_PROPERTY, AMBARI_PROPERTIES_FILE, configDefaults.DEFAULT_DB_NAME))
     properties.process_pair(JDBC_DATABASE_NAME_PROPERTY, configDefaults.DEFAULT_DB_NAME)
     conf_file = find_properties_file()
     try:
@@ -880,9 +914,9 @@ def read_passwd_for_alias(alias, masterKey="", options=None):
     with open(tempFilePath, 'w+'):
       os.chmod(tempFilePath, stat.S_IREAD | stat.S_IWRITE)
 
-    if options is not None and options.master_key is not None and options.master_key:
+    if options is not None and hasattr(options, 'master_key') and options.master_key:
       masterKey = options.master_key
-    if masterKey is None or masterKey == "":
+    if not masterKey:
       masterKey = "None"
 
     serverClassPath = ambari_server.serverClassPath.ServerClassPath(get_ambari_properties(), None)
@@ -967,20 +1001,30 @@ def remove_password_file(filename):
   return 0
 
 
+def get_web_server_startup_timeout(properties):
+  """
+  Gets the time, in seconds, that the startup script should wait for the web server to bind to
+  the configured port. If this value is too low, then the startup script will return an
+  error code even though Ambari is actually starting up.
+  :param properties:
+  :return: The timeout value, in seconds. The default is 90.
+  """
+  # get the timeout property and strip it if it exists
+  timeout = properties[WEB_SERVER_STARTUP_TIMEOUT]
+  timeout = None if timeout is None else timeout.strip()
+
+  if timeout is None or timeout == "":
+    timeout = 90
+  else:
+    timeout = int(timeout)
+  return timeout
+
+
 def get_original_master_key(properties, options = None):
   input = True
   masterKey = None
+  env_master_key = os.environ.get(SECURITY_KEY_ENV_VAR_NAME)
   while(input):
-    try:
-      if options is not None and options.master_key is not None and options.master_key:
-        masterKey = options.master_key
-      if masterKey is None:
-        masterKey = get_validated_string_input('Enter current Master Key: ',
-                                               "", ".*", "", True, False)
-    except KeyboardInterrupt:
-      print_warning_msg('Exiting...')
-      sys.exit(1)
-
     # Find an alias that exists
     alias = None
     property = properties.get_property(JDBC_PASSWORD_PROPERTY)
@@ -998,11 +1042,30 @@ def get_original_master_key(properties, options = None):
         alias = SSL_TRUSTSTORE_PASSWORD_ALIAS
 
     # Decrypt alias with master to validate it, if no master return
-    if alias and masterKey:
-      password = read_passwd_for_alias(alias, masterKey, options)
-      if not password:
-        print_error_msg ("ERROR: Master key does not match.")
-        continue
+    password = None
+    if alias and env_master_key and env_master_key is not "" and env_master_key != "None":
+      password = read_passwd_for_alias(alias, env_master_key, options)
+    if not password:
+      try:
+        if options is not None and hasattr(options, 'master_key') and options.master_key:
+          masterKey = options.master_key
+        if not masterKey:
+          masterKey = get_validated_string_input('Enter current Master Key: ',
+                                                 "", ".*", "", True, True)
+          if options is not None:
+            options.master_key = masterKey
+      except KeyboardInterrupt:
+        print_warning_msg('Exiting...')
+        sys.exit(1)
+      if alias and masterKey:
+        password = read_passwd_for_alias(alias, masterKey, options)
+        if not password:
+          masterKey = None
+          if options is not None:
+            options.master_key = None
+          print_error_msg ("ERROR: Master key does not match")
+
+          continue
 
     input = False
 
@@ -1096,6 +1159,35 @@ def update_ambari_env():
 
   return 0
 
+def set_property(key, value, rewrite=True):
+  properties = get_ambari_properties()
+  if properties == -1:
+    err = "Error getting ambari properties"
+    raise FatalException(-1, err)
+
+  if not rewrite and key in properties.keys():
+    return
+
+  properties.process_pair(key, value)
+  update_properties(properties)
+
+ 
+# default should be false / not accepted 
+def write_gpl_license_accepted(default_prompt_value = False, text = GPL_LICENSE_PROMPT_TEXT):
+  properties = get_ambari_properties()
+  if properties == -1:
+    err = "Error getting ambari properties"
+    raise FatalException(-1, err)
+
+
+  if GPL_LICENSE_ACCEPTED_PROPERTY in properties.keys() and properties.get_property(GPL_LICENSE_ACCEPTED_PROPERTY).lower() == "true":
+    return True
+
+  result = get_YN_input(text, default_prompt_value)
+  set_property(GPL_LICENSE_ACCEPTED_PROPERTY, str(result).lower())
+
+  return result
+
 def update_ambari_properties():
   prev_conf_file = search_file(configDefaults.AMBARI_PROPERTIES_BACKUP_FILE, get_conf_dir())
   conf_file = search_file(AMBARI_PROPERTIES_FILE, get_conf_dir())
@@ -1124,6 +1216,7 @@ def update_ambari_properties():
       new_properties.load(hfNew)
 
     for prop_key, prop_value in old_properties.getPropertyDict().items():
+      prop_value = prop_value.replace("/usr/lib/python2.6/site-packages", "/usr/lib/ambari-server/lib")
       if "agent.fqdn.service.url" == prop_key:
         # what is agent.fqdn property in ambari.props?
         new_properties.process_pair(GET_FQDN_SERVICE_URL, prop_value)
@@ -1141,8 +1234,8 @@ def update_ambari_properties():
     if NR_USER_PROPERTY not in new_properties.keys():
       new_properties.process_pair(NR_USER_PROPERTY, "root")
 
-    if OS_FAMILY_PROPERTY not in new_properties.keys():
-      new_properties.process_pair(OS_FAMILY_PROPERTY, OS_FAMILY + OS_VERSION)
+    # update the os. In case os detection routine changed
+    new_properties.process_pair(OS_FAMILY_PROPERTY, OS_FAMILY + OS_VERSION)
 
     with open(conf_file, 'w') as hfW:
       new_properties.store(hfW)
@@ -1448,13 +1541,8 @@ def get_mpacks_staging_location(properties):
 # Dashboard location
 #
 def get_dashboard_location(properties):
-  try:
-    dashboard_location = properties[DASHBOARD_PATH_PROPERTY]
-  except KeyError:
-    dashboard_location = configDefaults.DASHBOARD_LOCATION_DEFAULT
-
-  if not dashboard_location:
-    dashboard_location = configDefaults.DASHBOARD_LOCATION_DEFAULT
+  resources_dir = get_resources_location(properties)
+  dashboard_location = os.path.join(resources_dir, configDefaults.DASHBOARD_DIRNAME)
   return dashboard_location
 
 #
@@ -1466,9 +1554,9 @@ def get_server_temp_location(properties):
     server_tmp_dir = configDefaults.SERVER_TMP_DIR_DEFAULT
   return server_tmp_dir
 
-def get_missing_properties(properties):
+def get_missing_properties(properties, property_set=REQUIRED_PROPERTIES):
   missing_propertiers = []
-  for property in REQUIRED_PROPERTIES:
+  for property in property_set:
     value = properties[property]
     if not value:
       missing_propertiers.append(property)

@@ -100,7 +100,8 @@ App.AlertDefinition = DS.Model.extend({
    * @type {string}
    */
   lastTriggeredFormatted: function () {
-    return dateUtils.dateFormat(this.get('lastTriggered'));
+    let lastTriggered = this.get('lastTriggered');
+    return lastTriggered ? dateUtils.dateFormat(lastTriggered) : '';
   }.property('lastTriggered'),
 
   /**
@@ -154,11 +155,21 @@ App.AlertDefinition = DS.Model.extend({
     order.forEach(function (state) {
       var cnt = summary[state] ? summary[state].count + summary[state].maintenanceCount : 0;
       if (cnt > 0) {
-        text = summary[state].latestText;
+        text = Em.getWithDefault(summary[state], 'latestText', '');
       }
     });
     return text;
   }.property('summary'),
+
+  latestTextSummary: function () {
+    var latestText = this.get('latestText');
+    var ellipsis = '...';
+    var summaryLength = 400;
+    if(latestText.length > summaryLength) {
+      latestText = latestText.substring(0, summaryLength - ellipsis.length) + ellipsis;
+    }
+    return latestText;
+  }.property('latestText'),
 
   isAmbariService: Em.computed.equal('service._id', 'AMBARI'),
 
@@ -243,16 +254,16 @@ App.AlertDefinition = DS.Model.extend({
    * Sort on load definitions by this severity order
    */
   severityOrder: ['CRITICAL', 'WARNING', 'OK', 'UNKNOWN', 'PENDING'],
-  order: ['OK', 'WARNING', 'CRITICAL', 'UNKNOWN'],
-
-  shortState: {
-    'CRITICAL': 'CRIT',
-    'WARNING': 'WARN',
-    'OK': 'OK',
-    'UNKNOWN': 'UNKWN',
-    'PENDING': 'NONE'
-  }
+  order: ['OK', 'WARNING', 'CRITICAL', 'UNKNOWN']
 });
+
+App.AlertDefinition.shortState = {
+  'CRITICAL': 'CRIT',
+  'WARNING': 'WARN',
+  'OK': 'OK',
+  'UNKNOWN': 'UNKWN',
+  'PENDING': 'NONE'
+};
 
 App.AlertDefinition.reopenClass({
 

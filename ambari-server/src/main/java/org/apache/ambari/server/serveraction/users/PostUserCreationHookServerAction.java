@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,8 +23,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -34,7 +32,6 @@ import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.hooks.users.UserHookParams;
 import org.apache.ambari.server.serveraction.AbstractServerAction;
-import org.apache.ambari.server.topology.AsyncCallableService;
 import org.apache.ambari.server.utils.ShellCommandUtil;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
@@ -73,7 +70,7 @@ public class PostUserCreationHookServerAction extends AbstractServerAction {
       validateCommandParams(commandParams);
 
       //persist user data to csv
-      CollectionPersisterService csvPersisterService = collectionPersisterServiceFactory.createCsvFilePersisterService(commandParams.get(UserHookParams.CMD_INPUT_FILE.param()));
+      CollectionPersisterService<String, List<String>> csvPersisterService = collectionPersisterServiceFactory.createCsvFilePersisterService(commandParams.get(UserHookParams.CMD_INPUT_FILE.param()));
       csvPersisterService.persistMap(getPayload(commandParams));
 
       String[] cmd = assembleCommand(commandParams);
@@ -119,7 +116,8 @@ public class PostUserCreationHookServerAction extends AbstractServerAction {
         params.get(UserHookParams.CMD_INPUT_FILE.param()),
         params.get(UserHookParams.CLUSTER_SECURITY_TYPE.param()),
         params.get(UserHookParams.CMD_HDFS_PRINCIPAL.param()),
-        params.get(UserHookParams.CMD_HDFS_KEYTAB.param())
+        params.get(UserHookParams.CMD_HDFS_KEYTAB.param()),
+        params.get(UserHookParams.CMD_HDFS_USER.param())
     };
     LOGGER.debug("Server action command to be executed: {}", cmdArray);
     return cmdArray;
@@ -150,6 +148,11 @@ public class PostUserCreationHookServerAction extends AbstractServerAction {
     if (!commandParams.containsKey(UserHookParams.CLUSTER_SECURITY_TYPE.param())) {
       LOGGER.error("Missing command parameter: {}; Failing the server action.", UserHookParams.CLUSTER_SECURITY_TYPE.param());
       throw new IllegalArgumentException("Missing command parameter: [" + UserHookParams.CLUSTER_SECURITY_TYPE.param() + "]");
+    }
+
+    if (!commandParams.containsKey(UserHookParams.CMD_HDFS_USER.param())) {
+      LOGGER.error("Missing command parameter: {}; Failing the server action.", UserHookParams.CMD_HDFS_USER.param());
+      throw new IllegalArgumentException("Missing command parameter: [" + UserHookParams.CMD_HDFS_USER.param() + "]");
     }
 
     LOGGER.info("Command parameter validation passed.");

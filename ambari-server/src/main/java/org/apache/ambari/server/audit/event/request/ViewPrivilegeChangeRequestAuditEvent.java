@@ -69,6 +69,7 @@ public class ViewPrivilegeChangeRequestAuditEvent extends RequestAuditEvent {
 
 
     public ViewPrivilegeChangeRequestAuditEventBuilder() {
+      super(ViewPrivilegeChangeRequestAuditEventBuilder.class);
       super.withOperation("View permission change");
     }
 
@@ -94,7 +95,7 @@ public class ViewPrivilegeChangeRequestAuditEvent extends RequestAuditEvent {
         .append(name)
         .append(")");
 
-      SortedSet<String> roleSet = new TreeSet<String>();
+      SortedSet<String> roleSet = new TreeSet<>();
       roleSet.addAll(users.keySet());
       roleSet.addAll(groups.keySet());
       roleSet.addAll(roles.keySet());
@@ -104,7 +105,7 @@ public class ViewPrivilegeChangeRequestAuditEvent extends RequestAuditEvent {
         builder.append(System.lineSeparator());
       }
 
-      List<String> lines = new LinkedList<String>();
+      List<String> lines = new LinkedList<>();
 
       for (String role : roleSet) {
         lines.add(role + ": ");

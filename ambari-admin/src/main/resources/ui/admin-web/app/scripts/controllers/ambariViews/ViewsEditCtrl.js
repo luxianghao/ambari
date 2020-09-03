@@ -262,7 +262,7 @@ angular.module('ambariAdminConsole')
           }
         });
         return View.updateInstance($routeParams.viewId, $routeParams.version, $routeParams.instanceId, data)
-          .success(function() {
+          .then(function() {
             if( callback ){
               callback();
             } else {
@@ -293,7 +293,7 @@ angular.module('ambariAdminConsole')
           }
         };
         return View.updateInstance($routeParams.viewId, $routeParams.version, $routeParams.instanceId, data)
-          .success(function() {
+          .then(function() {
             $scope.$root.$emit('instancesUpdate');
             if( callback ){
               callback();
@@ -358,7 +358,7 @@ angular.module('ambariAdminConsole')
 
         $scope.originalClusterType = $scope.data.clusterType;
         return View.updateInstance($routeParams.viewId, $routeParams.version, $routeParams.instanceId, data)
-          .success(function() {
+          .then(function() {
             $scope.editConfigurationDisabled = true;
             $scope.propertiesForm.$setPristine();
           })
@@ -441,7 +441,12 @@ angular.module('ambariAdminConsole')
         $t('common.deleteConfirmation', {
           instanceType: $t('views.viewInstance'),
           instanceName: instance.ViewInstanceInfo.label
-        })
+        }),
+        null,
+        null,
+        {
+          primaryClass: 'btn-danger'
+        }
       ).then(function() {
         View.deleteInstance(instance.ViewInstanceInfo.view_name, instance.ViewInstanceInfo.version, instance.ViewInstanceInfo.instance_name)
           .then(function() {

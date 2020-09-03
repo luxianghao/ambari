@@ -405,14 +405,6 @@ describe('App.WizardStep3Controller', function () {
 
   describe('#selectedHostsPopup', function () {
 
-    beforeEach(function () {
-      sinon.spy(App.ModalPopup, 'show');
-    });
-
-    afterEach(function () {
-      App.ModalPopup.show.restore();
-    });
-
     it('should show App.ModalPopup', function () {
       c.selectedHostsPopup();
       expect(App.ModalPopup.show.calledOnce).to.equal(true);
@@ -950,15 +942,6 @@ describe('App.WizardStep3Controller', function () {
   });
 
   describe('#registerErrPopup', function () {
-
-    beforeEach(function () {
-      sinon.spy(App.ModalPopup, 'show');
-    });
-
-    afterEach(function () {
-      App.ModalPopup.show.restore();
-    });
-
     it('should call App.ModalPopup.show', function () {
       c.registerErrPopup();
       expect(App.ModalPopup.show.calledOnce).to.equal(true);
@@ -1036,14 +1019,6 @@ describe('App.WizardStep3Controller', function () {
 
   describe('#submit', function () {
 
-    beforeEach(function () {
-      sinon.spy(App.ModalPopup, 'show');
-    });
-
-    afterEach(function () {
-      App.ModalPopup.show.restore();
-    });
-
     it('if isHostHaveWarnings should show confirmation popup', function () {
       c.reopen({isHostHaveWarnings: true});
       c.submit();
@@ -1071,14 +1046,6 @@ describe('App.WizardStep3Controller', function () {
   });
 
   describe('#hostLogPopup', function () {
-
-    beforeEach(function () {
-      sinon.spy(App.ModalPopup, 'show');
-    });
-
-    afterEach(function () {
-      App.ModalPopup.show.restore();
-    });
 
     it('should show App.ModalPopup', function () {
       c.hostLogPopup({context: Em.Object.create({})});
@@ -1187,12 +1154,10 @@ describe('App.WizardStep3Controller', function () {
   describe('#hostWarningsPopup', function () {
 
     beforeEach(function () {
-      sinon.spy(App.ModalPopup, 'show');
       sinon.stub(c, 'rerunChecks', Em.K);
     });
 
     afterEach(function () {
-      App.ModalPopup.show.restore();
       c.rerunChecks.restore();
     });
 
@@ -1220,15 +1185,6 @@ describe('App.WizardStep3Controller', function () {
   });
 
   describe('#registeredHostsPopup', function () {
-
-    beforeEach(function () {
-      sinon.spy(App.ModalPopup, 'show');
-    });
-
-    afterEach(function () {
-      App.ModalPopup.show.restore();
-    });
-
     it('should show App.ModalPopup', function () {
       c.registeredHostsPopup();
       expect(App.ModalPopup.show.calledOnce).to.equal(true);
@@ -1292,7 +1248,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'fileFolders'
                   }
                 ],
@@ -1314,7 +1269,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'fileFolders'
                   }
                 ],
@@ -1359,7 +1313,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'services'
                   }
                 ],
@@ -1384,7 +1337,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'services'
                   }
                 ],
@@ -1422,7 +1374,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'users'
                   }
                 ],
@@ -1446,7 +1397,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'users'
                   }
                 ],
@@ -1484,7 +1434,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'alternatives'
                   }
                 ],
@@ -1508,7 +1457,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'alternatives'
                   }
                 ],
@@ -1556,7 +1504,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     pid: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'processes'
                   }
                 ],
@@ -1580,7 +1527,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     pid: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'processes'
                   }
                 ],
@@ -1634,7 +1580,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1']);
       expect(warnings[0].hostsLong).to.eql(['c1']);
-      expect(warnings[0].onSingleHost).to.equal(true);
 
     });
 
@@ -1667,7 +1612,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1']);
       expect(warnings[0].hostsLong).to.eql(['c1']);
-      expect(warnings[0].onSingleHost).to.equal(true);
 
     });
 
@@ -1683,7 +1627,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1', 'c2']);
       expect(warnings[0].hostsLong).to.eql(['c1', 'c2']);
-      expect(warnings[0].onSingleHost).to.equal(false);
 
     });
 
@@ -1710,7 +1653,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1']);
       expect(warnings[0].hostsLong).to.eql(['c1']);
-      expect(warnings[0].onSingleHost).to.equal(true);
 
     });
 
@@ -1726,7 +1668,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1', 'c2']);
       expect(warnings[0].hostsLong).to.eql(['c1', 'c2']);
-      expect(warnings[0].onSingleHost).to.equal(false);
 
     });
   });
@@ -1784,7 +1725,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'fileFolders'
                   }
                 ],
@@ -1806,7 +1746,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'fileFolders'
                   }
                 ],
@@ -1850,7 +1789,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'services'
                   }
                 ],
@@ -1872,7 +1810,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'services'
                   }
                 ],
@@ -1906,7 +1843,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'users'
                   }
                 ],
@@ -1928,7 +1864,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'users'
                   }
                 ],
@@ -1962,7 +1897,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'alternatives'
                   }
                 ],
@@ -1984,7 +1918,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     name: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'alternatives'
                   }
                 ],
@@ -2028,7 +1961,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     pid: 'n1',
                     hosts: ['c1'],
-                    onSingleHost: true,
                     category: 'processes'
                   }
                 ],
@@ -2050,7 +1982,6 @@ describe('App.WizardStep3Controller', function () {
                   {
                     pid: 'n1',
                     hosts: ['c1', 'c2'],
-                    onSingleHost: false,
                     category: 'processes'
                   }
                 ],
@@ -2099,7 +2030,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1']);
       expect(warnings[0].hostsLong).to.eql(['c1']);
-      expect(warnings[0].onSingleHost).to.equal(true);
 
     });
 
@@ -2132,7 +2062,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1']);
       expect(warnings[0].hostsLong).to.eql(['c1']);
-      expect(warnings[0].onSingleHost).to.equal(true);
 
     });
 
@@ -2148,7 +2077,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1', 'c2']);
       expect(warnings[0].hostsLong).to.eql(['c1', 'c2']);
-      expect(warnings[0].onSingleHost).to.equal(false);
 
     });
 
@@ -2175,7 +2103,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1']);
       expect(warnings[0].hostsLong).to.eql(['c1']);
-      expect(warnings[0].onSingleHost).to.equal(true);
 
     });
 
@@ -2191,7 +2118,6 @@ describe('App.WizardStep3Controller', function () {
       expect(warnings.length).to.equal(1);
       expect(warnings[0].hosts).to.eql(['c1', 'c2']);
       expect(warnings[0].hostsLong).to.eql(['c1', 'c2']);
-      expect(warnings[0].onSingleHost).to.equal(false);
 
     });
 
@@ -3076,9 +3002,9 @@ describe('App.WizardStep3Controller', function () {
 
     var data = {
       tasks: [
-        {Tasks: {status: 'COMPLETED', host_name: 'h1', structured_out: {host_resolution_check: {failed_count: 2, failures: [{host: 'h2'}, {host: 'h3'}]}}}},
-        {Tasks: {status: 'COMPLETED', host_name: 'h4', structured_out: {host_resolution_check: {failed_count: 2, failures: [{host: 'h5'}, {host: 'h6'}]}}}},
-        {Tasks: {status: 'COMPLETED', host_name: 'h7', structured_out: {host_resolution_check: {failed_count: 1, failures: [{host: 'h8'}]}}}}
+        {Tasks: {status: 'COMPLETED', host_name: 'h1', structured_out: {host_resolution_check: {failed_count: 2, hosts_with_failures: ['h2', 'h3']}}}},
+        {Tasks: {status: 'COMPLETED', host_name: 'h4', structured_out: {host_resolution_check: {failed_count: 2, hosts_with_failures: ['h5', 'h6']}}}},
+        {Tasks: {status: 'COMPLETED', host_name: 'h7', structured_out: {host_resolution_check: {failed_count: 1, hosts_with_failures: ['h8']}}}}
       ]
     };
     var hostCheckWarnings = [];
@@ -3095,10 +3021,6 @@ describe('App.WizardStep3Controller', function () {
 
     it('hostsNames are ["h1", "h4", "h7"]', function () {
       expect(this.warnings.hostsNames.toArray()).to.be.eql(['h1', 'h4', 'h7']);
-    });
-
-    it('warning appears on many hosts', function () {
-      expect(this.warnings.onSingleHost).to.be.false;
     });
 
     it('validation context for hosts is valid', function () {

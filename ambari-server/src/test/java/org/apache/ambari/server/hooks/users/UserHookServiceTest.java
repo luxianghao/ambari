@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -37,6 +37,7 @@ import org.apache.ambari.server.hooks.AmbariEventFactory;
 import org.apache.ambari.server.hooks.HookContext;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.SecurityType;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostServerActionEvent;
 import org.codehaus.jackson.map.ObjectMapper;
@@ -90,6 +91,9 @@ public class UserHookServiceTest extends EasyMockSupport {
   @Mock
   private Stage stageMock;
 
+  @Mock
+  private Config configMock;
+
   @TestSubject
   private UserHookService hookService = new UserHookService();
 
@@ -101,7 +105,7 @@ public class UserHookServiceTest extends EasyMockSupport {
   @Before
   public void before() throws Exception {
     usersToGroups = new HashMap<>();
-    usersToGroups.put("testUser", new HashSet<String>(Arrays.asList("hdfs", "yarn")));
+    usersToGroups.put("testUser", new HashSet<>(Arrays.asList("hdfs", "yarn")));
     hookContext = new PostUserCreationHookContext(usersToGroups);
 
     userCreatedEvent = new UserCreatedEvent(hookContext);
@@ -154,7 +158,7 @@ public class UserHookServiceTest extends EasyMockSupport {
     replayAll();
 
     // WHEN
-    Boolean triggered = hookService.execute(new PostUserCreationHookContext(Collections.<String, Set<String>>emptyMap()));
+    Boolean triggered = hookService.execute(new PostUserCreationHookContext(Collections.emptyMap()));
 
     //THEN
     Assert.assertFalse("The hook should not be triggered if there is no users in the context!", triggered);
@@ -193,9 +197,14 @@ public class UserHookServiceTest extends EasyMockSupport {
     Map<String, Cluster> clsMap = new HashMap<>();
     clsMap.put("test-cluster", clusterMock);
 
+    Map<String, String> configMap = new HashMap<>();
+    configMap.put("hdfs_user", "hdfs-test-user");
+
     EasyMock.expect(clusterMock.getClusterId()).andReturn(1l);
     EasyMock.expect(clusterMock.getClusterName()).andReturn("test-cluster");
     EasyMock.expect(clusterMock.getSecurityType()).andReturn(SecurityType.NONE).times(3);
+    EasyMock.expect(clusterMock.getDesiredConfigByType("hadoop-env")).andReturn(configMock);
+    EasyMock.expect(configMock.getProperties()).andReturn(configMap);
 
 
     EasyMock.expect(actionManagerMock.getNextRequestId()).andReturn(1l);
@@ -207,9 +216,9 @@ public class UserHookServiceTest extends EasyMockSupport {
 
     // TBD refine expectations to validate the logic / eg capture arguments
     stageMock.addServerActionCommand(EasyMock.anyString(), EasyMock.anyString(), EasyMock.anyObject(Role.class), EasyMock.anyObject(RoleCommand.class), EasyMock.anyString(), EasyMock.anyObject(ServiceComponentHostServerActionEvent.class),
-        EasyMock.anyObject(Map.class), EasyMock.anyString(), EasyMock.anyObject(Map.class), EasyMock.anyInt(), EasyMock.anyBoolean(), EasyMock.anyBoolean());
-    EasyMock.expect(requestFactoryMock.createNewFromStages(Arrays.asList(stageMock))).andReturn(null);
-    EasyMock.expect(stageFactoryMock.createNew(1, "/var/lib/ambari-server/tmp:1", "test-cluster", 1, "Post user creation hook for [ 1 ] users", "{}", "{}", "{}")).andReturn(stageMock);
+        EasyMock.anyObject(), EasyMock.anyString(), EasyMock.anyObject(), EasyMock.anyInt(), EasyMock.anyBoolean(), EasyMock.anyBoolean());
+    EasyMock.expect(requestFactoryMock.createNewFromStages(Arrays.asList(stageMock), "{}")).andReturn(null);
+    EasyMock.expect(stageFactoryMock.createNew(1, "/var/lib/ambari-server/tmp:1", "test-cluster", 1, "Post user creation hook for [ 1 ] users", "{}", "{}")).andReturn(stageMock);
 
 
     replayAll();

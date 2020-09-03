@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,6 +21,7 @@ import static org.easymock.EasyMock.createNiceMock;
 import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.replay;
 
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -28,6 +29,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.ClusterRequest;
 import org.apache.ambari.server.controller.ConfigurationRequest;
@@ -35,16 +37,13 @@ import org.apache.ambari.server.controller.MaintenanceStateHelper;
 import org.apache.ambari.server.controller.ServiceComponentHostRequest;
 import org.apache.ambari.server.controller.ServiceComponentRequest;
 import org.apache.ambari.server.controller.ServiceRequest;
-import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
-import org.apache.ambari.server.controller.spi.NoSuchResourceException;
 import org.apache.ambari.server.controller.spi.Resource;
-import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
 import org.apache.ambari.server.controller.spi.ResourceProvider;
-import org.apache.ambari.server.controller.spi.SystemException;
-import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
-import org.apache.ambari.server.controller.utilities.PropertyHelper;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
+import org.apache.ambari.server.orm.OrmTestHelper;
+import org.apache.ambari.server.orm.dao.RepositoryVersionDAO;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.security.TestAuthenticationFactory;
 import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.state.Cluster;
@@ -62,7 +61,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 
 public class JMXHostProviderTest {
   private Injector injector;
@@ -82,12 +80,22 @@ public class JMXHostProviderTest {
   private static final String MAPREDUCE_HTTPS_POLICY = "mapreduce.jobhistory.http.policy";
   private static final String MAPREDUCE_HTTPS_PORT = "mapreduce.jobhistory.webapp.https.address";
 
+  private final String STACK_VERSION = "2.0.6";
+  private final String REPO_VERSION = "2.0.6-1234";
+  private final StackId STACK_ID = new StackId("HDP", STACK_VERSION);
+  private RepositoryVersionEntity m_repositoryVersion;
+
   @Before
   public void setup() throws Exception {
     injector = Guice.createInjector(new InMemoryDefaultTestModule());
+    H2DatabaseCleaner.resetSequences(injector);
     injector.getInstance(GuiceJpaInitializer.class);
     clusters = injector.getInstance(Clusters.class);
     controller = injector.getInstance(AmbariManagementController.class);
+    OrmTestHelper ormTestHelper = injector.getInstance(OrmTestHelper.class);
+
+    m_repositoryVersion = ormTestHelper.getOrCreateRepositoryVersion(STACK_ID, REPO_VERSION);
+    Assert.assertNotNull(m_repositoryVersion);
 
     // Set the authenticated user
     // TODO: remove this or replace the authenticated user to test authorization rules
@@ -95,24 +103,28 @@ public class JMXHostProviderTest {
   }
 
   @After
-  public void teardown() {
-    injector.getInstance(PersistService.class).stop();
+  public void teardown() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
 
     // Clear the authenticated user
     SecurityContextHolder.getContext().setAuthentication(null);
   }
 
-  private void createService(String clusterName,
-                             String serviceName, State desiredState)
-      throws AmbariException, AuthorizationException {
+  private void createService(String clusterName, String serviceName, State desiredState)
+      throws AmbariException, AuthorizationException, NoSuchFieldException, IllegalAccessException {
     String dStateStr = null;
+
     if (desiredState != null) {
       dStateStr = desiredState.toString();
     }
-    ServiceRequest r1 = new ServiceRequest(clusterName, serviceName, dStateStr);
-    Set<ServiceRequest> requests = new HashSet<ServiceRequest>();
+
+    ServiceRequest r1 = new ServiceRequest(clusterName, serviceName, m_repositoryVersion.getId(), dStateStr);
+
+    Set<ServiceRequest> requests = new HashSet<>();
     requests.add(r1);
-    ServiceResourceProviderTest.createServices(controller, requests);
+
+    ServiceResourceProviderTest.createServices(controller,
+        injector.getInstance(RepositoryVersionDAO.class), requests);
   }
 
   private void createServiceComponent(String clusterName,
@@ -125,7 +137,7 @@ public class JMXHostProviderTest {
     ServiceComponentRequest r = new ServiceComponentRequest(clusterName,
       serviceName, componentName, dStateStr);
     Set<ServiceComponentRequest> requests =
-      new HashSet<ServiceComponentRequest>();
+      new HashSet<>();
     requests.add(r);
     ComponentResourceProviderTest.createComponents(controller, requests);
   }
@@ -140,12 +152,12 @@ public class JMXHostProviderTest {
     ServiceComponentHostRequest r = new ServiceComponentHostRequest(clusterName,
       serviceName, componentName, hostname, dStateStr);
     Set<ServiceComponentHostRequest> requests =
-      new HashSet<ServiceComponentHostRequest>();
+      new HashSet<>();
     requests.add(r);
     controller.createHostComponents(requests);
   }
 
-  private void createHDFSServiceConfigs(boolean version1) throws AmbariException, AuthorizationException {
+  private void createHDFSServiceConfigs(boolean version1) throws AmbariException, AuthorizationException, NoSuchFieldException, IllegalAccessException {
     String clusterName = "c1";
     ClusterRequest r = new ClusterRequest(null, clusterName, "HDP-0.1", null);
     controller.createCluster(r);
@@ -166,18 +178,20 @@ public class JMXHostProviderTest {
 
     String host1 = "h1";
     clusters.addHost(host1);
-    Map<String, String> hostAttributes = new HashMap<String, String>();
+    Map<String, String> hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "5.9");
     clusters.getHost("h1").setHostAttributes(hostAttributes);
     String host2 = "h2";
     clusters.addHost(host2);
-    hostAttributes = new HashMap<String, String>();
+    hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "6.3");
     clusters.getHost("h2").setHostAttributes(hostAttributes);
     clusters.mapHostToCluster(host1, clusterName);
     clusters.mapHostToCluster(host2, clusterName);
+    clusters.updateHostMappings(clusters.getHost(host1));
+    clusters.updateHostMappings(clusters.getHost(host2));
 
     createServiceComponentHost(clusterName, null, componentName1,
       host1, null);
@@ -192,7 +206,7 @@ public class JMXHostProviderTest {
 
     // Create configs
     if (version1) {
-      Map<String, String> configs = new HashMap<String, String>();
+      Map<String, String> configs = new HashMap<>();
       configs.put(NAMENODE_PORT_V1, "localhost:${ambari.dfs.datanode.http.port}");
       configs.put(DATANODE_PORT, "localhost:70075");
       configs.put("ambari.dfs.datanode.http.port", "70070");
@@ -201,10 +215,10 @@ public class JMXHostProviderTest {
         "hdfs-site", "version1", configs, null);
       ClusterRequest crequest = new ClusterRequest(cluster.getClusterId(), clusterName, null, null);
       crequest.setDesiredConfig(Collections.singletonList(cr));
-      controller.updateClusters(Collections.singleton(crequest), new HashMap<String,String>());
+      controller.updateClusters(Collections.singleton(crequest), new HashMap<>());
 
     } else {
-      Map<String, String> configs = new HashMap<String, String>();
+      Map<String, String> configs = new HashMap<>();
       configs.put(NAMENODE_PORT_V2, "localhost:70071");
       configs.put(DATANODE_PORT, "localhost:70075");
 
@@ -213,11 +227,11 @@ public class JMXHostProviderTest {
 
       ClusterRequest crequest = new ClusterRequest(cluster.getClusterId(), clusterName, null, null);
       crequest.setDesiredConfig(Collections.singletonList(cr));
-      controller.updateClusters(Collections.singleton(crequest), new HashMap<String,String>());
+      controller.updateClusters(Collections.singleton(crequest), new HashMap<>());
     }
   }
 
-  private void createConfigs() throws AmbariException, AuthorizationException {
+  private void createConfigs() throws AmbariException, AuthorizationException, NoSuchFieldException, IllegalAccessException {
     String clusterName = "c1";
     ClusterRequest r = new ClusterRequest(null, clusterName, "HDP-2.0.6", null);
     controller.createCluster(r);
@@ -226,10 +240,12 @@ public class JMXHostProviderTest {
     String serviceName = "HDFS";
     String serviceName2 = "YARN";
     String serviceName3 = "MAPREDUCE2";
+    String serviceName4 = "HBASE";
 
     createService(clusterName, serviceName, null);
     createService(clusterName, serviceName2, null);
     createService(clusterName, serviceName3, null);
+    createService(clusterName, serviceName4, null);
 
     String componentName1 = "NAMENODE";
     String componentName2 = "DATANODE";
@@ -238,6 +254,8 @@ public class JMXHostProviderTest {
     String componentName5 = "JOURNALNODE";
     String componentName6 = "HISTORYSERVER";
     String componentName7 = "NODEMANAGER";
+    String componentName8 = "HBASE_MASTER";
+    String componentName9 = "HBASE_REGIONSERVER";
 
     createServiceComponent(clusterName, serviceName, componentName1,
       State.INIT);
@@ -253,21 +271,27 @@ public class JMXHostProviderTest {
         State.INIT);
     createServiceComponent(clusterName, serviceName2, componentName7,
       State.INIT);
+    createServiceComponent(clusterName, serviceName4, componentName8,
+      State.INIT);
+    createServiceComponent(clusterName, serviceName4, componentName9,
+      State.INIT);
 
     String host1 = "h1";
     clusters.addHost(host1);
-    Map<String, String> hostAttributes = new HashMap<String, String>();
+    Map<String, String> hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "5.9");
     clusters.getHost("h1").setHostAttributes(hostAttributes);
     String host2 = "h2";
     clusters.addHost(host2);
-    hostAttributes = new HashMap<String, String>();
+    hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "6.3");
     clusters.getHost("h2").setHostAttributes(hostAttributes);
     clusters.mapHostToCluster(host1, clusterName);
     clusters.mapHostToCluster(host2, clusterName);
+    clusters.updateHostMappings(clusters.getHost(host1));
+    clusters.updateHostMappings(clusters.getHost(host2));
 
     createServiceComponentHost(clusterName, null, componentName1,
       host1, null);
@@ -289,9 +313,13 @@ public class JMXHostProviderTest {
       host2, null);
     createServiceComponentHost(clusterName, serviceName2, componentName7,
       host2, null);
+    createServiceComponentHost(clusterName, serviceName4, componentName8,
+      host1, null);
+    createServiceComponentHost(clusterName, serviceName4, componentName9,
+      host2, null);
 
     // Create configs
-    Map<String, String> configs = new HashMap<String, String>();
+    Map<String, String> configs = new HashMap<>();
     configs.put(NAMENODE_PORT_V1, "localhost:${ambari.dfs.datanode.http.port}");
     configs.put(DATANODE_PORT, "localhost:70075");
     configs.put("ambari.dfs.datanode.http.port", "70070");
@@ -299,16 +327,19 @@ public class JMXHostProviderTest {
     configs.put(DATANODE_HTTPS_PORT, "50475");
     configs.put(HDFS_HTTPS_POLICY, "HTTPS_ONLY");
 
-    Map<String, String> yarnConfigs = new HashMap<String, String>();
+    Map<String, String> yarnConfigs = new HashMap<>();
     yarnConfigs.put(RESOURCEMANAGER_PORT, "8088");
     yarnConfigs.put(NODEMANAGER_PORT, "8042");
     yarnConfigs.put(RESOURCEMANAGER_HTTPS_PORT, "8090");
     yarnConfigs.put(NODEMANAGER_HTTPS_PORT, "8044");
     yarnConfigs.put(YARN_HTTPS_POLICY, "HTTPS_ONLY");
 
-    Map<String, String> mapreduceConfigs = new HashMap<String, String>();
+    Map<String, String> mapreduceConfigs = new HashMap<>();
     mapreduceConfigs.put(MAPREDUCE_HTTPS_PORT, "19889");
     mapreduceConfigs.put(MAPREDUCE_HTTPS_POLICY, "HTTPS_ONLY");
+
+    Map<String, String> hbaseConfigs = new HashMap<>();
+    hbaseConfigs.put("hbase.ssl.enabled", "true");
 
     ConfigurationRequest cr1 = new ConfigurationRequest(clusterName,
       "hdfs-site", "versionN", configs, null);
@@ -330,13 +361,18 @@ public class JMXHostProviderTest {
       crReq.setDesiredConfig(Collections.singletonList(cr3));
       controller.updateClusters(Collections.singleton(crReq), null);
 
+    ConfigurationRequest cr4 = new ConfigurationRequest(clusterName,
+        "hbase-site", "versionN", hbaseConfigs, null);
+      crReq.setDesiredConfig(Collections.singletonList(cr4));
+      controller.updateClusters(Collections.singleton(crReq), null);
+
     Assert.assertEquals("versionN", cluster.getDesiredConfigByType("yarn-site")
       .getTag());
     Assert.assertEquals("localhost:${ambari.dfs.datanode.http.port}", cluster.getDesiredConfigByType
       ("hdfs-site").getProperties().get(NAMENODE_PORT_V1));
   }
 
-  private void createConfigsNameNodeHa() throws AmbariException, AuthorizationException {
+  private void createConfigsNameNodeHa() throws AmbariException, AuthorizationException, NoSuchFieldException, IllegalAccessException {
     String clusterName = "nnha";
     ClusterRequest r = new ClusterRequest(null, clusterName, "HDP-2.0.6", null);
     controller.createCluster(r);
@@ -357,18 +393,20 @@ public class JMXHostProviderTest {
 
     String host1 = "h1";
     clusters.addHost(host1);
-    Map<String, String> hostAttributes = new HashMap<String, String>();
+    Map<String, String> hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "5.9");
     clusters.getHost("h1").setHostAttributes(hostAttributes);
     String host2 = "h2";
     clusters.addHost(host2);
-    hostAttributes = new HashMap<String, String>();
+    hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "6.3");
     clusters.getHost("h2").setHostAttributes(hostAttributes);
     clusters.mapHostToCluster(host1, clusterName);
     clusters.mapHostToCluster(host2, clusterName);
+    clusters.updateHostMappings(clusters.getHost(host1));
+    clusters.updateHostMappings(clusters.getHost(host2));
 
     createServiceComponentHost(clusterName, serviceName, componentName1,
         host1, null);
@@ -384,7 +422,7 @@ public class JMXHostProviderTest {
         host2, null);
 
     // Create configs
-    Map<String, String> configs = new HashMap<String, String>();
+    Map<String, String> configs = new HashMap<>();
     configs.put("dfs.internal.nameservices", "ns");
     configs.put("dfs.namenode.http-address", "h1:50070");
     configs.put("dfs.namenode.http-address.ns.nn1", "h1:50071");
@@ -405,10 +443,7 @@ public class JMXHostProviderTest {
 
 
   @Test
-  public void testJMXPortMapInitAtServiceLevelVersion1() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
+  public void testJMXPortMapInitAtServiceLevelVersion1() throws Exception {
 
     createHDFSServiceConfigs(true);
 
@@ -416,19 +451,16 @@ public class JMXHostProviderTest {
     providerModule.registerResourceProvider(Resource.Type.Service);
     providerModule.registerResourceProvider(Resource.Type.Configuration);
     // Non default port addresses
-    Assert.assertEquals("70070", providerModule.getPort("c1", "NAMENODE", "localhost"));
-    Assert.assertEquals("70075", providerModule.getPort("c1", "DATANODE", "localhost"));
+    Assert.assertEquals("70070", providerModule.getPort("c1", "NAMENODE", "localhost", false));
+    Assert.assertEquals("70075", providerModule.getPort("c1", "DATANODE", "localhost", false));
     // Default port addresses
-    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost"));
-    Assert.assertEquals(null, providerModule.getPort("c1", "TASKTRACKER", "localhost"));
-    Assert.assertEquals(null, providerModule.getPort("c1", "HBASE_MASTER", "localhost"));
+    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost", false));
+    Assert.assertEquals(null, providerModule.getPort("c1", "TASKTRACKER", "localhost", false));
+    Assert.assertEquals(null, providerModule.getPort("c1", "HBASE_MASTER", "localhost", false));
   }
 
   @Test
-  public void testJMXPortMapInitAtServiceLevelVersion2() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
+  public void testJMXPortMapInitAtServiceLevelVersion2() throws Exception {
 
     createHDFSServiceConfigs(false);
 
@@ -436,20 +468,16 @@ public class JMXHostProviderTest {
     providerModule.registerResourceProvider(Resource.Type.Service);
     providerModule.registerResourceProvider(Resource.Type.Configuration);
     // Non default port addresses
-    Assert.assertEquals("70071", providerModule.getPort("c1", "NAMENODE", "localhost"));
-    Assert.assertEquals("70075", providerModule.getPort("c1", "DATANODE", "localhost"));
+    Assert.assertEquals("70071", providerModule.getPort("c1", "NAMENODE", "localhost", false));
+    Assert.assertEquals("70075", providerModule.getPort("c1", "DATANODE", "localhost", false));
     // Default port addresses
-    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost"));
-    Assert.assertEquals(null, providerModule.getPort("c1", "TASKTRACKER", "localhost"));
-    Assert.assertEquals(null, providerModule.getPort("c1", "HBASE_MASTER", "localhost"));
+    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost", false));
+    Assert.assertEquals(null, providerModule.getPort("c1", "TASKTRACKER", "localhost", false));
+    Assert.assertEquals(null, providerModule.getPort("c1", "HBASE_MASTER", "localhost", false));
   }
 
   @Test
-  public void testJMXPortMapNameNodeHa() throws
-      NoSuchParentResourceException,
-      ResourceAlreadyExistsException, UnsupportedPropertyException,
-      SystemException, AmbariException, NoSuchResourceException {
-
+  public void testJMXPortMapNameNodeHa() throws Exception {
     createConfigsNameNodeHa();
 
     JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
@@ -457,28 +485,24 @@ public class JMXHostProviderTest {
     providerModule.registerResourceProvider(Resource.Type.Configuration);
 
 
-    Assert.assertEquals("50071", providerModule.getPort("nnha", "NAMENODE", "h1"));
-    Assert.assertEquals("50072", providerModule.getPort("nnha", "NAMENODE", "h2"));
+    Assert.assertEquals("50071", providerModule.getPort("nnha", "NAMENODE", "h1", false));
+    Assert.assertEquals("50072", providerModule.getPort("nnha", "NAMENODE", "h2", false));
   }
 
   @Test
-  public void testJMXPortMapInitAtClusterLevel() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
-
+  public void testJMXPortMapInitAtClusterLevel() throws Exception {
     createConfigs();
 
     JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
     providerModule.registerResourceProvider(Resource.Type.Cluster);
     providerModule.registerResourceProvider(Resource.Type.Configuration);
     // Non default port addresses
-    Assert.assertEquals("70070", providerModule.getPort("c1", "NAMENODE", "localhost"));
-    Assert.assertEquals("70075", providerModule.getPort("c1", "DATANODE", "localhost"));
+    Assert.assertEquals("70070", providerModule.getPort("c1", "NAMENODE", "localhost", false));
+    Assert.assertEquals("70075", providerModule.getPort("c1", "DATANODE", "localhost", false));
     // Default port addresses
-    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost"));
-    Assert.assertEquals(null, providerModule.getPort("c1", "TASKTRACKER", "localhost"));
-    Assert.assertEquals(null, providerModule.getPort("c1", "HBASE_MASTER", "localhost"));
+    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost", false));
+    Assert.assertEquals(null, providerModule.getPort("c1", "TASKTRACKER", "localhost", false));
+    Assert.assertEquals(null, providerModule.getPort("c1", "HBASE_MASTER", "localhost", false));
   }
 
   @Test
@@ -491,7 +515,7 @@ public class JMXHostProviderTest {
     Service serviceMock = createNiceMock(Service.class);
     ServiceComponent serviceComponentMock = createNiceMock(ServiceComponent.class);
 
-    Map<String, ServiceComponentHost> hostComponents = new HashMap<String, ServiceComponentHost>();
+    Map<String, ServiceComponentHost> hostComponents = new HashMap<>();
     hostComponents.put("host1", null);
 
     expect(managementControllerMock.getClusters()).andReturn(clustersMock).anyTimes();
@@ -509,10 +533,7 @@ public class JMXHostProviderTest {
   }
 
   @Test
-  public void testJMXHttpsPort() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
+  public void testJMXHttpsPort() throws Exception {
     createConfigs();
     JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
     providerModule.registerResourceProvider(Resource.Type.Cluster);
@@ -524,10 +545,7 @@ public class JMXHostProviderTest {
   }
 
   @Test
-  public void testJMXHistoryServerHttpsPort() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
+  public void testJMXHistoryServerHttpsPort() throws Exception {
     createConfigs();
     JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
     providerModule.registerResourceProvider(Resource.Type.Cluster);
@@ -538,10 +556,7 @@ public class JMXHostProviderTest {
   }
 
   @Test
-  public void testJMXJournalNodeHttpsPort() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
+  public void testJMXJournalNodeHttpsPort() throws Exception {
     createConfigs();
     JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
     providerModule.registerResourceProvider(Resource.Type.Cluster);
@@ -551,10 +566,7 @@ public class JMXHostProviderTest {
   }
 
   @Test
-  public void testJMXDataNodeHttpsPort() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
+  public void testJMXDataNodeHttpsPort() throws Exception {
     createConfigs();
     JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
     providerModule.registerResourceProvider(Resource.Type.Cluster);
@@ -564,20 +576,26 @@ public class JMXHostProviderTest {
   }
 
   @Test
-  public void testJMXPortMapUpdate() throws
-    NoSuchParentResourceException,
-    ResourceAlreadyExistsException, UnsupportedPropertyException,
-    SystemException, AmbariException, NoSuchResourceException {
+  public void testJMXHbaseMasterHttps() throws Exception {
+    createConfigs();
+    JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
+    providerModule.registerResourceProvider(Resource.Type.Cluster);
+    providerModule.registerResourceProvider(Resource.Type.Configuration);
+    Assert.assertEquals("https", providerModule.getJMXProtocol("c1", "HBASE_MASTER"));
+    Assert.assertEquals("https", providerModule.getJMXProtocol("c1", "HBASE_REGIONSERVER"));
+  }
 
+  @Test
+  public void testJMXPortMapUpdate() throws Exception {
     createConfigs();
 
     JMXHostProviderModule providerModule = new JMXHostProviderModule(controller);
     providerModule.registerResourceProvider(Resource.Type.Cluster);
     providerModule.registerResourceProvider(Resource.Type.Configuration);
     // Non default port addresses
-    Assert.assertEquals("8088", providerModule.getPort("c1", "RESOURCEMANAGER", "localhost"));
+    Assert.assertEquals("8088", providerModule.getPort("c1", "RESOURCEMANAGER", "localhost", false));
 
-    Map<String, String> yarnConfigs = new HashMap<String, String>();
+    Map<String, String> yarnConfigs = new HashMap<>();
     yarnConfigs.put(RESOURCEMANAGER_PORT, "localhost:50030");
     yarnConfigs.put(NODEMANAGER_PORT, "localhost:11111");
     ConfigurationRequest cr2 = new ConfigurationRequest("c1",
@@ -586,15 +604,15 @@ public class JMXHostProviderTest {
     ClusterRequest crReq = new ClusterRequest(1L, "c1", null, null);
     crReq.setDesiredConfig(Collections.singletonList(cr2));
     controller.updateClusters(Collections.singleton(crReq), null);
-    Assert.assertEquals("50030", providerModule.getPort("c1", "RESOURCEMANAGER", "localhost"));
-    Assert.assertEquals("11111", providerModule.getPort("c1", "NODEMANAGER", "localhost"));
+    Assert.assertEquals("50030", providerModule.getPort("c1", "RESOURCEMANAGER", "localhost", false));
+    Assert.assertEquals("11111", providerModule.getPort("c1", "NODEMANAGER", "localhost", false));
 
     //Unrelated ports
-    Assert.assertEquals("70070", providerModule.getPort("c1", "NAMENODE", "localhost"));
-    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost"));
+    Assert.assertEquals("70070", providerModule.getPort("c1", "NAMENODE", "localhost", false));
+    Assert.assertEquals(null, providerModule.getPort("c1", "JOBTRACKER", "localhost", false));
 
     //test another host and component without property
-    Assert.assertNull(providerModule.getPort("c1", "HBASE_REGIONSERVER", "remotehost1"));
+    Assert.assertNull(providerModule.getPort("c1", "HBASE_REGIONSERVER", "remotehost1", false));
   }
 
   private static class JMXHostProviderModule extends AbstractProviderModule {
@@ -605,19 +623,18 @@ public class JMXHostProviderTest {
 
     Injector injector = createNiceMock(Injector.class);
     MaintenanceStateHelper maintenanceStateHelper = createNiceMock(MaintenanceStateHelper.class);
+    RepositoryVersionDAO repositoryVersionDAO = createNiceMock(RepositoryVersionDAO.class);
+
     {
       expect(injector.getInstance(Clusters.class)).andReturn(null);
       replay(maintenanceStateHelper, injector);
     }
 
-    ResourceProvider serviceResourceProvider = new ServiceResourceProvider(PropertyHelper
-      .getPropertyIds(Resource.Type.Service),
-      PropertyHelper.getKeyPropertyIds(Resource.Type.Service), controller, maintenanceStateHelper);
+    ResourceProvider serviceResourceProvider = new ServiceResourceProvider(controller,
+        maintenanceStateHelper, repositoryVersionDAO);
 
     ResourceProvider hostCompResourceProvider = new
-      HostComponentResourceProvider(PropertyHelper.getPropertyIds(Resource
-      .Type.HostComponent), PropertyHelper.getKeyPropertyIds(Resource.Type
-      .HostComponent), controller, injector);
+      HostComponentResourceProvider(controller);
 
     ResourceProvider configResourceProvider = new ConfigurationResourceProvider(
         controller);

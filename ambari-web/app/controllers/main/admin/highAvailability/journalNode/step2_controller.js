@@ -35,11 +35,21 @@ App.ManageJournalNodeWizardStep2Controller = Em.Controller.extend({
   selectedService: null,
   stepConfigs: [],
   serverConfigData: {},
-  moveJNConfig: $.extend(true, {}, require('data/configs/wizards/move_journal_node_properties').moveJNConfig),
+  moveJNConfig: {
+    serviceName: 'MISC',
+    displayName: 'MISC',
+    configCategories: [
+      App.ServiceConfigCategory.create({name: 'HDFS', displayName: 'HDFS'})
+    ],
+    sites: ['hdfs-site'],
+    configs: []
+  },
   once: false,
   isLoaded: false,
   versionLoaded: true,
   hideDependenciesInfoBar: true,
+
+  isNextDisabled: Em.computed.not('isLoaded'),
 
   clearStep: function () {
     this.get('stepConfigs').clear();
@@ -65,7 +75,7 @@ App.ManageJournalNodeWizardStep2Controller = Em.Controller.extend({
     var urlParams = [];
     var hdfsSiteTag = data.Clusters.desired_configs['hdfs-site'].tag;
     urlParams.push('(type=hdfs-site&tag=' + hdfsSiteTag + ')');
-    this.set("hdfsSiteTag", {name : "hdfsSiteTag", value : hdfsSiteTag});
+    this.set("hdfsSiteTag", {name: "hdfsSiteTag", value: hdfsSiteTag});
 
     App.ajax.send({
       name: 'admin.get.all_configurations',
@@ -79,10 +89,10 @@ App.ManageJournalNodeWizardStep2Controller = Em.Controller.extend({
   },
 
   onLoadConfigs: function (data) {
-    this.set('serverConfigData',data);
+    this.set('serverConfigData', data);
     this.set('content.nameServiceId', data.items[0].properties['dfs.nameservices']);
-    this.tweakServiceConfigs(this.get('moveJNConfig.configs'));
-    this.renderServiceConfigs(this.get('moveJNConfig'));
+    this.tweakServiceConfigs();
+    this.renderServiceConfigs();
     this.set('isLoaded', true);
   },
 
@@ -111,19 +121,51 @@ App.ManageJournalNodeWizardStep2Controller = Em.Controller.extend({
     return localDB;
   },
 
-  tweakServiceConfigs: function(configs) {
+  tweakServiceConfigs: function () {
     var localDB = this._prepareLocalDB();
     var dependencies = this._prepareDependencies();
-
-    configs.forEach(function (config) {
-      App.NnHaConfigInitializer.initialValue(config, localDB, dependencies);
-      config.isOverridable = false;
-    });
-
-    return configs;
+    if (App.get('hasNameNodeFederation')) {
+      this.setNameSpaceConfigs();
+    } else {
+      this.get('moveJNConfig').configs.pushObject({
+        "name": "dfs.namenode.shared.edits.dir",
+        "displayName": "dfs.namenode.shared.edits.dir",
+        "description": " The URI which identifies the group of JNs where the NameNodes will write/read edits.",
+        "isReconfigurable": false,
+        "recommendedValue": "qjournal://node1.example.com:8485;node2.example.com:8485;node3.example.com:8485/mycluster",
+        "value": "qjournal://node1.example.com:8485;node2.example.com:8485;node3.example.com:8485/mycluster",
+        "category": "HDFS",
+        "filename": "hdfs-site",
+        "serviceName": 'MISC'
+      });
+      this.get('moveJNConfig.configs').forEach(function (config) {
+        App.NnHaConfigInitializer.initialValue(config, localDB, dependencies);
+        config.isOverridable = false;
+      });
+    }
   },
 
-  renderServiceConfigs: function (_serviceConfig) {
+  setNameSpaceConfigs: function () {
+    const namespaces = this.get('content.nameServiceId').split(',');
+    const namespaceConfigValue = this.get('content.masterComponentHosts').filterProperty('component', 'JOURNALNODE').map(function (node) {
+      return node.hostName + ':8485'
+    }).join(';');
+    namespaces.forEach((namespace) => {
+      this.get('moveJNConfig.configs').pushObject({
+        "name": "dfs.namenode.shared.edits.dir." + namespace,
+        "displayName": "dfs.namenode.shared.edits.dir." + namespace,
+        "isReconfigurable": false,
+        "recommendedValue": "qjournal://" + namespaceConfigValue + '/' + namespace,
+        "value": "qjournal://" + namespaceConfigValue + '/' + namespace,
+        "category": "HDFS",
+        "filename": "hdfs-site",
+        "serviceName": 'MISC'
+      });
+    });
+  },
+
+  renderServiceConfigs: function () {
+    var _serviceConfig = this.get('moveJNConfig');
     var serviceConfig = App.ServiceConfig.create({
       serviceName: _serviceConfig.serviceName,
       displayName: _serviceConfig.displayName,
@@ -142,7 +184,7 @@ App.ManageJournalNodeWizardStep2Controller = Em.Controller.extend({
 
     this.get('stepConfigs').pushObject(serviceConfig);
     this.set('selectedService', this.get('stepConfigs').objectAt(0));
-    this.once = true;
+    this.set('once', true);
   },
 
   /**
@@ -156,8 +198,5 @@ App.ManageJournalNodeWizardStep2Controller = Em.Controller.extend({
       componentConfig.configs.pushObject(serviceConfigProperty);
       serviceConfigProperty.set('isEditable', serviceConfigProperty.get('isReconfigurable'));
     }, this);
-  },
-
-  isNextDisabled: Em.computed.not('isLoaded')
-
+  }
 });

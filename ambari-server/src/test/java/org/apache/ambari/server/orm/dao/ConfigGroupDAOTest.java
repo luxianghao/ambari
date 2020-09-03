@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,12 +17,14 @@
  */
 package org.apache.ambari.server.orm.dao;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
@@ -43,7 +45,6 @@ import org.junit.Test;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 
 import junit.framework.Assert;
 
@@ -79,8 +80,8 @@ public class ConfigGroupDAOTest {
   }
 
   @After
-  public void teardown() throws AmbariException {
-    injector.getInstance(PersistService.class).stop();
+  public void teardown() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
   private ConfigGroupEntity createConfigGroup(String clusterName,
@@ -103,7 +104,7 @@ public class ConfigGroupDAOTest {
     configGroupDAO.create(configGroupEntity);
 
     if (hosts != null && !hosts.isEmpty()) {
-      List<ConfigGroupHostMappingEntity> hostMappingEntities = new ArrayList<ConfigGroupHostMappingEntity>();
+      List<ConfigGroupHostMappingEntity> hostMappingEntities = new ArrayList<>();
 
       for (HostEntity host : hosts) {
         host.setClusterEntities(Arrays.asList(clusterEntity));
@@ -123,7 +124,7 @@ public class ConfigGroupDAOTest {
 
     if (configs != null && !configs.isEmpty()) {
       List<ConfigGroupConfigMappingEntity> configMappingEntities = new
-        ArrayList<ConfigGroupConfigMappingEntity>();
+        ArrayList<>();
 
       for (ClusterConfigEntity config : configs) {
         config.setClusterEntity(clusterEntity);
@@ -153,9 +154,11 @@ public class ConfigGroupDAOTest {
     ConfigGroupEntity configGroupEntity = createConfigGroup("c1", "hdfs-1",
       "HDFS", "some description", null, null);
 
+    Long clusterId = clusterDAO.findByName("c1").getClusterId();
+
     Assert.assertNotNull(configGroupEntity);
     Assert.assertEquals("c1", configGroupEntity.getClusterEntity().getClusterName());
-    Assert.assertEquals(Long.valueOf(1), configGroupEntity.getClusterEntity()
+    Assert.assertEquals(clusterId, configGroupEntity.getClusterEntity()
       .getClusterId());
     Assert.assertEquals("hdfs-1", configGroupEntity.getGroupName());
     Assert.assertEquals("HDFS", configGroupEntity.getTag());
@@ -169,11 +172,13 @@ public class ConfigGroupDAOTest {
     List<ConfigGroupEntity> configGroupEntities = configGroupDAO.findAllByTag
       ("HDFS");
 
+    Long clusterId = clusterDAO.findByName("c1").getClusterId();
+
     Assert.assertNotNull(configGroupEntities);
     ConfigGroupEntity configGroupEntity = configGroupEntities.get(0);
     Assert.assertNotNull(configGroupEntity);
     Assert.assertEquals("c1", configGroupEntity.getClusterEntity().getClusterName());
-    Assert.assertEquals(Long.valueOf(1), configGroupEntity.getClusterEntity()
+    Assert.assertEquals(clusterId, configGroupEntity.getClusterEntity()
       .getClusterId());
     Assert.assertEquals("hdfs-1", configGroupEntity.getGroupName());
     Assert.assertEquals("HDFS", configGroupEntity.getTag());
@@ -186,9 +191,11 @@ public class ConfigGroupDAOTest {
 
     ConfigGroupEntity configGroupEntity = configGroupDAO.findByName("hdfs-1");
 
+    Long clusterId = clusterDAO.findByName("c1").getClusterId();
+
     Assert.assertNotNull(configGroupEntity);
     Assert.assertEquals("c1", configGroupEntity.getClusterEntity().getClusterName());
-    Assert.assertEquals(Long.valueOf(1), configGroupEntity.getClusterEntity()
+    Assert.assertEquals(clusterId, configGroupEntity.getClusterEntity()
       .getClusterId());
     Assert.assertEquals("hdfs-1", configGroupEntity.getGroupName());
     Assert.assertEquals("HDFS", configGroupEntity.getTag());
@@ -197,7 +204,7 @@ public class ConfigGroupDAOTest {
 
   @Test
   public void testFindByHost() throws Exception {
-    List<HostEntity> hosts = new ArrayList<HostEntity>();
+    List<HostEntity> hosts = new ArrayList<>();
     // Partially constructed HostEntity that will persisted in {@link createConfigGroup}
     HostEntity hostEntity = new HostEntity();
     hostEntity.setHostName("h1");
@@ -237,7 +244,7 @@ public class ConfigGroupDAOTest {
     configEntity.setStack(stackEntity);
 
     List<ClusterConfigEntity> configEntities = new
-      ArrayList<ClusterConfigEntity>();
+      ArrayList<>();
     configEntities.add(configEntity);
 
     ConfigGroupEntity configGroupEntity =

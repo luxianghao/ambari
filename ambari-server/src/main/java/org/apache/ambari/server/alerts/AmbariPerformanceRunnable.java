@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,7 +29,7 @@ import org.apache.ambari.server.actionmanager.ActionManager;
 import org.apache.ambari.server.actionmanager.RequestStatus;
 import org.apache.ambari.server.api.query.Query;
 import org.apache.ambari.server.api.query.QueryImpl;
-import org.apache.ambari.server.api.query.render.DefaultRenderer;
+import org.apache.ambari.server.api.query.render.MinimalRenderer;
 import org.apache.ambari.server.api.resources.ClusterResourceDefinition;
 import org.apache.ambari.server.api.services.BaseRequest;
 import org.apache.ambari.server.controller.spi.ClusterController;
@@ -157,12 +157,19 @@ public class AmbariPerformanceRunnable extends AlertRunnable {
         SecurityContextHolder.getContext().setAuthentication(authenticationToken);
 
         // create the request
-        Map<Resource.Type, String> mapIds = new HashMap<Resource.Type, String>();
+        Map<Resource.Type, String> mapIds = new HashMap<>();
         mapIds.put(Resource.Type.Cluster, cluster.getClusterName());
 
         ClusterController clusterController = ClusterControllerHelper.getClusterController();
         Query query = new QueryImpl(mapIds, new ClusterResourceDefinition(), clusterController);
-        query.setRenderer(new DefaultRenderer());
+        query.setRenderer(new MinimalRenderer());
+        query.addProperty("Clusters/desired_configs", null);
+        query.addProperty("Clusters/credential_store_properties", null);
+        query.addProperty("Clusters/desired_service_config_versions", null);
+        query.addProperty("Clusters/health_report", null);
+        query.addProperty("Clusters/total_hosts", null);
+        query.addProperty("alerts_summary", null);
+        query.addProperty("alerts_summary_hosts", null);
         query.execute();
       }
     };
@@ -214,8 +221,8 @@ public class AmbariPerformanceRunnable extends AlertRunnable {
      *          the default value to use if the definition does not have a
      *          critical threshold paramter.
      */
-    private PerformanceArea(String label, String warningParameter, int defaultWarningThreshold,
-        String criticalParameter, int defaultCriticalThreshold) {
+    PerformanceArea(String label, String warningParameter, int defaultWarningThreshold,
+                    String criticalParameter, int defaultCriticalThreshold) {
       m_label = label;
       m_warningParameter = warningParameter;
       m_defaultWarningThreshold = defaultWarningThreshold;
@@ -336,7 +343,7 @@ public class AmbariPerformanceRunnable extends AlertRunnable {
     alert.setLabel(entity.getLabel());
     alert.setText(overview);
     alert.setTimestamp(System.currentTimeMillis());
-    alert.setCluster(cluster.getClusterName());
+    alert.setClusterId(cluster.getClusterId());
 
     return Collections.singletonList(alert);
   }
@@ -364,11 +371,11 @@ public class AmbariPerformanceRunnable extends AlertRunnable {
       Object value = parameter.getValue();
 
       if (StringUtils.equals(parameter.getName(), area.m_warningParameter)) {
-        warningThreshold = getThresholdValue(value, warningThreshold);
+        warningThreshold = alertHelper.getThresholdValue(value, warningThreshold);
       }
 
       if (StringUtils.equals(parameter.getName(), area.m_criticalParameter)) {
-        criticalThreshold = getThresholdValue(value, criticalThreshold);
+        criticalThreshold = alertHelper.getThresholdValue(value, criticalThreshold);
       }
     }
 

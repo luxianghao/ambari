@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,18 +26,33 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.agent.CommandReport;
+import org.apache.ambari.server.agent.stomp.AgentConfigsHolder;
+import org.apache.ambari.server.agent.stomp.MetadataHolder;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.controller.AmbariManagementControllerImpl;
 import org.apache.ambari.server.controller.ConfigurationRequest;
-import org.apache.ambari.server.serveraction.AbstractServerAction;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.serveraction.ServerAction;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradeChangeDefinition.ConditionalField;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradeChangeDefinition.ConfigurationKeyValue;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradeChangeDefinition.IfValueMatchType;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradeChangeDefinition.Insert;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradeChangeDefinition.Masked;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradeChangeDefinition.Replace;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradeChangeDefinition.Transfer;
+import org.apache.ambari.server.stack.upgrade.ConfigureTask;
+import org.apache.ambari.server.stack.upgrade.Direction;
+import org.apache.ambari.server.stack.upgrade.PropertyKeyState;
+import org.apache.ambari.server.stack.upgrade.TransferOperation;
+import org.apache.ambari.server.stack.upgrade.orchestrate.UpgradeContext;
 import org.apache.ambari.server.state.Cluster;
-import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.ConfigMergeHelper;
@@ -45,13 +60,6 @@ import org.apache.ambari.server.state.ConfigMergeHelper.ThreeWayValue;
 import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.PropertyInfo;
 import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.ConfigurationKeyValue;
-import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.Masked;
-import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.Replace;
-import org.apache.ambari.server.state.stack.upgrade.ConfigUpgradeChangeDefinition.Transfer;
-import org.apache.ambari.server.state.stack.upgrade.ConfigureTask;
-import org.apache.ambari.server.state.stack.upgrade.PropertyKeyState;
-import org.apache.ambari.server.state.stack.upgrade.TransferOperation;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -81,15 +89,10 @@ import com.google.inject.Provider;
  * property value</li>
  * </ul>
  */
-public class ConfigureAction extends AbstractServerAction {
+public class ConfigureAction extends AbstractUpgradeServerAction {
 
-  private static Logger LOG = LoggerFactory.getLogger(ConfigureAction.class);
-
-  /**
-   * Used to lookup the cluster.
-   */
-  @Inject
-  private Clusters m_clusters;
+  private static final Logger LOG = LoggerFactory.getLogger(ConfigureAction.class);
+  private static final String ALL_SYMBOL = "*";
 
   /**
    * Used to update the configuration properties.
@@ -125,6 +128,15 @@ public class ConfigureAction extends AbstractServerAction {
    */
   @Inject
   private Gson m_gson;
+
+  @Inject
+  private Provider<AmbariManagementControllerImpl> m_ambariManagementController;
+
+  @Inject
+  private Provider<MetadataHolder> m_metadataHolder;
+
+  @Inject
+  private Provider<AgentConfigsHolder> m_agentConfigsHolder;
 
   /**
    * Aside from the normal execution, this method performs the following logic, with
@@ -180,12 +192,24 @@ public class ConfigureAction extends AbstractServerAction {
     }
 
     String clusterName = commandParameters.get("clusterName");
-    Cluster cluster = m_clusters.getCluster(clusterName);
+    Cluster cluster = getClusters().getCluster(clusterName);
+    UpgradeContext upgradeContext = getUpgradeContext(cluster);
 
     // such as hdfs-site or hbase-env
     String configType = commandParameters.get(ConfigureTask.PARAMETER_CONFIG_TYPE);
+    String serviceName = cluster.getServiceByConfigType(configType);
 
-    // extract transfers
+    // !!! we couldn't get the service based on its config type, so try the associated
+    if (StringUtils.isBlank(serviceName)) {
+      serviceName = commandParameters.get(ConfigureTask.PARAMETER_ASSOCIATED_SERVICE);
+    }
+
+    RepositoryVersionEntity sourceRepoVersion = upgradeContext.getSourceRepositoryVersion(serviceName);
+    RepositoryVersionEntity targetRepoVersion = upgradeContext.getTargetRepositoryVersion(serviceName);
+    StackId sourceStackId = sourceRepoVersion.getStackId();
+    StackId targetStackId = targetRepoVersion.getStackId();
+
+    // extract setters
     List<ConfigurationKeyValue> keyValuePairs = Collections.emptyList();
     String keyValuePairJson = commandParameters.get(ConfigureTask.PARAMETER_KEY_VALUE_PAIRS);
     if (null != keyValuePairJson) {
@@ -198,8 +222,7 @@ public class ConfigureAction extends AbstractServerAction {
     List<Transfer> transfers = Collections.emptyList();
     String transferJson = commandParameters.get(ConfigureTask.PARAMETER_TRANSFERS);
     if (null != transferJson) {
-      transfers = m_gson.fromJson(
-        transferJson, new TypeToken<List<Transfer>>(){}.getType());
+      transfers = m_gson.fromJson(transferJson, new TypeToken<List<Transfer>>(){}.getType());
       transfers = getAllowedTransfers(cluster, configType, transfers);
     }
 
@@ -207,19 +230,26 @@ public class ConfigureAction extends AbstractServerAction {
     List<Replace> replacements = Collections.emptyList();
     String replaceJson = commandParameters.get(ConfigureTask.PARAMETER_REPLACEMENTS);
     if (null != replaceJson) {
-      replacements = m_gson.fromJson(
-          replaceJson, new TypeToken<List<Replace>>(){}.getType());
+      replacements = m_gson.fromJson(replaceJson, new TypeToken<List<Replace>>(){}.getType());
       replacements = getAllowedReplacements(cluster, configType, replacements);
     }
 
+    // extract insertions
+    List<Insert> insertions = Collections.emptyList();
+    String insertJson = commandParameters.get(ConfigureTask.PARAMETER_INSERTIONS);
+    if (null != insertJson) {
+      insertions = m_gson.fromJson(insertJson, new TypeToken<List<Insert>>(){}.getType());
+      insertions = getAllowedInsertions(cluster, configType, insertions);
+    }
+
     // if there is nothing to do, then skip the task
-    if (keyValuePairs.isEmpty() && transfers.isEmpty() && replacements.isEmpty()) {
-      String message = "cluster={0}, type={1}, transfers={2}, replacements={3}, configurations={4}";
+    if (keyValuePairs.isEmpty() && transfers.isEmpty() && replacements.isEmpty() && insertions.isEmpty()) {
+      String message = "cluster={0}, type={1}, transfers={2}, replacements={3}, insertions={4}, configurations={5}";
       message = MessageFormat.format(message, clusterName, configType, transfers, replacements,
-          keyValuePairs);
+          insertions, keyValuePairs);
 
       StringBuilder buffer = new StringBuilder(
-          "Skipping this configuration task since none of the conditions were met and there are no transfers or replacements").append("\n");
+          "Skipping this configuration task since none of the conditions were met and there are no transfers, replacements, or insertions.").append("\n");
 
       buffer.append(message);
 
@@ -229,9 +259,12 @@ public class ConfigureAction extends AbstractServerAction {
     // if only 1 of the required properties was null and no transfer properties,
     // then something went wrong
     if (null == clusterName || null == configType
-        || (keyValuePairs.isEmpty() && transfers.isEmpty() && replacements.isEmpty())) {
-      String message = "cluster={0}, type={1}, transfers={2}, replacements={3}, configurations={4}";
-      message = MessageFormat.format(message, clusterName, configType, transfers, replacements, keyValuePairs);
+        || (keyValuePairs.isEmpty() && transfers.isEmpty() && replacements.isEmpty() && insertions.isEmpty())) {
+      String message = "cluster={0}, type={1}, transfers={2}, replacements={3}, insertions={4}, configurations={5}";
+
+      message = MessageFormat.format(message, clusterName, configType, transfers, replacements,
+          insertions, keyValuePairs);
+
       return createCommandReport(0, HostRoleStatus.FAILED, "{}", "", message);
     }
 
@@ -240,18 +273,17 @@ public class ConfigureAction extends AbstractServerAction {
     if (desiredConfig == null) {
       throw new AmbariException("Could not find desired config type with name " + configType);
     }
+
     Config config = cluster.getConfig(configType, desiredConfig.getTag());
     if (config == null) {
       throw new AmbariException("Could not find config type with name " + configType);
     }
 
-    StackId currentStack = cluster.getCurrentStackVersion();
-    StackId targetStack = cluster.getDesiredStackVersion();
     StackId configStack = config.getStackId();
 
     // !!! initial reference values
     Map<String, String> base = config.getProperties();
-    Map<String, String> newValues = new HashMap<String, String>(base);
+    Map<String, String> newValues = new HashMap<>(base);
 
     boolean changedValues = false;
 
@@ -287,7 +319,7 @@ public class ConfigureAction extends AbstractServerAction {
                 case YAML_ARRAY: {
                   // turn c6401,c6402 into ['c6401',c6402']
                   String[] splitValues = StringUtils.split(valueToCopy, ',');
-                  List<String> quotedValues = new ArrayList<String>(splitValues.length);
+                  List<String> quotedValues = new ArrayList<>(splitValues.length);
                   for (String splitValue : splitValues) {
                     quotedValues.add("'" + StringUtils.trim(splitValue) + "'");
                   }
@@ -306,7 +338,8 @@ public class ConfigureAction extends AbstractServerAction {
             newValues.put(transfer.toKey, valueToCopy);
 
             // append standard output
-            outputBuffer.append(MessageFormat.format("Created {0}/{1} = \"{2}\"\n", configType,
+            updateBufferWithMessage(outputBuffer, MessageFormat.format("Created {0}/{1} = \"{2}\"",
+                configType,
                 transfer.toKey, mask(transfer, valueToCopy)));
           }
           break;
@@ -319,33 +352,36 @@ public class ConfigureAction extends AbstractServerAction {
             changedValues = true;
 
             // append standard output
-            outputBuffer.append(MessageFormat.format("Renamed {0}/{1} to {2}/{3}\n", configType,
+            updateBufferWithMessage(outputBuffer,
+                MessageFormat.format("Renamed {0}/{1} to {2}/{3}", configType,
                 transfer.fromKey, configType, transfer.toKey));
+
           } else if (StringUtils.isNotBlank(transfer.defaultValue)) {
             newValues.put(transfer.toKey, transfer.defaultValue);
             changedValues = true;
 
             // append standard output
-            outputBuffer.append(MessageFormat.format(
-                "Created {0}/{1} with default value \"{2}\"\n",
+            updateBufferWithMessage(outputBuffer,
+                MessageFormat.format("Created {0}/{1} with default value \"{2}\"",
                 configType, transfer.toKey, mask(transfer, transfer.defaultValue)));
           }
 
           break;
         case DELETE:
-          if ("*".equals(transfer.deleteKey)) {
+          if (ALL_SYMBOL.equals(transfer.deleteKey)) {
             newValues.clear();
 
             // append standard output
-            outputBuffer.append(MessageFormat.format("Deleted all keys from {0}\n", configType));
+            updateBufferWithMessage(outputBuffer,
+                MessageFormat.format("Deleted all keys from {0}", configType));
 
             for (String keeper : transfer.keepKeys) {
               if (base.containsKey(keeper) && base.get(keeper) != null) {
                 newValues.put(keeper, base.get(keeper));
 
                 // append standard output
-                outputBuffer.append(MessageFormat.format("Preserved {0}/{1} after delete\n",
-                  configType, keeper));
+                updateBufferWithMessage(outputBuffer,
+                    MessageFormat.format("Preserved {0}/{1} after delete", configType, keeper));
               }
             }
 
@@ -358,7 +394,8 @@ public class ConfigureAction extends AbstractServerAction {
                 newValues.put(changed, base.get(changed));
 
                 // append standard output
-                outputBuffer.append(MessageFormat.format("Preserved {0}/{1} after delete\n",
+                updateBufferWithMessage(outputBuffer,
+                    MessageFormat.format("Preserved {0}/{1} after delete",
                     configType, changed));
               }
             }
@@ -369,7 +406,8 @@ public class ConfigureAction extends AbstractServerAction {
             changedValues = true;
 
             // append standard output
-            outputBuffer.append(MessageFormat.format("Deleted {0}/{1}\n", configType,
+            updateBufferWithMessage(outputBuffer,
+                MessageFormat.format("Deleted {0}/{1}", configType,
                 transfer.deleteKey));
           }
 
@@ -378,7 +416,7 @@ public class ConfigureAction extends AbstractServerAction {
     }
 
     // set all key/value pairs
-    if (null != keyValuePairs && !keyValuePairs.isEmpty()) {
+    if (!keyValuePairs.isEmpty()) {
       for (ConfigurationKeyValue keyValuePair : keyValuePairs) {
         String key = keyValuePair.key;
         String value = keyValuePair.value;
@@ -387,9 +425,10 @@ public class ConfigureAction extends AbstractServerAction {
           String oldValue = base.get(key);
 
           // !!! values are not changing, so make this a no-op
-          if (null != oldValue && value.equals(oldValue)) {
-            if (currentStack.equals(targetStack) && !changedValues) {
-              outputBuffer.append(MessageFormat.format(
+          if (StringUtils.equals(value, oldValue)) {
+            if (sourceStackId.equals(targetStackId) && !changedValues) {
+              updateBufferWithMessage(outputBuffer,
+                  MessageFormat.format(
                   "{0}/{1} for cluster {2} would not change, skipping setting", configType, key,
                   clusterName));
 
@@ -409,56 +448,118 @@ public class ConfigureAction extends AbstractServerAction {
           if (StringUtils.isEmpty(value)) {
             message = MessageFormat.format("{0}/{1} changed to an empty value", configType, key);
           } else {
-            message = MessageFormat.format("{0}/{1} changed to \"{2}\"\n", configType, key,
+            message = MessageFormat.format("{0}/{1} changed to \"{2}\"", configType, key,
                 mask(keyValuePair, value));
           }
 
-          outputBuffer.append(message);
+          updateBufferWithMessage(outputBuffer, message);
         }
       }
     }
 
-    // !!! string replacements happen only on the new values.
+    // replacements happen only on the new values (as they are initialized from
+    // the existing pre-upgrade values)
     for (Replace replacement : replacements) {
       // the key might exist but might be null, so we need to check this
       // condition when replacing a part of the value
       String toReplace = newValues.get(replacement.key);
       if (StringUtils.isNotBlank(toReplace)) {
         if (!toReplace.contains(replacement.find)) {
-          outputBuffer.append(MessageFormat.format("String \"{0}\" was not found in {1}/{2}\n",
+          updateBufferWithMessage(outputBuffer,
+              MessageFormat.format("String \"{0}\" was not found in {1}/{2}",
               replacement.find, configType, replacement.key));
         } else {
           String replaced = StringUtils.replace(toReplace, replacement.find, replacement.replaceWith);
 
           newValues.put(replacement.key, replaced);
 
-          outputBuffer.append(
-              MessageFormat.format("Replaced {0}/{1} containing \"{2}\" with \"{3}\"", configType,
-                  replacement.key, replacement.find, replacement.replaceWith));
-
-          outputBuffer.append(System.lineSeparator());
+          // customize the replacement message if the new value is empty
+          if (StringUtils.isEmpty(replacement.replaceWith)) {
+            updateBufferWithMessage(outputBuffer, MessageFormat.format(
+                "Removed \"{0}\" from {1}/{2}", replacement.find, configType, replacement.key));
+          } else {
+            updateBufferWithMessage(outputBuffer,
+                MessageFormat.format("Replaced {0}/{1} containing \"{2}\" with \"{3}\"", configType,
+                    replacement.key, replacement.find, replacement.replaceWith));
+          }
         }
       } else {
-        outputBuffer.append(MessageFormat.format(
+        updateBufferWithMessage(outputBuffer, MessageFormat.format(
             "Skipping replacement for {0}/{1} because it does not exist or is empty.",
             configType, replacement.key));
-        outputBuffer.append(System.lineSeparator());
+      }
+    }
+
+    // insertions happen only on the new values (as they are initialized from
+    // the existing pre-upgrade values)
+    for (Insert insert : insertions) {
+      String valueToInsertInto = newValues.get(insert.key);
+
+      // if the key doesn't exist, then do no work
+      if (StringUtils.isNotBlank(valueToInsertInto)) {
+        // make this insertion idempotent - don't do it if the value already
+        // contains the content
+        if (StringUtils.contains(valueToInsertInto, insert.value)) {
+          updateBufferWithMessage(outputBuffer,
+              MessageFormat.format("Skipping insertion for {0}/{1} because it already contains {2}",
+                  configType, insert.key, insert.value));
+
+          continue;
+        }
+
+        // new line work
+        String valueToInsert = insert.value;
+        if (insert.newlineBefore) {
+          valueToInsert = System.lineSeparator() + valueToInsert;
+        }
+
+        // new line work
+        if (insert.newlineAfter) {
+          valueToInsert = valueToInsert + System.lineSeparator();
+        }
+
+        switch (insert.insertType) {
+          case APPEND:
+            valueToInsertInto = valueToInsertInto + valueToInsert;
+            break;
+          case PREPEND:
+            valueToInsertInto = valueToInsert + valueToInsertInto;
+            break;
+          default:
+            LOG.error("Unable to insert {0}/{1} with unknown insertion type of {2}", configType,
+                insert.key, insert.insertType);
+            break;
+        }
+
+        newValues.put(insert.key, valueToInsertInto);
+
+        updateBufferWithMessage(outputBuffer, MessageFormat.format(
+            "Updated {0}/{1} by inserting \"{2}\"", configType, insert.key, insert.value));
+      } else {
+        updateBufferWithMessage(outputBuffer, MessageFormat.format(
+            "Skipping insertion for {0}/{1} because it does not exist or is empty.", configType,
+            insert.key));
       }
     }
 
     // !!! check to see if we're going to a new stack and double check the
     // configs are for the target.  Then simply update the new properties instead
     // of creating a whole new history record since it was already done
-    if (!targetStack.equals(currentStack) && targetStack.equals(configStack)) {
+    if (!targetStackId.equals(sourceStackId) && targetStackId.equals(configStack)) {
       config.setProperties(newValues);
-      config.persist(false);
+      config.save();
+
+      m_metadataHolder.get().updateData(m_ambariManagementController.get().getClusterMetadataOnConfigsUpdate(cluster));
+      m_agentConfigsHolder.get().updateData(cluster.getClusterId(), null);
 
       return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", outputBuffer.toString(), "");
     }
 
     // !!! values are different and within the same stack.  create a new
     // config and service config version
-    String serviceVersionNote = "Stack Upgrade";
+    Direction direction = upgradeContext.getDirection();
+    String serviceVersionNote = String.format("%s %s %s", direction.getText(true),
+        direction.getPreposition(), upgradeContext.getRepositoryVersion().getVersion());
 
     String auditName = getExecutionCommand().getRoleParams().get(ServerAction.ACTION_USER_NAME);
 
@@ -466,12 +567,10 @@ public class ConfigureAction extends AbstractServerAction {
       auditName = m_configuration.getAnonymousAuditName();
     }
 
-    m_configHelper.createConfigType(cluster, m_controller, configType,
+    m_configHelper.createConfigType(cluster, targetStackId, m_controller, configType,
         newValues, auditName, serviceVersionNote);
 
-    String message = "Finished updating configuration ''{0}''";
-    message = MessageFormat.format(message, configType);
-    return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", message, "");
+    return createCommandReport(0, HostRoleStatus.COMPLETED, "{}", outputBuffer.toString(), "");
   }
 
 
@@ -492,7 +591,7 @@ public class ConfigureAction extends AbstractServerAction {
    */
   private List<String> findValuesToPreserve(String clusterName, Config config)
       throws AmbariException {
-    List<String> result = new ArrayList<String>();
+    List<String> result = new ArrayList<>();
 
     Map<String, Map<String, ThreeWayValue>> conflicts =
         m_mergeHelper.getConflicts(clusterName, config.getStackId());
@@ -513,13 +612,13 @@ public class ConfigureAction extends AbstractServerAction {
 
 
     String configType = config.getType();
-    Cluster cluster = m_clusters.getCluster(clusterName);
+    Cluster cluster = getClusters().getCluster(clusterName);
     StackId oldStack = cluster.getCurrentStackVersion();
 
     // iterate over all properties for every cluster service; if the property
     // has the correct config type (ie oozie-site or hdfs-site) then add it to
     // the list of original stack propertiess
-    Set<String> stackPropertiesForType = new HashSet<String>(50);
+    Set<String> stackPropertiesForType = new HashSet<>(50);
     for (String serviceName : cluster.getServices().keySet()) {
       Set<PropertyInfo> serviceProperties = m_ambariMetaInfo.get().getServiceProperties(
           oldStack.getStackName(), oldStack.getStackVersion(), serviceName);
@@ -569,9 +668,9 @@ public class ConfigureAction extends AbstractServerAction {
     List<Replace> allowedReplacements= new ArrayList<>();
 
     for(Replace replacement: replacements){
-      if(isOperationAllowed(cluster, configType, replacement.key,
-          replacement.ifKey, replacement.ifType, replacement.ifValue, replacement.ifKeyState))
+      if(isOperationAllowed(cluster, configType, replacement.key, replacement)) {
         allowedReplacements.add(replacement);
+      }
     }
 
     return allowedReplacements;
@@ -581,9 +680,9 @@ public class ConfigureAction extends AbstractServerAction {
     List<ConfigurationKeyValue> allowedSets = new ArrayList<>();
 
     for(ConfigurationKeyValue configurationKeyValue: sets){
-      if(isOperationAllowed(cluster, configType, configurationKeyValue.key,
-          configurationKeyValue.ifKey, configurationKeyValue.ifType, configurationKeyValue.ifValue, configurationKeyValue.ifKeyState))
+      if(isOperationAllowed(cluster, configType, configurationKeyValue.key, configurationKeyValue)) {
         allowedSets.add(configurationKeyValue);
+      }
     }
 
     return allowedSets;
@@ -592,51 +691,96 @@ public class ConfigureAction extends AbstractServerAction {
   private List<Transfer> getAllowedTransfers(Cluster cluster, String configType, List<Transfer> transfers){
     List<Transfer> allowedTransfers = new ArrayList<>();
     for (Transfer transfer : transfers) {
-      String key = "";
-      if(transfer.operation == TransferOperation.DELETE)
+      String key;
+      if(transfer.operation == TransferOperation.DELETE) {
         key = transfer.deleteKey;
-      else
+      } else {
         key = transfer.fromKey;
+      }
 
-      if(isOperationAllowed(cluster, configType, key,
-          transfer.ifKey, transfer.ifType, transfer.ifValue, transfer.ifKeyState))
+      if(isOperationAllowed(cluster, configType, key, transfer)) {
         allowedTransfers.add(transfer);
+      }
     }
 
     return allowedTransfers;
   }
 
-  private boolean isOperationAllowed(Cluster cluster, String configType, String targetPropertyKey,
-      String ifKey, String ifType, String ifValue, PropertyKeyState ifKeyState){
+
+  private List<Insert> getAllowedInsertions(Cluster cluster, String configType, List<Insert> insertions){
+    return insertions.stream()
+      .filter(insertion -> isOperationAllowed(cluster, configType, insertion.key, insertion))
+      .collect(Collectors.toList());
+  }
+
+
+  /**
+   * Gets whether the {@code set} directive is valid based on the optional
+   * attributes specified.
+   *
+   * @param cluster
+   *          the cluster (not {@code null}).
+   * @param configType
+   *          the configuration type for the change (not {@code null}).
+   * @param targetPropertyKey
+   *          the property to set (not {@code null}).
+   * @param operationItem
+   *           operation field compatible with {@link ConditionalField}
+   * @return {@code true} if the set operation should be executed by the
+   *         upgrade, {@code false} otherwise.
+   */
+  private boolean isOperationAllowed(Cluster cluster, String configType, String targetPropertyKey, ConditionalField operationItem)
+  {
     boolean isAllowed = true;
 
-    boolean ifKeyIsNotBlank = StringUtils.isNotBlank(ifKey);
-    boolean ifTypeIsNotBlank = StringUtils.isNotBlank(ifType);
+    boolean ifKeyIsNotBlank = StringUtils.isNotBlank(operationItem.ifKey);
+    boolean ifTypeIsNotBlank = StringUtils.isNotBlank(operationItem.ifType);
+    boolean ifValueIsBlank = StringUtils.isBlank(operationItem.ifValue);
 
-    if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifKeyState == PropertyKeyState.ABSENT) {
-      boolean keyPresent = getDesiredConfigurationKeyPresence(cluster, ifType, ifKey);
+    // if-key/if-type and no value - set only if absent
+    if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifValueIsBlank && operationItem.ifKeyState == PropertyKeyState.ABSENT) {
+      boolean keyPresent = getDesiredConfigurationKeyPresence(cluster, operationItem.ifType, operationItem.ifKey);
       if (keyPresent) {
         LOG.info("Skipping property operation for {}/{} as the key {} for {} is present",
-          configType, targetPropertyKey, ifKey, ifType);
+          configType, targetPropertyKey, operationItem.ifKey, operationItem.ifType);
         isAllowed = false;
       }
-    } else if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifValue == null &&
-      ifKeyState == PropertyKeyState.PRESENT) {
-      boolean keyPresent = getDesiredConfigurationKeyPresence(cluster, ifType, ifKey);
+      // if-key/if-type and no value - set only is present
+    } else if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifValueIsBlank
+      && operationItem.ifKeyState == PropertyKeyState.PRESENT) {
+
+      boolean keyPresent = getDesiredConfigurationKeyPresence(cluster, operationItem.ifType, operationItem.ifKey);
       if (!keyPresent) {
         LOG.info("Skipping property operation for {}/{} as the key {} for {} is not present",
-          configType, targetPropertyKey, ifKey, ifType);
+          configType, targetPropertyKey, operationItem.ifKey, operationItem.ifType);
         isAllowed = false;
       }
-    } else if (ifKeyIsNotBlank && ifTypeIsNotBlank && ifValue != null) {
+      // if-key/if-type and a value to check - set only if values match
+    } else if (ifKeyIsNotBlank && ifTypeIsNotBlank && !ifValueIsBlank) {
+      String checkValue = getDesiredConfigurationValue(cluster, operationItem.ifType, operationItem.ifKey);
 
-      String ifConfigType = ifType;
-      String checkValue = getDesiredConfigurationValue(cluster, ifConfigType, ifKey);
-      if (!ifValue.toLowerCase().equals(StringUtils.lowerCase(checkValue))) {
-        // skip adding
-        LOG.info("Skipping property operation for {}/{} as the value {} for {}/{} is not equal to {}",
-                 configType, targetPropertyKey, checkValue, ifConfigType, ifKey, ifValue);
-        isAllowed = false;
+      // the check value is blank and there is an if-key-state of ABSENT - in
+      // this case, it means set the value if it matches or if it's absent
+      if (operationItem.ifKeyState == PropertyKeyState.ABSENT) {
+        boolean keyPresent = getDesiredConfigurationKeyPresence(cluster, operationItem.ifType, operationItem.ifKey);
+        if (!keyPresent) {
+          return true;
+        }
+      }
+
+      // the if-key was found, so we need to do a comparison
+      if (operationItem.ifValueMatchType == IfValueMatchType.PARTIAL) {
+        if (!StringUtils.containsIgnoreCase(checkValue, operationItem.ifValue) ^ operationItem.ifValueNotMatched) {
+          LOG.info("Skipping property operation for {}/{} as the value {} for {}/{} is not found in {}",
+            configType, targetPropertyKey, operationItem.ifValue, operationItem.ifType, operationItem.ifKey, checkValue);
+          isAllowed = false;
+        }
+      } else {
+        if (!StringUtils.equalsIgnoreCase(operationItem.ifValue, checkValue) ^ operationItem.ifValueNotMatched) {
+          LOG.info("Skipping property operation for {}/{} as the value {} for {}/{} is not equal to {}",
+            configType, targetPropertyKey, checkValue, operationItem.ifType, operationItem.ifKey, operationItem.ifValue);
+          isAllowed = false;
+        }
       }
     }
 
@@ -695,5 +839,15 @@ public class ConfigureAction extends AbstractServerAction {
     }
 
     return config.getProperties().get(propertyKey);
+  }
+
+  /**
+   * Appends the buffer with the message as well as a newline.
+   *
+   * @param buffer
+   * @param message
+   */
+  private void updateBufferWithMessage(StringBuilder buffer, String message) {
+    buffer.append(message).append(System.lineSeparator());
   }
 }

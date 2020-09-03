@@ -202,7 +202,7 @@ App.QueuesController = Ember.ArrayController.extend({
   },
 
   saveConfigError:function (operation, error) {
-    var response = error.responseJSON;
+    var response = error.responseJSON || {};
     response.simpleMessage = operation.capitalize() + ' failed!';
     this.set('alertMessage',response);
   },
@@ -407,14 +407,15 @@ App.QueuesController = Ember.ArrayController.extend({
       if(mapping.length!=3 || (mapping[0] != 'u'&& mapping[0] != 'g')) {
         hasInvalidMapping = true;
       }else{
-        hasInvalidMapping = queues.filter(function(queue){
+        //shouldn't allow if any of the leafqueue is having queue_mappings.
+        hasInvalidMapping = hasInvalidMapping || queues.filter(function(queue){
             return !queue.get("queues"); //get all leaf queues
           }).map(function(queue){
             return queue.get("name");
           }).indexOf(mapping[2]) == -1;
       }
 
-    })
+    });
 
     return hasInvalidMapping;
   }.property('scheduler.queue_mappings','content.length','content.@each.capacity'),

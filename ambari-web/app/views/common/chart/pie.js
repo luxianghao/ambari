@@ -17,15 +17,18 @@
  */
 
 var App = require('app');
+var chartUtils = require('utils/chart_utils');
 
 App.ChartPieView = Em.View.extend({
-  w:90,
-  h:90,
+  w:100,
+  h:100,
   data:[300, 500],
   id:null,
-  palette: new Rickshaw.Color.Palette({ scheme: 'munin'}),
+  palette: function () {
+    return new Rickshaw.Color.Palette({scheme: chartUtils.getColorSchemeForChart(this.get('data.length'))});
+  }.property('data.length'),
   stroke: 'black',
-  strokeWidth: 2,
+  strokeWidth: 1,
   donut:d3.layout.pie().sort(null),
   existCenterText: false,
   centerTextColor: 'black',
@@ -69,8 +72,8 @@ App.ChartPieView = Em.View.extend({
         .append("svg:text")
         .style('fill', thisChart.get('centerTextColor'))
         .attr("stroke", thisChart.get('centerTextColor'))
-        .attr("font-size", 17)
-        .attr("transform", "translate(" + thisChart.get('w') / 2 + "," + ((thisChart.get('h') / 2) + 3) + ")")
+        .attr("font-size", 24)
+        .attr("transform", "translate(" + thisChart.get('w') / 2 + "," + ((thisChart.get('h') / 2) + 8) + ")")
         .attr("text-anchor", "middle")
         .text(function(d) {
                  return thisChart.get('data')[0] + '%';
@@ -88,7 +91,7 @@ App.ChartPieView = Em.View.extend({
       .append("svg:g").attr('class', 'arc')
       .append('svg:path')
       .attr("fill", function (d, i) {
-        return thisChart.palette.color(i);
+        return thisChart.get('palette').color(i);
       })
       .attr("d", thisChart.get('arc'))
     );

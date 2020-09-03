@@ -18,7 +18,11 @@
 'use strict';
 
 angular.module('ambariAdminConsole')
-.factory('Cluster', ['$http', '$q', 'Settings', function($http, $q, Settings) {
+.factory('Cluster', ['$http', '$q', 'Settings', '$translate', function($http, $q, Settings, $translate) {
+  var $t = $translate.instant;
+  var permissions = null;
+  var rolesWithAuthorizations = null;
+
   return {
     repoStatusCache : {},
 
@@ -30,60 +34,16 @@ angular.module('ambariAdminConsole')
       'CLUSTER.USER'
     ],
 
-    orderedAuthorizations : [
-      "SERVICE.VIEW_METRICS",
-      "SERVICE.VIEW_STATUS_INFO",
-      "SERVICE.VIEW_CONFIGS",
-      "SERVICE.COMPARE_CONFIGS",
-      "SERVICE.VIEW_ALERTS",
-      "SERVICE.START_STOP",
-      "SERVICE.DECOMMISSION_RECOMMISSION",
-      "SERVICE.RUN_SERVICE_CHECK",
-      "SERVICE.TOGGLE_MAINTENANCE",
-      "SERVICE.RUN_CUSTOM_COMMAND",
-      "SERVICE.MODIFY_CONFIGS",
-      "SERVICE.MANAGE_CONFIG_GROUPS",
-      "SERVICE.MOVE",
-      "SERVICE.ENABLE_HA",
-      "SERVICE.MANAGE_ALERTS",
-      "SERVICE.TOGGLE_ALERTS",
-      "SERVICE.ADD_DELETE_SERVICES",
-      "SERVICE.VIEW_OPERATIONAL_LOGS",
-      "HOST.VIEW_CONFIGS",
-      "HOST.VIEW_METRICS",
-      "HOST.VIEW_STATUS_INFO",
-      "HOST.ADD_DELETE_COMPONENTS",
-      "HOST.ADD_DELETE_HOSTS",
-      "HOST.TOGGLE_MAINTENANCE",
-      "CLUSTER.VIEW_ALERTS",
-      "CLUSTER.VIEW_CONFIGS",
-      "CLUSTER.VIEW_METRICS",
-      "CLUSTER.VIEW_STACK_DETAILS",
-      "CLUSTER.VIEW_STATUS_INFO",
-      "CLUSTER.MANAGE_ALERTS",
-      "CLUSTER.MANAGE_CONFIG_GROUPS",
-      "CLUSTER.MANAGE_CREDENTIALS",
-      "CLUSTER.MODIFY_CONFIGS",
-      "CLUSTER.TOGGLE_ALERTS",
-      "CLUSTER.TOGGLE_KERBEROS",
-      "CLUSTER.UPGRADE_DOWNGRADE_STACK",
-      "CLUSTER.RUN_CUSTOM_COMMAND",
-      "AMBARI.ADD_DELETE_CLUSTERS",
-      "AMBARI.ASSIGN_ROLES",
-      "AMBARI.EDIT_STACK_REPOS",
-      "AMBARI.MANAGE_GROUPS",
-      "AMBARI.MANAGE_SETTINGS",
-      "AMBARI.MANAGE_STACK_VERSIONS",
-      "AMBARI.MANAGE_USERS",
-      "AMBARI.MANAGE_VIEWS",
-      "AMBARI.RENAME_CLUSTER",
-      "AMBARI.RUN_CUSTOM_COMMAND",
-      "SERVICE.SET_SERVICE_USERS_GROUPS"
-    ],
-
     orderedLevels: ['SERVICE', 'HOST', 'CLUSTER', 'AMBARI'],
 
     ineditableRoles : ['VIEW.USER', 'AMBARI.ADMINISTRATOR'],
+
+    sortRoles: function(roles) {
+      var orderedRoles = ['AMBARI.ADMINISTRATOR'].concat(this.orderedRoles);
+      return roles.sort(function(a, b) {
+        return orderedRoles.indexOf(a.permission_name) - orderedRoles.indexOf(b.permission_name);
+      });
+    },
 
     getAllClusters: function() {
       var deferred = $q.defer();
@@ -140,14 +100,13 @@ angular.module('ambariAdminConsole')
       var deferred = $q.defer();
       var url = '/services/AMBARI/components/AMBARI_SERVER?fields=RootServiceComponents/properties/user.inactivity.timeout.default';
       $http.get(Settings.baseUrl + url)
-      .then(function(data) {
-        var properties = data.data.RootServiceComponents.properties;
-        var timeout = properties? properties['user.inactivity.timeout.default'] : 0;
-        deferred.resolve(timeout);
-      })
-      .catch(function(data) {
-        deferred.reject(data);
-      });
+        .then(function(data) {
+          var properties = data.data.RootServiceComponents.properties;
+          var timeout = properties ? properties['user.inactivity.timeout.default'] : 0;
+          deferred.resolve(timeout);
+        }, function (data) {
+          deferred.reject(data);
+        });
 
       return deferred.promise;
     },
@@ -163,30 +122,56 @@ angular.module('ambariAdminConsole')
           'PermissionInfo/resource_name': 'CLUSTER'
         }
       })
-      .success(function(data) {
-        deferred.resolve(data.items);
+      .then(function(data) {
+        deferred.resolve(data.data.items);
       })
       .catch(function(data) {
         deferred.reject(data); });
 
       return deferred.promise;
     },
-    getRolesWithAuthorizations: function() {
-      var self = this;
+    getRoleOptions: function () {
+      var roleOptions = [];
       var deferred = $q.defer();
-      $http({
-        method: 'GET',
-        url: Settings.baseUrl + '/permissions?PermissionInfo/resource_name.in(CLUSTER,AMBARI)',
-        mock: 'permission/permissions.json',
-        params: {
-          fields: 'PermissionInfo/*,authorizations/AuthorizationInfo/*'
-        }
-      })
-        .success(function(data) {
-          deferred.resolve(data.items);
+      var localDeferred = $q.defer();
+      var promise = permissions ? localDeferred.promise : this.getPermissions();
+
+      localDeferred.resolve(permissions);
+      promise.then(function(data) {
+        permissions = data;
+        roleOptions = data.map(function(item) {
+          return item.PermissionInfo;
+        });
+        roleOptions.unshift({
+          permission_name: 'NONE',
+          permission_label: $t('users.roles.none')
+        });
+      }).finally(function() {
+        deferred.resolve(roleOptions);
+      });
+      return deferred.promise;
+    },
+    getRolesWithAuthorizations: function() {
+      var deferred = $q.defer();
+      if (rolesWithAuthorizations) {
+        deferred.resolve(rolesWithAuthorizations);
+      } else {
+        $http({
+          method: 'GET',
+          url: Settings.baseUrl + '/permissions?PermissionInfo/resource_name.in(CLUSTER,AMBARI)',
+          mock: 'permission/permissions.json',
+          params: {
+            fields: 'PermissionInfo/*,authorizations/AuthorizationInfo/*'
+          }
         })
-        .catch(function(data) {
-          deferred.reject(data); });
+          .then(function (data) {
+            rolesWithAuthorizations = data.data.items;
+            deferred.resolve(data.data.items);
+          })
+          .catch(function (data) {
+            deferred.reject(data);
+          });
+      }
 
       return deferred.promise;
     },
@@ -201,33 +186,8 @@ angular.module('ambariAdminConsole')
           'fields': 'privileges/PrivilegeInfo'
         }
       })
-      .success(function(data) {
-        deferred.resolve(data.privileges);
-      })
-      .catch(function(data) {
-        deferred.reject(data);
-      });
-
-      return deferred.promise;
-    },
-    getPrivilegesWithFilters: function(params) {
-      var deferred = $q.defer();
-      var isUser = params.typeFilter.value == 'USER';
-      var endpoint = isUser? '/users' : '/groups';
-      var nameURL = isUser? '&Users/user_name.matches(.*' : '&Groups/group_name.matches(.*';
-      var nameFilter = params.nameFilter? nameURL + params.nameFilter + '.*)' : '';
-      var roleFilter = params.roleFilter.value? '&privileges/PrivilegeInfo/permission_name.matches(.*' + params.roleFilter.value + '.*)' : '';
-      $http({
-        method: 'GET',
-        url: Settings.baseUrl + endpoint + '?'
-        + 'fields=privileges/PrivilegeInfo/*'
-        + nameFilter
-        + roleFilter
-        + '&from=' + (params.currentPage - 1) * params.usersPerPage
-        + '&page_size=' + params.usersPerPage
-      })
-      .success(function(data) {
-        deferred.resolve(data);
+      .then(function(data) {
+        deferred.resolve(data.data.privileges);
       })
       .catch(function(data) {
         deferred.reject(data);
@@ -245,8 +205,8 @@ angular.module('ambariAdminConsole')
         method : 'GET',
         url : Settings.baseUrl + endpoint + '?' + 'fields=privileges/PrivilegeInfo/*' + nameFilter
       })
-      .success(function(data) {
-        deferred.resolve(data);
+      .then(function(data) {
+        deferred.resolve(data.data);
       })
       .catch(function(data) {
         deferred.reject(data);
@@ -305,8 +265,8 @@ angular.module('ambariAdminConsole')
         method: 'GET',
         url: Settings.baseUrl + '/clusters/' + clusterName + '?' + 'format=blueprint'
       })
-      .success(function(data) {
-        deferred.resolve(data);
+      .then(function(data) {
+        deferred.resolve(data.data);
       })
       .catch(function(data) {
         deferred.reject(data);
@@ -319,8 +279,8 @@ angular.module('ambariAdminConsole')
       var url = Settings.baseUrl + '/clusters/' + clusterName +
         '/stack_versions?fields=*&ClusterStackVersions/repository_version=' + repoId;
       $http.get(url, {mock: 'cluster/repoVersionStatus.json'})
-      .success(function (data) {
-        data = data.items;
+      .then(function (data) {
+        data = data.data.items;
         var response = {};
         if (data.length > 0) {
           var hostStatus = data[0].ClusterStackVersions.host_states;
@@ -331,8 +291,7 @@ angular.module('ambariAdminConsole')
           angular.forEach(hostStatus, function(status) {
             totalHosts += status.length;
           });
-          response.status = currentHosts > 0? 'current' :
-                            installedHosts > 0? 'installed' : '';
+          response.status = data[0].ClusterStackVersions.state;
           response.currentHosts = currentHosts;
           response.installedHosts = installedHosts;
           response.totalHosts = totalHosts;

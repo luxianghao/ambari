@@ -24,6 +24,7 @@ import java.io.Writer;
 import java.util.List;
 
 import org.apache.ambari.server.orm.DBAccessor;
+import org.apache.ambari.server.orm.DBAccessorImpl;
 import org.apache.commons.lang.StringUtils;
 import org.eclipse.persistence.internal.databaseaccess.FieldTypeDefinition;
 import org.eclipse.persistence.internal.databaseaccess.Platform;
@@ -78,6 +79,28 @@ public class GenericDbmsHelper implements DbmsHelper {
     return stringBuilder.toString();
   }
 
+  /**
+   {@inheritDoc}
+   */
+  @Override
+  public String getCopyColumnToAnotherTableStatement(String sourceTable, String sourceColumnName, String sourceIDColumnName, String targetTable, String targetColumnName, String targetIDColumnName) {
+    throw new UnsupportedOperationException("Column copy is not supported for generic DB");
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public String getCopyColumnToAnotherTableStatement(String sourceTable, String sourceColumnName,
+                                                     String sourceIDColumnName1, String sourceIDColumnName2,
+                                                     String sourceIDColumnName3,
+                                                     String targetTable, String targetColumnName,
+                                                     String targetIDColumnName1, String targetIDColumnName2,
+                                                     String targetIDColumnName3,
+                                                     String sourceConditionFieldName, String condition) {
+    throw new UnsupportedOperationException("Column copy is not supported for generic DB");
+  }
+
   public StringBuilder writeAlterTableClause(StringBuilder builder, String tableName) {
     builder.append("ALTER TABLE ").append(tableName).append(" ");
     return builder;
@@ -112,7 +135,7 @@ public class GenericDbmsHelper implements DbmsHelper {
       // no writing to file
     }
 
-    builder.append(writer.toString());
+    builder.append(writer);
 
     return builder;
   }
@@ -243,11 +266,37 @@ public class GenericDbmsHelper implements DbmsHelper {
   @Override
   public String getCreateIndexStatement(String indexName, String tableName,
                                         String... columnNames) {
+    return getCreateIndexStatement(indexName, tableName, false, columnNames);
+  }
+
+  /**
+   * get create index statement
+   * @param indexName The name of the index to be created
+   * @param tableName The database table the index to be created on
+   * @param columnNames The columns included into the index
+   * @param  isUnique Specifies whether unique index is to be created.
+   * @return The sql statement for creating the index
+   */
+  @Override
+  public String getCreateIndexStatement(String indexName, String tableName, boolean isUnique,
+                                        String... columnNames) {
     //TODO validateColumnNames()
-    String createIndex = databasePlatform.buildCreateIndex(tableName, indexName, columnNames);
+    String createIndex = databasePlatform.buildCreateIndex(tableName, indexName, "", isUnique, columnNames);
     return createIndex;
   }
 
+  /**
+   * Generating update SQL statement for {@link DBAccessor#executePreparedUpdate}
+   *
+   * @param tableName name of the table
+   * @param setColumnName column name, value of which need to be set
+   * @param conditionColumnName column name for the condition
+   * @return
+   */
+  @Override
+  public String getColumnUpdateStatementWhereColumnIsNull(String tableName, String setColumnName, String conditionColumnName){
+    return "UPDATE " + tableName + " SET " + setColumnName + "=? WHERE " + conditionColumnName + " IS NULL";
+  }
 
   /**
    * {@inheritDoc}
@@ -406,16 +455,7 @@ public class GenericDbmsHelper implements DbmsHelper {
    *          the value to escape
    * @return the escaped value
    */
-  protected String escapeParameter(Object value) {
-    // Only String and number supported.
-    // Taken from:
-    // org.eclipse.persistence.internal.databaseaccess.appendParameterInternal
-    Object dbValue = databasePlatform.convertToDatabaseType(value);
-    String valueString = value.toString();
-    if (dbValue instanceof String) {
-      valueString = "'" + value.toString() + "'";
-    }
-
-    return valueString;
+  private String escapeParameter(Object value) {
+    return DBAccessorImpl.escapeParameter(value, databasePlatform);
   }
 }

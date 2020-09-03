@@ -30,6 +30,8 @@ CSV_FILE="$1"
 SECURITY_TYPE=$2
 : "${SECURITY_TYPE:?"Missing security type input for the post-user creation hook"}"
 
+# the last argument is the user with dfs administrator privileges
+HDFS_USR=${@: -1}
 }
 
 
@@ -37,8 +39,8 @@ SECURITY_TYPE=$2
 ambari_sudo(){
 
 ARG_STR="$1"
-CMD_STR="/var/lib/ambari-server/ambari-sudo.sh su hdfs -l -s /bin/bash -c '$ARG_STR'"
-
+CMD_STR="/var/lib/ambari-server/ambari-sudo.sh su '$HDFS_USR' -l -s /bin/bash -c '$ARG_STR'"
+echo "Executing command: [ $CMD_STR ]"
 eval "$CMD_STR"
 }
 
@@ -84,6 +86,10 @@ echo "[" | cat > "$JSON_INPUT"
 while read -r LINE
 do
   USR_NAME=$(echo "$LINE" | awk -F, '{print $1}')
+  echo "Processing user name: $USR_NAME"
+
+  # encoding the username
+  USR_NAME=$(printf "%q" "$USR_NAME")
 
   cat <<EOF >> "$JSON_INPUT"
     {
@@ -91,13 +97,19 @@ do
     "type":"directory",
     "action":"create",
     "owner":"$USR_NAME",
-    "group":"hadoop",
+    "group":"hdfs",
     "manageIfExists": "true"
   },
 EOF
 done <"$CSV_FILE"
 
+# Setting read permissions on the generated file
+chmod 644 $JSON_INPUT
+
+# deleting the last line
 sed -i '$ d' "$JSON_INPUT"
+
+# appending json closing elements to the end of the file
 echo $'}\n]' | cat >> "$JSON_INPUT"
 echo "Generating file $JSON_INPUT ... DONE."
 echo "Processing post user creation hook payload ... DONE."
@@ -123,7 +135,7 @@ check_tools
 prepare_input
 
 # the default implementation creates user home folders; the first argument must be the username
-ambari_sudo "yarn jar /var/lib/ambari-server/resources/stacks/HDP/2.0.6/hooks/before-START/files/fast-hdfs-resource.jar $JSON_INPUT"
+ambari_sudo "yarn jar /var/lib/ambari-server/resources/stack-hooks/before-START/files/fast-hdfs-resource.jar $JSON_INPUT"
 
 if [ "$DEBUG" -gt "0" ]; then echo "Switch debug OFF";set -x;unset DEBUG; else echo "debug: OFF"; fi
 unset DEBUG

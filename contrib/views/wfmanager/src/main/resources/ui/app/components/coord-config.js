@@ -19,6 +19,7 @@ import {Coordinator} from '../domain/coordinator/coordinator';
 import {CoordinatorGenerator} from '../domain/coordinator/coordinator-xml-generator';
 import {CoordinatorXmlImporter} from '../domain/coordinator/coordinator-xml-importer';
 import {SlaInfo} from '../domain/sla-info';
+import SchemaVersions from '../domain/schema-versions';
 import Constants from '../utils/constants';
 import { validator, buildValidations } from 'ember-cp-validations';
 
@@ -42,11 +43,15 @@ const Validations = buildValidations({
 
 export default Ember.Component.extend(Validations, Ember.Evented, {
   coordinator : null,
+  errors: Ember.A([]),
+  schemaVersions : SchemaVersions.create({}),
   childComponents : new Map(),
   fileBrowser : Ember.inject.service('file-browser'),
   propertyExtractor : Ember.inject.service('property-extractor'),
   workspaceManager : Ember.inject.service('workspace-manager'),
   showErrorMessage: Ember.computed.alias('saveAttempted'),
+  jobConfigProperties: Ember.A([]),
+  isDefaultNameForCoordinatorEnabled : false,
   datasetsForInputs : Ember.computed('coordinator.datasets.[]','coordinator.dataOutputs.[]',function(){
     var datasetsForInputs = Ember.copy(this.get('coordinator.datasets'));
     this.get('coordinator.dataOutputs').forEach((dataOutput)=>{
@@ -72,22 +77,13 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
     this.persistWorkInProgress();
   }.on('willDestroyElement'),
   initialize : function(){
-    var draftCoordinator = this.get('workspaceManager').restoreWorkInProgress(this.get('tabInfo.id'));
-    if(draftCoordinator){
-      this.set('coordinator', JSON.parse(draftCoordinator));
-    }else{
-      this.set('coordinator', this.createNewCoordinator());
-    }
-    this.set('timeUnitOptions',Ember.A([]));
-    this.get('timeUnitOptions').pushObject({value:'',displayName:'Select'});
-    this.get('timeUnitOptions').pushObject({value:'months',displayName:'Months'});
-    this.get('timeUnitOptions').pushObject({value:'endOfMonths',displayName:'End of Months'});
-    this.get('timeUnitOptions').pushObject({value:'days',displayName:'Days'});
-    this.get('timeUnitOptions').pushObject({value:'endOfDays',displayName:'End of Days'});
-    this.get('timeUnitOptions').pushObject({value:'hours',displayName:'Hours'});
-    this.get('timeUnitOptions').pushObject({value:'minutes',displayName:'Minutes'});
-    this.get('timeUnitOptions').pushObject({value:'cron',displayName:'Cron'});
-    this.set('coordinator.slaInfo', SlaInfo.create({}));
+    var self = this;
+    this.set('errors', Ember.A([]));
+    this.get('workspaceManager').restoreWorkInProgress(this.get('tabInfo.id')).promise.then(function(draftCoordinator){
+      self.loadCoordinator(draftCoordinator);
+    }.bind(this)).catch(function(data){
+      self.loadCoordinator();
+    }.bind(this));
 
     this.get('fileBrowser').on('fileBrowserOpened',function(context){
       this.get('fileBrowser').setContext(context);
@@ -95,17 +91,7 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
     this.on('fileSelected',function(fileName){
       this.set(this.get('filePathModel'), fileName);
     }.bind(this));
-    this.set('coordinatorControls',[
-      {'name':'timeout', 'displayName':'Timeout', 'value':''},
-      {'name':'concurrency', 'displayName':'Concurrency', 'value':''},
-      {'name':'execution', 'displayName':'Execution', 'value':''},
-      {'name':'throttle', 'displayName':'Throttle', 'value':''}
-    ]);
-    this.set('timezoneList', Ember.copy(Constants.timezoneList));
-    if(Ember.isBlank(this.get('coordinator.name'))){
-      this.set('coordinator.name', Ember.copy(this.get('tabInfo.name')));
-    }
-    this.schedulePersistWorkInProgress();
+    this.set('childComponents', new Map());
   }.on('init'),
   conditionalDataInExists :false,
   elementsInserted : function(){
@@ -137,6 +123,37 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
       this.sendAction('changeTabName', this.get('tabInfo'), this.get('coordinator.name'));
     }
   }),
+  loadCoordinator(draftCoordinator){
+    if(draftCoordinator){
+      this.set('coordinator', JSOG.parse(draftCoordinator));
+    }else{
+      this.set('coordinator', this.createNewCoordinator());
+    }
+    this.set('timeUnitOptions',Ember.A([]));
+    this.get('timeUnitOptions').pushObject({value:'',displayName:'Select'});
+    this.get('timeUnitOptions').pushObject({value:'months',displayName:'Months'});
+    this.get('timeUnitOptions').pushObject({value:'endOfMonths',displayName:'End of Months'});
+    this.get('timeUnitOptions').pushObject({value:'days',displayName:'Days'});
+    this.get('timeUnitOptions').pushObject({value:'endOfDays',displayName:'End of Days'});
+    this.get('timeUnitOptions').pushObject({value:'hours',displayName:'Hours'});
+    this.get('timeUnitOptions').pushObject({value:'minutes',displayName:'Minutes'});
+    this.get('timeUnitOptions').pushObject({value:'cron',displayName:'Cron'});
+    this.set('coordinator.slaInfo', SlaInfo.create({}));
+    this.set('coordinatorControls',[
+      {'name':'timeout', 'displayName':'Timeout', 'value':''},
+      {'name':'concurrency', 'displayName':'Concurrency', 'value':''},
+      {'name':'execution', 'displayName':'Execution', 'value':''},
+      {'name':'throttle', 'displayName':'Throttle', 'value':''}
+    ]);
+    this.set('timezoneList', Ember.copy(Constants.timezoneList));
+    if(Ember.isBlank(this.get('coordinator.name')) && this.get('isDefaultNameForCoordinatorEnabled')){
+      this.set('coordinator.name', Ember.copy(this.get('tabInfo.name')));
+    }
+    this.schedulePersistWorkInProgress();
+  },
+  coordinatorFilePath : Ember.computed('tabInfo.filePath', function(){
+    return this.get('tabInfo.filePath');
+  }),
   schedulePersistWorkInProgress (){
     Ember.run.later(function(){
       this.persistWorkInProgress();
@@ -147,7 +164,7 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
     if(!this.get('coordinator')){
       return;
     }
-    var json = JSON.stringify(this.get("coordinator"));
+    var json = JSOG.stringify(this.get("coordinator"));
     this.get('workspaceManager').saveWorkInProgress(this.get('tabInfo.id'), json);
   },
   showExistingWorkflow  : function(){
@@ -173,6 +190,16 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
   }.on('didInsertElement'),
   createNewCoordinator(){
     return Coordinator.create({
+      parameters : {
+        configuration :{
+          property : Ember.A([])
+        }
+      },
+      controls : Ember.A([]),
+      datasets : Ember.A([]),
+      dataInputs : Ember.A([]),
+      inputLogic : null,
+      dataOutputs : Ember.A([]),
       workflow : {
         appPath : undefined,
         configuration :{
@@ -194,20 +221,17 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
         type : 'date'
       },
       timezone : 'UTC',
-      datasets : Ember.A([]),
-      dataInputs : Ember.A([]),
-      dataOutputs : Ember.A([]),
       dataInputType : 'simple',
-      parameters : {
-        configuration :{
-          property : Ember.A([])
-        }
+      slaInfo : SlaInfo.create({}),
+      schemaVersions : {
+        coordinatorVersion : this.get('schemaVersions').getDefaultVersion('coordinator')
       },
-      controls : Ember.A([]),
-      slainfo : SlaInfo.create({})
+      xmlns : "uri:oozie:coordinator:" +this.get('schemaVersions').getDefaultVersion('coordinator'),
+      draftVersion: 'v1'
     });
   },
   importSampleCoordinator (){
+    var self = this;
     var deferred = Ember.RSVP.defer();
     Ember.$.ajax({
       url: "/sampledata/coordinator.xml",
@@ -240,16 +264,58 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
     return deferred;
   },
   importCoordinator (filePath){
+    if (!filePath) {
+      return;
+    }
+    this.set("isImporting", true);
+    filePath = this.appendFileName(filePath, 'coord');
     this.set("coordinatorFilePath", filePath);
-    this.set("isImporting", false);
-    var deferred = this.readFromHdfs(filePath);
-    deferred.promise.then(function(data){
-      this.getCoordinatorFromXml(data);
+    var deferred = this.readCoordinatorFromHdfs(filePath);
+    deferred.promise.then(function(response){
+      if(response.type === 'xml'){
+        this.getCoordinatorFromXml(response.data);
+      }else {
+        this.getCoordinatorFromJSON(response.data);
+      }
+      this.set('coordinatorFilePath', filePath);
       this.set("isImporting", false);
-    }.bind(this)).catch(function(){
+    }.bind(this)).catch(function(data){
+      console.error(data);
+      this.set("errorMsg", "There is some problem while importing.");
       this.set("isImporting", false);
       this.set("isImportingSuccess", false);
+      this.set("data", data);
     }.bind(this));
+  },
+  getCoordinatorFromJSON(draftCoordinator){
+    this.set('coordinator', JSOG.parse(draftCoordinator));
+    this.$('input[name="dataInputType"][value="'+ this.get('coordinator.dataInputType')+'"]').prop('checked', true);
+    if(this.get('coordinator.dataInputType') === 'logical'){
+      this.set('conditionalDataInExists', true);
+    }
+    if(this.get('coordinator.inputLogic')){
+      this.set('inputLogicExists', true);
+      this.set('inputLogicEnabled', true);
+    }
+  },
+  readCoordinatorFromHdfs(filePath){
+    var url =  Ember.ENV.API_URL + "/readWorkflow?workflowPath="+filePath+"&jobType=COORDINATOR";
+    var deferred = Ember.RSVP.defer();
+    Ember.$.ajax({
+      url: url,
+      method: 'GET',
+      dataType: "text",
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader("X-XSRF-HEADER", Math.round(Math.random()*100000));
+        xhr.setRequestHeader("X-Requested-By", "Ambari");
+      }
+    }).done(function(data, status, xhr){
+      var type = xhr.getResponseHeader("response-type") === "xml" ? 'xml' : 'json';
+      deferred.resolve({data : data, type : type});
+    }).fail(function(e){
+      deferred.reject(e);
+    });
+    return deferred;
   },
   readFromHdfs(filePath){
     var url =  Ember.ENV.API_URL + "/readWorkflowXml?workflowXmlPath="+filePath;
@@ -264,26 +330,47 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
       }
     }).done(function(data){
       deferred.resolve(data);
-    }).fail(function(){
-      deferred.reject();
+    }).fail(function(e){
+      deferred.reject(e);
     });
     return deferred;
   },
+  appendFileName(filePath, type){
+    if(filePath.endsWith('.wfdraft')){
+      return filePath;
+    }else if(!filePath.endsWith('.xml') && type === 'coord'){
+      return filePath = `${filePath}/coordinator.xml`;
+    }else if(!filePath.endsWith('.xml') && type === 'wf'){
+      return filePath = `${filePath}/workflow.xml`;
+    }else{
+      return filePath;
+    }
+  },
   getCoordinatorFromXml(coordinatorXml){
     var coordinatorXmlImporter = CoordinatorXmlImporter.create({});
-    var coordinator = coordinatorXmlImporter.importCoordinator(coordinatorXml);
+    var coordinatorObj = coordinatorXmlImporter.importCoordinator(coordinatorXml);
+    this.get("errors").clear();
+    this.get("errors").pushObjects(coordinatorObj.errors);
+    var coordinator = coordinatorObj.coordinator;
+    if (coordinator === null) {
+      return;
+    }
     this.set("coordinator", coordinator);
     this.$('input[name="dataInputType"][value="'+ coordinator.get('dataInputType')+'"]').prop('checked', true);
     if(coordinator.get('dataInputType') === 'logical'){
       this.set('conditionalDataInExists', true);
     }
+    if(coordinator.get('inputLogic')){
+      this.set('inputLogicExists', true);
+      this.set('inputLogicEnabled', true);
+    }
   },
-  validateChildComponents(){
+  validateChildComponents(showErrorMessage){
     var isChildComponentsValid = true;
     this.get('childComponents').forEach((context)=>{
       if(context.get('validations') && context.get('validations.isInvalid')){
         isChildComponentsValid =  false;
-        context.set('showErrorMessage', true);
+        context.set('showErrorMessage', showErrorMessage);
       }
     }.bind(this));
     return isChildComponentsValid;
@@ -382,18 +469,57 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
       this.set('dataOutputEditMode', false);
       this.set('dataOutputCreateMode', false);
     },
+    dryrunCoordinator(){
+      this.set('dryrun', true);
+      this.send('submit');
+    },
     submitCoordinator(){
-      var isChildComponentsValid = this.validateChildComponents();
+      this.set('dryrun', false);
+      this.send('submit');
+    },
+    submit(){
+      var isChildComponentsValid = this.validateChildComponents(true);
       if(this.get('validations.isInvalid') || !isChildComponentsValid) {
         this.set('showErrorMessage', true);
         return;
       }
-      var coordGenerator=CoordinatorGenerator.create({coordinator:this.get("coordinator")});
-      var coordinatorXml=coordGenerator.process();
-      var dynamicProperties = this.get('propertyExtractor').getDynamicProperties(coordinatorXml);
-      var configForSubmit={props:dynamicProperties,xml:coordinatorXml,params:this.get('coordinator.parameters')};
+      var coordGenerator = CoordinatorGenerator.create({coordinator:this.get("coordinator")});
+      var coordinatorXml = coordGenerator.process();
+      var configForSubmit={props:Ember.A([]), xml:coordinatorXml,params:this.get('coordinator.parameters'), errors:Ember.A([])};
       this.set("coordinatorConfigs", configForSubmit);
       this.set("showingJobConfig", true);
+      var dynamicProperties = this.get('propertyExtractor').getDynamicProperties(coordinatorXml);
+      this.get('coordinatorConfigs.props').pushObjects(Array.from(dynamicProperties.values(), key => key));
+      var path = this.get('coordinator.workflow.appPath');
+      if(this.get('propertyExtractor').containsParameters(path)){
+        this.set('parameterizedWorkflowPath', path);
+        this.set('containsParameteriedPaths', true);
+        return;
+      }
+      this.send('extractProperties', path);
+    },
+    extractProperties(workflowPath){
+      this.set("coordinatorConfigs.errors", Ember.A([]));
+      workflowPath = this.appendFileName(workflowPath, 'wf');
+      var deferred = this.readFromHdfs(workflowPath);
+      deferred.promise.then(function(data){
+        var x2js = new X2JS();
+        var workflowJson = x2js.xml_str2json(data);
+        this.set('workflowName', workflowJson["workflow-app"]._name);
+        var workflowProps = this.get('propertyExtractor').getDynamicProperties(data);
+        var dynamicProperties = this.get('coordinatorConfigs.props');
+        workflowProps.forEach((prop)=>{
+          var name = prop.trim().substring(2, prop.length-1);
+          if(dynamicProperties.indexOf(prop)>=0 || this.get('coordinator.workflow.configuration.property') && this.get('coordinator.workflow.configuration.property').findBy('name', name)){
+              return;
+          }
+          dynamicProperties.pushObject(prop);
+        }, this);
+        this.set('containsParameteriedPaths', false);
+      }.bind(this)).catch(function(e){
+        this.get("coordinatorConfigs.errors").pushObject({'message' : 'Could not process workflow from ' + this.get('coordinator.workflow.appPath')});
+        throw new Error(e);
+      }.bind(this));
     },
     closeCoordSubmitConfig(){
       this.set("showingJobConfig", false);
@@ -401,7 +527,7 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
     closeFileBrowser(){
       this.set("showingFileBrowser", false);
       this.get('fileBrowser').getContext().trigger('fileSelected', this.get('filePath'));
-      if(this.get('coordinatorFilePath')){
+      if(this.get('filePathModel') === 'coordinatorFilePath'){
         this.importCoordinator(Ember.copy(this.get('coordinatorFilePath')));
         this.set('coordinatorFilePath', null);
       }
@@ -434,7 +560,7 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
       this.set('inputLogicExists', false);
     },
     preview(){
-      var isChildComponentsValid = this.validateChildComponents();
+      var isChildComponentsValid = this.validateChildComponents(true);
       if(this.get('validations.isInvalid') || !isChildComponentsValid) {
         this.set('showErrorMessage', true);
         return;
@@ -445,27 +571,50 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
       this.set("previewXml", vkbeautify.xml(coordinatorXml));
       this.set("showingPreview", true);
     },
+    closePreview(){
+      this.set("showingPreview", false);
+    },
     confirmReset(){
       this.set('showingResetConfirmation', true);
     },
     resetCoordinator(){
-      this.set('coordinator', this.createNewCoordinator());
+      this.get("errors").clear();
+      this.set('showingResetConfirmation', false);
+      if(this.get('coordinatorFilePath')){
+        this.importCoordinator(this.get('coordinatorFilePath'));
+      }else{
+        this.set('coordinator', this.createNewCoordinator());
+      }
     },
     importCoordinatorTest(){
       var deferred = this.importSampleCoordinator();
       deferred.promise.then(function(data){
-        this.set("coordinator", data);
-        this.$('input[name="dataInputType"][value="'+ data.get('dataInputType')+'"]').prop('checked', true);
-        if(data.get('dataInputType') === 'logical'){
+        this.get("errors").clear();
+        this.get("errors").pushObjects(data.errors);
+        if (data.coordinator === null) {
+          return;
+        }
+        this.set("coordinator", data.coordinator);
+        this.$('input[name="dataInputType"][value="'+ data.coordinator.get('dataInputType')+'"]').prop('checked', true);
+        if(data.coordinator.get('dataInputType') === 'logical'){
           this.set('conditionalDataInExists', true);
         }
-        console.error(this.get('coordinator'));
-      }.bind(this)).catch(function(e){
-        throw new Error(e);
+      }.bind(this)).catch(function(data){
+        console.error(data);
+        this.set("errorMsg", "There is some problem while importing.");
+        this.set("data", data);
       });
     },
     openTab(type, path){
-      this.sendAction('openTab', type, path);
+      this.set('errorMsg', '');
+      var path = this.appendFileName(path, type);
+      var deferred = this.readFromHdfs(path);
+      deferred.promise.then(function(data){
+        this.sendAction('openTab', type, path);
+      }.bind(this)).catch(function(data){
+        this.set('errorMsg', 'There is some problem while importing.');
+        this.set('data', data);
+      }.bind(this));
     },
     showParameterSettings(value){
       if(this.get('coordinator.parameters') !== null){
@@ -508,14 +657,52 @@ export default Ember.Component.extend(Validations, Ember.Evented, {
     },
     showWorkflowName(){
       this.set('workflowName', null);
-      var deferred = this.readFromHdfs(this.get('coordinator.workflow.appPath'));
+      this.set('errorMsg', "");
+      var path = this.appendFileName(this.get('coordinator.workflow.appPath'), 'wf');
+      if (this.get('propertyExtractor').containsParameters(path)) {
+        this.set('containsParameteriedPaths', true);
+        this.set('parameterizedPathWarning', 'Workflow path contains variables');
+        return;
+      } else {
+        this.set('containsParameteriedPaths', false);
+        this.set('parameterizedPathWarning', '');
+      }
+      var deferred = this.readFromHdfs(path);
       deferred.promise.then(function(data){
         var x2js = new X2JS();
         var workflowJson = x2js.xml_str2json(data);
         this.set('workflowName', workflowJson["workflow-app"]._name);
-      }.bind(this)).catch(function(){
+      }.bind(this)).catch(function(data){
+        console.error(data);
         this.set('workflowName', null);
+        this.set('errorMsg', "There is some problem while fetching workflow name.");
+        this.set("data", data);
       }.bind(this));
+    },
+    showVersionSettings(value){
+      this.set('showVersionSettings', value);
+    },
+    save(){
+      if (Ember.isBlank(this.$('[name=coord_title]').val())) {
+        return;
+      }
+      var isDraft = false, coordinatorXml;
+      var isChildComponentsValid = this.validateChildComponents(false);
+      if(this.get('validations.isInvalid') || !isChildComponentsValid) {
+        isDraft = true;
+      }else{
+        var coordGenerator = CoordinatorGenerator.create({coordinator:this.get("coordinator")});
+        coordinatorXml = coordGenerator.process();
+      }
+      var coordinatorJson = JSOG.stringify(this.get("coordinator"));
+      this.set("configForSave",{json:coordinatorJson, xml:coordinatorXml,isDraft: isDraft});
+      this.set("showingSaveWorkflow", true);
+    },
+    closeSave(){
+      this.set("showingSaveWorkflow", false);
+    },
+    toggleIO(){
+      this.$('#collapse').collapse('toggle');
     }
   }
 });

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,7 +20,6 @@ package org.apache.ambari.server.serveraction.users;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -115,6 +114,7 @@ public class PostUserCreationHookServerActionTest extends EasyMockSupport {
     commandParams.put(UserHookParams.CMD_TIME_FRAME.param(), "1000");
     commandParams.put(UserHookParams.CMD_INPUT_FILE.param(), "/test/user_data.csv");
     commandParams.put(UserHookParams.CLUSTER_SECURITY_TYPE.param(), SecurityType.KERBEROS.name());
+    commandParams.put(UserHookParams.CMD_HDFS_USER.param(), "test-hdfs-user");
 
     EasyMock.expect(executionCommand.getCommandParams()).andReturn(commandParams);
     EasyMock.expect(objectMapperMock.readValue(payloadJson, Map.class)).andReturn(payload);
@@ -128,7 +128,7 @@ public class PostUserCreationHookServerActionTest extends EasyMockSupport {
     customScriptServerAction.setExecutionCommand(executionCommand);
 
     EasyMock.expect(collectionPersisterServiceFactoryMock.createCsvFilePersisterService(EasyMock.anyString())).andReturn(collectionPersisterService);
-    EasyMock.expect(collectionPersisterService.persistMap(EasyMock.anyObject(Map.class))).andReturn(Boolean.TRUE);
+    EasyMock.expect(collectionPersisterService.persistMap(EasyMock.anyObject())).andReturn(Boolean.TRUE);
 
     replayAll();
 
@@ -139,7 +139,7 @@ public class PostUserCreationHookServerActionTest extends EasyMockSupport {
     String[] commandArray = commandCapture.getValue();
     Assert.assertNotNull("The command to be executed must not be null!", commandArray);
 
-    Assert.assertEquals("The command argument array length is not as expected!", 5, commandArray.length);
+    Assert.assertEquals("The command argument array length is not as expected!", 6, commandArray.length);
     Assert.assertEquals("The command script is not as expected", "/hookfolder/hook.name", commandArray[0]);
   }
 
@@ -162,9 +162,9 @@ public class PostUserCreationHookServerActionTest extends EasyMockSupport {
   }
 
   private void mockExecutionCommand(int callCnt) {
+    EasyMock.expect(executionCommand.getClusterId()).andReturn("1").anyTimes();
     EasyMock.expect(executionCommand.getRoleCommand()).andReturn(RoleCommand.EXECUTE).times(callCnt);
     EasyMock.expect(executionCommand.getClusterName()).andReturn("unit-test-cluster").times(callCnt);
-    EasyMock.expect(executionCommand.getConfigurationTags()).andReturn(Collections.<String, Map<String, String>>emptyMap()).times(callCnt);
     EasyMock.expect(executionCommand.getRole()).andReturn(Role.AMBARI_SERVER_ACTION.toString()).times(callCnt);
     EasyMock.expect(executionCommand.getServiceName()).andReturn("custom-hook-script").times(callCnt);
     EasyMock.expect(executionCommand.getTaskId()).andReturn(-1l).times(callCnt);

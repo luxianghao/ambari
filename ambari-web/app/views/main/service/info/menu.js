@@ -45,8 +45,15 @@ App.MainServiceInfoMenuView = Em.CollectionView.extend({
         routing: 'configs'
       });
     }
+    if (this.get('metricTab')) {
+      menuItems.push({
+        label: Em.I18n.t('services.service.info.menu.metrics'),
+        id: 'metrics-service-tab',
+        routing: 'metrics'
+      });
+    }
     return menuItems;
-  }.property(),
+  }.property('heatmapTab', 'configTab', 'metricTab'),
 
   init: function () {
     this._super();
@@ -57,7 +64,7 @@ App.MainServiceInfoMenuView = Em.CollectionView.extend({
     this.get('_childViews').forEach(function(view) {
       view.set('active', (document.URL.endsWith(view.get('content.routing')) ? "active" : ""));
     }, this);
-  }.observes('App.router.location.lastSetURL'),
+  }.observes('App.router.location.lastSetURL', 'heatmapTab', 'configTab', 'metricTab'),
 
   deactivateChildViews: function () {
     this.get('_childViews').setEach('active', '');

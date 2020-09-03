@@ -19,8 +19,6 @@ package org.apache.ambari.server.upgrade;
 
 import java.io.File;
 import java.io.FileReader;
-import java.io.FilenameFilter;
-import java.io.IOException;
 import java.io.StringReader;
 import java.lang.reflect.Type;
 import java.sql.ResultSet;
@@ -39,19 +37,19 @@ import java.util.Set;
 import java.util.Stack;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import javax.persistence.EntityManager;
-import javax.xml.bind.JAXBException;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import org.apache.ambari.annotations.Experimental;
+import org.apache.ambari.annotations.ExperimentalFeature;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.configuration.Configuration.DatabaseType;
 import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.controller.AmbariManagementControllerImpl;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.dao.AlertDefinitionDAO;
 import org.apache.ambari.server.orm.dao.ArtifactDAO;
@@ -72,6 +70,7 @@ import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.PropertyInfo;
 import org.apache.ambari.server.state.PropertyUpgradeBehavior;
+import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceInfo;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.StackInfo;
@@ -84,8 +83,6 @@ import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptor;
 import org.apache.ambari.server.state.stack.WidgetLayout;
 import org.apache.ambari.server.state.stack.WidgetLayoutInfo;
 import org.apache.ambari.server.utils.VersionUtils;
-import org.apache.ambari.server.view.ViewArchiveUtility;
-import org.apache.ambari.server.view.configuration.ViewConfig;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -110,9 +107,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   @Inject
   protected Configuration configuration;
   @Inject
-  protected StackUpgradeUtil stackUpgradeUtil;
-  @Inject
-  protected ViewArchiveUtility archiveUtility;
+  protected AmbariManagementControllerImpl ambariManagementController;
 
   protected Injector injector;
 
@@ -148,18 +143,16 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   private static final Logger LOG = LoggerFactory.getLogger
     (AbstractUpgradeCatalog.class);
   private static final Map<String, UpgradeCatalog> upgradeCatalogMap =
-    new HashMap<String, UpgradeCatalog>();
+    new HashMap<>();
 
   protected String ambariUpgradeConfigUpdatesFileName;
+  private Map<String,String> upgradeJsonOutput = new HashMap<>();
 
   @Inject
   public AbstractUpgradeCatalog(Injector injector) {
     this.injector = injector;
     injector.injectMembers(this);
     registerCatalog(this);
-  }
-
-  protected AbstractUpgradeCatalog() {
   }
 
   /**
@@ -218,6 +211,28 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
     }
   }
 
+  /**
+   * Fetches the maximum value of the given ID column from the given table.
+   *
+   * @param tableName
+   *          the name of the table to query the data from
+   * @param idColumnName
+   *          the name of the ID column you want to query the maximum value for.
+   *          This MUST refer an existing numeric type column
+   * @return the maximum value of the given column in the given table if any;
+   *         <code>0L</code> otherwise.
+   * @throws SQLException
+   */
+  protected final long fetchMaxId(String tableName, String idColumnName) throws SQLException {
+    try (Statement stmt = dbAccessor.getConnection().createStatement();
+        ResultSet rs = stmt.executeQuery(String.format("SELECT MAX(%s) FROM %s", idColumnName, tableName))) {
+      if (rs.next()) {
+        return rs.getLong(1);
+      }
+      return 0L;
+    }
+  }
+
   @Override
   public String getSourceVersion() {
     return null;
@@ -269,6 +284,14 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
       return VersionUtils.compareVersions(upgradeCatalog1.getTargetVersion(),
         upgradeCatalog2.getTargetVersion(), 4);
     }
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public Map<String,String> getUpgradeJsonOutput() {
+    return upgradeJsonOutput;
   }
 
   /**
@@ -386,9 +409,9 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
     if (clusterMap != null && !clusterMap.isEmpty()) {
       for (Cluster cluster : clusterMap.values()) {
-        Map<String, Set<String>> toAddProperties = new HashMap<String, Set<String>>();
-        Map<String, Set<String>> toUpdateProperties = new HashMap<String, Set<String>>();
-        Map<String, Set<String>> toRemoveProperties = new HashMap<String, Set<String>>();
+        Map<String, Set<String>> toAddProperties = new HashMap<>();
+        Map<String, Set<String>> toUpdateProperties = new HashMap<>();
+        Map<String, Set<String>> toRemoveProperties = new HashMap<>();
 
 
         Set<PropertyInfo> stackProperties = configHelper.getStackProperties(cluster);
@@ -408,17 +431,17 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
               // Do nothing
             } else if (upgradeBehavior.isDelete()) {
               if (!toRemoveProperties.containsKey(configType)) {
-                toRemoveProperties.put(configType, new HashSet<String>());
+                toRemoveProperties.put(configType, new HashSet<>());
               }
               toRemoveProperties.get(configType).add(property.getName());
             } else if (upgradeBehavior.isUpdate()) {
               if (!toUpdateProperties.containsKey(configType)) {
-                toUpdateProperties.put(configType, new HashSet<String>());
+                toUpdateProperties.put(configType, new HashSet<>());
               }
               toUpdateProperties.get(configType).add(property.getName());
             } else if (upgradeBehavior.isAdd()) {
               if (!toAddProperties.containsKey(configType)) {
-                toAddProperties.put(configType, new HashSet<String>());
+                toAddProperties.put(configType, new HashSet<>());
               }
               toAddProperties.get(configType).add(property.getName());
             }
@@ -437,7 +460,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
         for (Entry<String, Set<String>> toRemove : toRemoveProperties.entrySet()) {
           String newPropertyKey = toRemove.getKey();
-          updateConfigurationPropertiesWithValuesFromXml(newPropertyKey, Collections.<String>emptySet(), toRemove.getValue(), false, true);
+          updateConfigurationPropertiesWithValuesFromXml(newPropertyKey, Collections.emptySet(), toRemove.getValue(), false, true);
         }
       }
     }
@@ -447,11 +470,16 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
     Config hdfsSiteConfig = cluster.getDesiredConfigByType(CONFIGURATION_TYPE_HDFS_SITE);
     if (hdfsSiteConfig != null) {
       Map<String, String> properties = hdfsSiteConfig.getProperties();
+      if (properties.containsKey("dfs.internal.nameservices")) {
+        return true;
+      }
       String nameServices = properties.get(PROPERTY_DFS_NAMESERVICES);
       if (!StringUtils.isEmpty(nameServices)) {
-        String namenodes = properties.get(String.format("dfs.ha.namenodes.%s", nameServices));
-        if (!StringUtils.isEmpty(namenodes)) {
-          return (namenodes.split(",").length > 1);
+        for (String nameService : nameServices.split(",")) {
+          String namenodes = properties.get(String.format("dfs.ha.namenodes.%s", nameService));
+          if (!StringUtils.isEmpty(namenodes)) {
+            return (namenodes.split(",").length > 1);
+          }
         }
       }
     }
@@ -501,7 +529,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
     if (clusterMap != null && !clusterMap.isEmpty()) {
       for (Cluster cluster : clusterMap.values()) {
-        Map<String, String> properties = new HashMap<String, String>();
+        Map<String, String> properties = new HashMap<>();
 
         for(String propertyName:propertyNames) {
           String propertyValue = configHelper.getPropertyValueFromStackDefinitions(cluster, configType, propertyName);
@@ -555,8 +583,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
               "Skipping configuration properties update");
           return;
         } else if (oldConfig == null) {
-          oldConfigProperties = new HashMap<String, String>();
-          newTag = "version1";
+          oldConfigProperties = new HashMap<>();
         } else {
           oldConfigProperties = oldConfig.getProperties();
         }
@@ -573,15 +600,15 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
         if (propertiesToLog.size() > 0) {
           try {
-            configuration.wrtiteToAmbariUpgradeConfigUpdatesFile(propertiesToLog, configType, serviceName, ambariUpgradeConfigUpdatesFileName);
+            configuration.writeToAmbariUpgradeConfigUpdatesFile(propertiesToLog, configType, serviceName, ambariUpgradeConfigUpdatesFileName);
           } catch(Exception e) {
             LOG.error("Write to config updates file failed:", e);
           }
         }
 
         if (!Maps.difference(oldConfigProperties, mergedProperties).areEqual()) {
-          LOG.info("Applying configuration with tag '{}' to " +
-            "cluster '{}'", newTag, cluster.getClusterName());
+          LOG.info("Applying configuration with tag '{}' and configType '{}' to " +
+            "cluster '{}'", newTag, configType, cluster.getClusterName());
 
           Map<String, Map<String, String>> propertiesAttributes = null;
           if (oldConfig != null) {
@@ -594,7 +621,8 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
             propertiesAttributes = Collections.emptyMap();
           }
 
-          controller.createConfig(cluster, configType, mergedProperties, newTag, propertiesAttributes);
+          controller.createConfig(cluster, cluster.getDesiredStackVersion(), configType,
+              mergedProperties, newTag, propertiesAttributes);
 
           Config baseConfig = cluster.getConfig(configType, newTag);
           if (baseConfig != null) {
@@ -609,6 +637,9 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
                 + "tag='" + baseConfig.getTag() + "'"
                 + oldConfigString);
             }
+
+            ConfigHelper configHelper = injector.getInstance(ConfigHelper.class);
+            configHelper.updateAgentConfigs(Collections.singleton(cluster.getClusterName()));
           }
         } else {
           LOG.info("No changes detected to config " + configType + ". Skipping configuration properties update");
@@ -632,7 +663,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   protected void removeConfigurationPropertiesFromCluster(Cluster cluster, String configType, Set<String> removePropertiesList)
       throws AmbariException {
 
-    updateConfigurationPropertiesForCluster(cluster, configType, new HashMap<String, String>(), removePropertiesList, false, true);
+    updateConfigurationPropertiesForCluster(cluster, configType, new HashMap<>(), removePropertiesList, false, true);
   }
 
   /**
@@ -664,7 +695,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
                                Map<String, String> newProperties,
                                boolean updateIfExists, Multimap<AbstractUpgradeCatalog.ConfigUpdateType, Entry<String, String>> propertiesToLog) {
 
-    Map<String, String> properties = new HashMap<String, String>(originalProperties);
+    Map<String, String> properties = new HashMap<>(originalProperties);
     for (Map.Entry<String, String> entry : newProperties.entrySet()) {
       if (!properties.containsKey(entry.getKey())) {
         properties.put(entry.getKey(), entry.getValue());
@@ -680,12 +711,12 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
   private Map<String, String> removeProperties(Map<String, String> originalProperties,
                                                Set<String> removeList, Multimap<AbstractUpgradeCatalog.ConfigUpdateType, Entry<String, String>> propertiesToLog){
-    Map<String, String> properties = new HashMap<String, String>();
+    Map<String, String> properties = new HashMap<>();
     properties.putAll(originalProperties);
     for (String removeProperty: removeList){
       if (originalProperties.containsKey(removeProperty)){
         properties.remove(removeProperty);
-        propertiesToLog.put(ConfigUpdateType.REMOVED, new AbstractMap.SimpleEntry<String, String>(removeProperty, ""));
+        propertiesToLog.put(ConfigUpdateType.REMOVED, new AbstractMap.SimpleEntry<>(removeProperty, ""));
       }
     }
     return properties;
@@ -700,7 +731,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
     private final String description;
 
 
-    private ConfigUpdateType(String description) {
+    ConfigUpdateType(String description) {
       this.description = description;
     }
 
@@ -782,14 +813,20 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   protected KerberosDescriptor getKerberosDescriptor(Cluster cluster) throws AmbariException {
     // Get the Stack-defined Kerberos Descriptor (aka default Kerberos Descriptor)
     AmbariMetaInfo ambariMetaInfo = injector.getInstance(AmbariMetaInfo.class);
-    StackId stackId = cluster.getCurrentStackVersion();
-    KerberosDescriptor defaultDescriptor = ambariMetaInfo.getKerberosDescriptor(stackId.getStackName(), stackId.getStackVersion());
+
+
+    // !!! FIXME
+    @Experimental(feature = ExperimentalFeature.PATCH_UPGRADES,
+        comment = "can only take the first stack we find until we can support multiple with Kerberos")
+    StackId stackId = getStackId(cluster);
+
+    KerberosDescriptor defaultDescriptor = ambariMetaInfo.getKerberosDescriptor(stackId.getStackName(), stackId.getStackVersion(), false);
 
     // Get the User-set Kerberos Descriptor
     ArtifactDAO artifactDAO = injector.getInstance(ArtifactDAO.class);
     KerberosDescriptor artifactDescriptor = null;
     ArtifactEntity artifactEntity = artifactDAO.findByNameAndForeignKeys("kerberos_descriptor",
-        new TreeMap<String, String>(Collections.singletonMap("cluster", String.valueOf(cluster.getClusterId()))));
+      new TreeMap<>(Collections.singletonMap("cluster", String.valueOf(cluster.getClusterId()))));
     if (artifactEntity != null) {
       Map<String, Object> data = artifactEntity.getArtifactData();
 
@@ -880,7 +917,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
 
       PermissionEntity role = permissionDAO.findPermissionByNameAndType(roleName, resourceTypeDAO.findByName(resourceType));
       if (role != null) {
-        role.getAuthorizations().add(roleAuthorization);
+        role.addAuthorization(roleAuthorization);
         permissionDAO.merge(role);
       }
     }
@@ -947,95 +984,8 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
   @Override
   public void upgradeData() throws AmbariException, SQLException {
     executeDMLUpdates();
-    updateTezHistoryUrlBase();
   }
 
-  /**
-   * Version of the Tez view changes with every new version on Ambari. Hence the 'tez.tez-ui.history-url.base' in tez-site.xml
-   * has to be changed every time ambari update happens. This will read the latest tez-view jar file and find out the
-   * view version by reading the view.xml file inside it and update the 'tez.tez-ui.history-url.base' property in tez-site.xml
-   * with the proper value of the updated tez view version.
-   */
-  private void updateTezHistoryUrlBase() throws AmbariException {
-    AmbariManagementController ambariManagementController = injector.getInstance(AmbariManagementController.class);
-    Clusters clusters = ambariManagementController.getClusters();
-
-    if (clusters != null) {
-      Map<String, Cluster> clusterMap = clusters.getClusters();
-      if (clusterMap != null && !clusterMap.isEmpty()) {
-        for (final Cluster cluster : clusterMap.values()) {
-          Set<String> installedServices = cluster.getServices().keySet();
-          if (installedServices.contains("TEZ")) {
-            Config tezSite = cluster.getDesiredConfigByType("tez-site");
-            if (tezSite != null) {
-              String currentTezHistoryUrlBase = tezSite.getProperties().get("tez.tez-ui.history-url.base");
-              if (!StringUtils.isEmpty(currentTezHistoryUrlBase)) {
-                LOG.info("Current Tez History URL base: {} ", currentTezHistoryUrlBase);
-                String newTezHistoryUrlBase = getUpdatedTezHistoryUrlBase(currentTezHistoryUrlBase);
-                LOG.info("New Tez History URL base: {} ", newTezHistoryUrlBase);
-                updateConfigurationProperties("tez-site", Collections.singletonMap("tez.tez-ui.history-url.base", newTezHistoryUrlBase), true, false);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Transforms the existing tez history url base to the new url considering the latest tez view version.
-   * @param currentTezHistoryUrlBase Existing value of the tez history url base
-   * @return the updated tez history url base
-   * @throws AmbariException if currentTezHistoryUrlBase is malformed or is not compatible with the Tez View url REGEX
-     */
-  protected String getUpdatedTezHistoryUrlBase(String currentTezHistoryUrlBase) throws AmbariException{
-    String pattern = "(.*\\/TEZ\\/)(.*)(\\/.*)";
-    Pattern regex = Pattern.compile(pattern);
-    Matcher matcher = regex.matcher(currentTezHistoryUrlBase);
-    String prefix;
-    String suffix;
-    String oldVersion;
-    if (matcher.find()) {
-      prefix = matcher.group(1);
-      oldVersion = matcher.group(2);
-      suffix = matcher.group(3);
-    } else {
-      throw new AmbariException("Cannot prepare the new value for property: 'tez.tez-ui.history-url.base' using the old value: '" + currentTezHistoryUrlBase + "'");
-    }
-
-    String latestTezViewVersion = getLatestTezViewVersion(oldVersion);
-
-    return prefix + latestTezViewVersion + suffix;
-  }
-
-  /**
-   * Given the old configured version, this method tries to get the new version of tez view by reading the tez-view jar.
-   * Assumption - only a single tez-view jar will be present in the views directory.
-   * @param oldVersion It is returned if there is a failure in finding the new version
-   * @return newVersion of the tez view. Returns oldVersion if there error encountered if finding the new version number.
-   */
-  protected String getLatestTezViewVersion(String oldVersion) {
-    File viewsDirectory = configuration.getViewsDir();
-    File[] files = viewsDirectory.listFiles(new FilenameFilter() {
-      @Override
-      public boolean accept(File dir, String name) {
-        return name.startsWith("tez-view");
-      }
-    });
-
-    if(files == null || files.length == 0) {
-      LOG.error("Could not file tez-view jar file in '{}'. Returning the old version", viewsDirectory.getAbsolutePath());
-      return oldVersion;
-    }
-    File tezViewFile = files[0];
-    try {
-      ViewConfig viewConfigFromArchive = archiveUtility.getViewConfigFromArchive(tezViewFile);
-      return viewConfigFromArchive.getVersion();
-    } catch (JAXBException | IOException e) {
-      LOG.error("Failed to read the tez view version from: {}. Returning the old version", tezViewFile);
-      return oldVersion;
-    }
-  }
 
   @Override
   public final void updateDatabaseSchemaVersion() {
@@ -1162,7 +1112,13 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
     for (final Cluster cluster : clusterMap.values()) {
       long clusterID = cluster.getClusterId();
 
-      StackId stackId = cluster.getDesiredStackVersion();
+      Service service = cluster.getServices().get(serviceName);
+      if (null == service) {
+        continue;
+      }
+
+      StackId stackId = service.getDesiredStackId();
+
       Map<String, Object> widgetDescriptor = null;
       StackInfo stackInfo = ambariMetaInfo.getStack(stackId.getStackName(), stackId.getStackVersion());
       ServiceInfo serviceInfo = stackInfo.getService(serviceName);
@@ -1201,7 +1157,7 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
                 }
               }
               if (widgetDescriptor != null) {
-                LOG.debug("Loaded widget descriptor: " + widgetDescriptor);
+                LOG.debug("Loaded widget descriptor: {}", widgetDescriptor);
                 for (Object artifact : widgetDescriptor.values()) {
                   List<WidgetLayout> widgetLayouts = (List<WidgetLayout>) artifact;
                   for (WidgetLayout widgetLayout : widgetLayouts) {
@@ -1229,5 +1185,11 @@ public abstract class AbstractUpgradeCatalog implements UpgradeCatalog {
         }
       }
     }
+  }
+
+  @Experimental(feature = ExperimentalFeature.PATCH_UPGRADES,
+      comment = "can only take the first stack we find until we can support multiple with Kerberos")
+  private StackId getStackId(Cluster cluster) throws AmbariException {
+    return cluster.getServices().values().iterator().next().getDesiredStackId();
   }
 }

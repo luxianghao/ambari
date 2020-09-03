@@ -17,14 +17,19 @@
 
 @bgColor: #eee;
 @bgGreenActive: #5bb75b;
-@moduleHeaderBgColor: #fafafa;
+@navBarColor: #fafafa;
+@tabPanelHeadingColor: #fff;
+@moduleHeaderBgColor: #fff;
 @nodeDefaultHeight: 40px;
 @nodeDefaultWidth: 40px;
 @defaultRed: red;
 @defaultBorderRadius: 5px;
 @nodeActionBgColor: #E5E5E5;
 @defaultPropertiesEditorHeight: 350px;
-
+@actionLinkColor: #0f96c6;
+@navTabAnchorColor: #777;
+@navTabAnchorHighlightedColor: #555;
+@modalDialogWidth: 60%;
 body {
     background: @bgColor;
     padding: 0;
@@ -33,6 +38,11 @@ body {
 a {
   color: #000;
 }
+
+.navbar-default {
+    background-color: @navBarColor;
+}
+
 .padding0 {
   padding: 0px;
 }
@@ -54,6 +64,9 @@ a {
 .padding20{
     margin-top: 20px;
 }
+.marginBottom10{
+    margin-bottom: 10px;
+}
 .marginleft20{
   margin-left: 20px !important;
 }
@@ -62,6 +75,12 @@ a {
 }
 .marginright5{
   margin-right: 5px !important;
+}
+.marginright10 {
+  margin-right: 10px !important;
+}
+.padding15pcnt {
+  padding:8px;
 }
 #arrow{
     top: 24%;
@@ -80,7 +99,7 @@ a {
 }
 
 .container-custom {
-  background-color: @moduleHeaderBgColor;
+  background-color: @moduleHeaderBgColor !important;
 }
 
 .disabled {
@@ -88,7 +107,7 @@ a {
 }
 #header {
     white-space: nowrap;
-    background: @bgGreenActive;
+    background: #101010;
     background-position: 10px;
     color: yellow;
     height: 50px;
@@ -417,10 +436,6 @@ input:invalid {
     white-space: nowrap;
 }
 
-.breadcrumb {
-    margin: 0;
-}
-
 .collapse.width {
     height: auto;
     -webkit-transition: width 0.35s ease;
@@ -552,10 +567,10 @@ input:invalid {
     top:50px;
     left: 75%;
     z-index: 1;
+    margin: 3px 0;
 }
 
 #action_properties_dialog .modal-body {
-    max-height: @defaultPropertiesEditorHeight;
     overflow-y: scroll;
     overflow-x: hidden;
 }
@@ -570,6 +585,10 @@ input:invalid {
     position: relative;
 }
 
+#configureJob .modal-body {
+    overflow-y: scroll;
+    overflow-x: hidden;
+}
 #action_properties_dialog .modal-dialog,
 #workflow_sla_dialog .modal-dialog,
 #global_properties_dialog .modal-dialog,
@@ -578,12 +597,20 @@ input:invalid {
 #version-settings-dialog .modal-dialog,
 #control-dialog .modal-dialog,
 #ConfirmDialog .modal-dialog,
-#killnode-manager-dialog .modal-dialog {
-    width: 800px;
+#killnode-manager-dialog .modal-dialog,
+#asset_manager_dialog .modal-dialog,
+#asset_config_dialog .modal-dialog,
+#asset_list_dialog .modal-dialog,
+#actionDetailsModal .modal-dialog,
+#configureJob .modal-dialog,
+#asset-delete-confirm-dialog .modal-dialog,
+#projectsList .modal-dialog,
+#previewModal .modal-dialog,
+#stack_trace_dialog .modal-dialog {
+    width: @modalDialogWidth;
+    height: 100vh;
 }
-#configureJob .modal-dialog{
-  width: 650px;
-}
+
 #collapseOne{
     margin: 10px;
 }
@@ -596,18 +623,26 @@ input:invalid {
 #workflow_sla_dialog .panel-default > .panel-heading,
 #workflow_credentials_dialog .panel-default > .panel-heading,
 #configureWorkfowModal .panel-default > .panel-heading,
+#configureJob .panel-default > .panel-heading,
 #workflow_parameters_dialog .panel-default > .panel-heading,
 #killnode-manager-dialog .panel-default > .panel-heading,
- .whiteLabel, .whiteLabel:hover, .whiteLabel:focus, .whiteLabel:visited, .whiteLabel:active {
-    background-color: @bgGreenActive;
+#asset_manager_dialog .panel-default > .panel-heading,
+#asset_config_dialog .panel-default > .panel-heading,
+#asset_list_dialog .panel-default > .panel-heading {
+
+}
+.panel-default > .panel-heading {
+  background-color: #f8f8f8;
+  color: @actionLinkColor;
+}
+
+.whiteLabel, .whiteLabel:hover, .whiteLabel:focus, .whiteLabel:visited, .whiteLabel:active {
     color: #fff;
 }
-.btn-primary{
-    background-color: @bgGreenActive !important;
-    border-color: #289028 !important;
-    color: #fff;
+.btn-default, .btn-default:hover, .btn-default:visited, .btn-default:focus, .btn-default:active, .btn-default.active {
+  color: @actionLinkColor !important;
 }
-.btn-primary:visited,.btn-primary:focus,.btn-primary:active,.btn-primary.active{
+.btn-primary, .btn-primary:visited, .btn-primary:focus, .btn-primary:active, .btn-primary.active {
     background-color: @bgGreenActive !important;
     border-color: #289028 !important;
     color: #fff;
@@ -616,6 +651,16 @@ input:invalid {
   background-color: #289028 !important;
   border-color: #289028 !important;
   color: #fff;
+}
+.btn-secondary, .btn-secondary:visited, .btn-secondary:focus, .btn-secondary:active, .btn-secondary.active {
+    color: #333;
+    background-color: #ddd;
+    border-color: #ccc;
+}
+.btn-secondary:hover {
+    color: #333;
+    background-color: #ccc;
+    border-color: #ccc;
 }
 ._actions_popup {
     padding: 4px;
@@ -698,7 +743,7 @@ input:invalid {
   display: none !important;
 }
 #search-bar .bootstrap-tagsinput {
-    width: 260px;
+    width: 350px;
     border-radius: 0px;
     line-height: 20px;
     vertical-align: top;
@@ -716,7 +761,7 @@ input:invalid {
     border: 1px solid rgba(0,0,0,0.2);
     margin-top: 7px;
     background-color: white;
-    width: 60% !important;
+    width: auto;
     padding: 0 5px;
 }
 #job-detail-app-path{
@@ -726,6 +771,7 @@ input:invalid {
 #search-bar .search-icon {
   display: inline-block;
   border: 1px solid #ccc;
+  border-radius: 0px;
   padding: 4px 10px;
   border-left: 0px;
   border-bottom-right-radius: 3px;
@@ -741,6 +787,7 @@ input:invalid {
   height: 24px;
   margin-left: 10px;
   line-height: 30px;
+  display: inline-block;
 }
 
 .info {
@@ -766,13 +813,15 @@ input:invalid {
   border-radius: 0px;
 }
 
-.listing thead {
-    background: #f5f5f5;
-}
+// .listing thead {
+//     background: #f5f5f5;
+// }
 
 .listing th {
-  border-left : 1px solid #ddd;
-  border-bottom: 1px solid #ddd !important;
+  border: 0 !important;
+  padding: 8px 5px !important;
+  font-weight: normal;
+  color: #777;
 }
 
 .listing tr th:first-child {
@@ -802,12 +851,10 @@ input:invalid {
 
 .preview pre.prettyprint {
   border: none;
-  background: #fff;
 }
 
 .preview pre {
   border: none;
-  background: #fff;
 }
 
 .date-picker {
@@ -867,15 +914,19 @@ input:invalid {
   border-bottom: 1px solid #ddd;
 }
 
+#dashboard {
+  border-top: 0;
+}
+
 #loading {
     position: absolute;
-    top: 90px;
-    left: 0;
+    top: 20%;
+    left: 30%;
     display: none;
-    width: 100vw;
-    height: 80vh;
+    width: 50vw;
+    height: 40vh;
     overflow: hidden;
-    z-index: 1;
+    z-index: 999;
 }
 
 .loader img {
@@ -924,14 +975,14 @@ input:invalid {
   }
 
   .actions-col .btn {
-      color: gray;
+      color: @actionLinkColor;
       cursor: not-allowed;
       opacity: .5;
       font-size: 10px;
   }
 
   .actions-col .btn.isOn {
-      color: #000;
+      color: @actionLinkColor;
       cursor: pointer;
       opacity: 1;
   }
@@ -978,6 +1029,7 @@ input:invalid {
 .PAUSEDWITHERROR,
 .PREPPAUSED,
 .RUNNINGWITHERROR,
+.PREPSUSPENDED,
 .SUSPENDED,
 .SUSPENDEDWITHERROR {
     color: #f0ad4e;
@@ -1008,7 +1060,8 @@ input:invalid {
   width: 100%;
 }
 .hdfs-browse{
-  max-height: 500px;
+  height: 350px;
+  max-height: 350px;
   overflow: scroll;
 }
 #wf_title{
@@ -1152,7 +1205,7 @@ input:invalid {
     right: 5px;
 }
 .actionNodes li{
-    padding: 10px 0px !important;
+    padding: 8px 0px !important;
     height: auto;
 }
 .dr_action_fork{
@@ -1188,9 +1241,7 @@ input:invalid {
 }
 .wf-path {
     font-size: 12px;
-    float: left;
     color: gray;
-    margin-top: 17px;
     max-width: 150px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1216,9 +1267,6 @@ input:invalid {
 #credentials_config .fa-trash-o{
     color: @defaultRed;
     cursor: pointer;
-}
-.credential-list {
-  margin-top: 37px;
 }
 .credential-list .fa-trash-o{
   color: @defaultRed;
@@ -1273,6 +1321,13 @@ input:invalid {
   z-index: 999;
 }
 
+.cy-note {
+  color: #777;
+  padding-right: 40px;
+  position: absolute;
+  width: 100%;
+}
+
 .overlay_node_editor {
   position: absolute;
   z-index: 100;
@@ -1315,9 +1370,12 @@ input:invalid {
 }
 
 #cyRenderer input:invalid {
-  border: 1px solid @defaultRed;
+  border: 2px solid @defaultRed;
 }
 
+.cy-panzoom-panner{
+  display:none;
+}
 .decision-condition-label {
   border-bottom: 1px solid #D0D0D0;
   padding: 3px;
@@ -1413,7 +1471,7 @@ input:invalid {
   font-size: 10px;
 }
 
-.paste-action-btn {
+.paste-action-btn, .asset-import-btn {
   border: 1px solid silver;
   border-radius: 6px;
   margin-left: 5px;
@@ -1440,6 +1498,7 @@ input:invalid {
 
 .tab-panel-heading {
   margin-top: 2px;
+  background-color: @tabPanelHeadingColor;
 }
 
 .borderTopNone {
@@ -1489,9 +1548,283 @@ input:invalid {
   padding-left: 0px;
   padding-right: 0px;
 }
-#stackTrace{
-  white-space: pre-wrap;
-  max-width: 100%;
-  max-height: 400px;
-  overflow: scroll;
+
+.jobIdClass {
+  width: 50px;
+}
+
+.width50 {
+    white-space: nowrap;
+    width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.twitter-typeahead .tt-input {
+  width:250px;
+}
+
+.breadcrumb {
+  padding: 0px;
+  margin: 0px;
+  background-color: @moduleHeaderBgColor;
+}
+
+.breadcrumb-item {
+  color: #777;
+}
+
+.breadcrumb-item a {
+  color: @actionLinkColor;
+}
+
+.action-file-picker {
+  display: inline-block;
+}
+.prettyprint .CodeMirror {
+  height:auto;
+}
+#id{
+  width: 500px;
+}
+#xmlCodeStream{
+  width: 580px;
+  border: 1px solid #dddd;
+}
+.create-wf-menu{
+  display: inline-block;
+}
+.inlineBlock{
+  display:inline-block;
+}
+.asset-list .fa-trash-o, #projectsList .fa-trash-o{
+  color: @defaultRed;
+  cursor: pointer;
+}
+.active-asset-row {
+  background-color : @bgGreenActive !important;
+}
+.font10px {
+  font-size: 10px;
+}
+.asset-list-header-table {
+  width: 98%;
+}
+.asset-list-panel-header {
+  background-color: #fff;
+  border-bottom-left-radius: 0px;
+  border-bottom-right-radius: 0px;
+  border-top-right-radius: 0px;
+  border-top-right-radius: 0px;
+  border-left: 0;
+  border-right: 0;
+}
+.asset-list-panel-body {
+  max-height: 200px;
+  overflow-y: scroll;
+  border-top-left-radius: 0px;
+  border-top-right-radius: 0px;
+  border: 0px;
+}
+#search-table td:first-child {
+  width:5%;
+  height:40px;
+}
+#draftsTable {
+  max-height: @defaultPropertiesEditorHeight;
+  overflow-y:scroll;
+}
+#emptyDrafts {
+  padding-left:35%;
+}
+.width300 {
+  white-space: nowrap;
+  width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#draftsTable td:second-child {
+  width:35%;
+}
+#draftsNum {
+  padding-left:40%;
+}
+.margin3{
+  margin: 3px;
+}
+.visibility-hidden {
+  visibility: hidden;
+}
+
+.unsupported-elt-warning span{
+  padding: 2px;
+}
+.unsupported-elt-warning .fa-exclamation-triangle{
+  padding-right: 5px;
+  color: #f0ad4e;
+}
+.unsupported-xml{
+  width: 100%;
+  min-height: 100px;
+}
+.no-asset-records {
+  text-align: center;
+  padding: 3px;
+  overflow-y: auto;
+}
+.custom-action-xml{
+  width: 100%;
+  min-height: 175px;
+}
+#asset-delete-confirm-dialog .modal-dialog{
+  top: 60px;
+}
+.action-link, .action-link:hover, .action-link:focus {
+  color: @actionLinkColor !important;
+}
+.dropdown-menu > li > a, .dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus {
+  color: @actionLinkColor !important;
+}
+.table-striped > tbody > tr:nth-of-type(odd) {
+    background-color: #fff;
+}
+.listing thead {
+    background: #fff;
+}
+.panel-footer {
+  background-color: #fff;
+}
+.table-bordered {
+  border: 0;
+}
+.search-bar {
+  border-bottom: 1px solid #ddd;
+}
+.edit-workflow-btn {
+  margin-top: 4px;
+  margin-right: 4px;
+}
+.nav-tabs > li > a {
+  color: @navTabAnchorColor;
+}
+.nav-tabs > li.active > a, .nav-tabs > li.active > a:hover, .nav-tabs > li.active > a:focus {
+  color: @navTabAnchorHighlightedColor;
+}
+.displayBlock {
+  display : block;
+}
+ .projects-list {
+   white-space: nowrap;
+   width: 100%;
+   overflow: hidden;
+   text-overflow: ellipsis;
+ }
+ .proj-menu {
+   width:200px;
+ }
+ .pl10 {
+   padding-left:10px;
+ }
+ .fixed-col {
+   width:15%;
+ }
+ .width100 {
+   white-space: nowrap;
+   width: 100px;
+   overflow: hidden;
+   text-overflow: ellipsis;
+ }
+ .l-input {
+   height: 30px;
+   width: 60%;
+   margin-bottom: 10px;
+   margin-right: 3px;
+ }
+ .modal {
+   height: 90vh;
+ }
+ .modal-body {
+   max-height:70vh;
+   overflow:scroll;
+ }
+ .CodeMirror{
+   height: auto;
+ }
+ pre {
+   background-color : white;
+ }
+
+.processing-message {
+  padding-left: 48%;
+}
+#projectsList .modal-body {
+   max-height: 70vh;
+   overflow-y: scroll;
+   overflow-x: auto;
+ }
+#projectsDeleteConfirmation .modal-body {
+   max-height: 70vh;
+   overflow: auto;
+ }
+.tab-name {
+  display: inline-block;
+  max-width: 100px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  top: 5px;
+  position: relative;
+}
+#stackTrace {
+  word-wrap: break-word;
+}
+.dismissable-error-close {
+  font-size: 21px;
+  font-weight: bold;
+  line-height: 1;
+  -webkit-appearance: none;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  position: relative;
+  top: 4px;
+  right: -9px;
+  color: inherit;
+}
+
+.dismissable-error-close:focus, .dismissable-error-close:hover {
+  color: #000;
+  text-decoration: none;
+  cursor: pointer;
+  filter: alpha(opacity=50);
+  opacity: .5;
+}
+
+#actions-list-header, #actions-list-body {
+  margin-bottom: 0px;
+}
+
+#actions-list-header-conatiner {
+  padding-right: 16px;
+}
+
+#actions-list-body-conatiner {
+  max-height: 150px;
+  overflow-y: scroll;
+  margin-bottom: 10px;
+}
+
+#coord-actions-list-body-conatiner {
+  max-height: 350px;
+  overflow-y: scroll;
+  margin-bottom: 10px;
+}
+
+.note-info {
+  position: relative;
+  top: 10px;
+}
+.spark-namenode {
+  top: 15px;
 }

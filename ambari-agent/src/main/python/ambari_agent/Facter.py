@@ -27,7 +27,7 @@ import re
 import shlex
 import socket
 import multiprocessing
-import subprocess
+from ambari_commons import subprocess32
 from ambari_commons.shell import shellRunner
 import time
 import uuid
@@ -42,11 +42,11 @@ log = logging.getLogger()
 
 def run_os_command(cmd):
   shell = (type(cmd) == str)
-  process = subprocess.Popen(cmd,
+  process = subprocess32.Popen(cmd,
                              shell=shell,
-                             stdout=subprocess.PIPE,
-                             stdin=subprocess.PIPE,
-                             stderr=subprocess.PIPE
+                             stdout=subprocess32.PIPE,
+                             stdin=subprocess32.PIPE,
+                             stderr=subprocess32.PIPE
   )
   (stdoutdata, stderrdata) = process.communicate()
   return process.returncode, stdoutdata, stderrdata
@@ -372,34 +372,57 @@ class FacterWindows(Facter):
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class FacterLinux(Facter):
+  FIRST_WORDS_REGEXP = re.compile(r',$')
+  IFNAMES_REGEXP = re.compile("^\d")
+  SE_STATUS_REGEXP = re.compile('(enforcing|permissive|enabled)')
+  DIGITS_REGEXP = re.compile("\d+")
+  FREEMEM_REGEXP = re.compile("MemFree:.*?(\d+) .*")
+  TOTALMEM_REGEXP = re.compile("MemTotal:.*?(\d+) .*")
+  SWAPFREE_REGEXP = re.compile("SwapFree:.*?(\d+) .*")
+  SWAPTOTAL_REGEXP = re.compile("SwapTotal:.*?(\d+) .*")
+
   # selinux command
   GET_SE_LINUX_ST_CMD = "/usr/sbin/sestatus"
   GET_IFCONFIG_SHORT_CMD = "ifconfig -s"
+  GET_IP_LINK_CMD = "ip link"
   GET_UPTIME_CMD = "cat /proc/uptime"
   GET_MEMINFO_CMD = "cat /proc/meminfo"
 
   def __init__(self, config):
     super(FacterLinux,self).__init__(config)
     self.DATA_IFCONFIG_SHORT_OUTPUT = FacterLinux.setDataIfConfigShortOutput()
+    self.DATA_IP_LINK_OUTPUT = FacterLinux.setDataIpLinkOutput()
     self.DATA_UPTIME_OUTPUT = FacterLinux.setDataUpTimeOutput()
     self.DATA_MEMINFO_OUTPUT = FacterLinux.setMemInfoOutput()
 
+  # Returns the output of `ifconfig -s` command
   @staticmethod
   def setDataIfConfigShortOutput():
 
     try:
-      result = os.popen(FacterLinux.GET_IFCONFIG_SHORT_CMD).read()
-      return result
+      return_code, stdout, stderr = run_os_command(FacterLinux.GET_IFCONFIG_SHORT_CMD)
+      return stdout
     except OSError:
       log.warn("Can't execute {0}".format(FacterLinux.GET_IFCONFIG_SHORT_CMD))
+    return ""
+
+  # Returns the output of `ip link` command
+  @staticmethod
+  def setDataIpLinkOutput():
+
+    try:
+      return_code, stdout, stderr = run_os_command(FacterLinux.GET_IP_LINK_CMD)
+      return stdout
+    except OSError:
+      log.warn("Can't execute {0}".format(FacterLinux.GET_IP_LINK_CMD))
     return ""
 
   @staticmethod
   def setDataUpTimeOutput():
 
     try:
-      result = os.popen(FacterLinux.GET_UPTIME_CMD).read()
-      return result
+      return_code, stdout, stderr = run_os_command(FacterLinux.GET_UPTIME_CMD)
+      return stdout
     except OSError:
       log.warn("Can't execute {0}".format(FacterLinux.GET_UPTIME_CMD))
     return ""
@@ -408,8 +431,8 @@ class FacterLinux(Facter):
   def setMemInfoOutput():
 
     try:
-      result = os.popen(FacterLinux.GET_MEMINFO_CMD).read()
-      return result
+      return_code, stdout, stderr = run_os_command(FacterLinux.GET_MEMINFO_CMD)
+      return stdout
     except OSError:
       log.warn("Can't execute {0}".format(FacterLinux.GET_MEMINFO_CMD))
     return ""
@@ -422,7 +445,7 @@ class FacterLinux(Facter):
 
     try:
       retcode, out, err = run_os_command(FacterLinux.GET_SE_LINUX_ST_CMD)
-      se_status = re.search('(enforcing|permissive|enabled)', out)
+      se_status = FacterLinux.SE_STATUS_REGEXP.search(out)
       if se_status:
         return True
     except OSError:
@@ -435,11 +458,18 @@ class FacterLinux(Facter):
       if i.strip():
         result = result + i.split()[0].strip() + ","
 
-    result = re.sub(r',$', "", result)
+    result = FacterLinux.FIRST_WORDS_REGEXP.sub("", result)
     return result
 
+  def return_ifnames_from_ip_link(self, ip_link_output):
+    list = []
+    for line in ip_link_output.splitlines():
+      if FacterLinux.IFNAMES_REGEXP.match(line):
+        list.append(line.split()[1].rstrip(":"))
+    return ",".join(list)
+
   def data_return_first(self, patern, data):
-    full_list = re.findall(patern, data)
+    full_list = patern.findall(data)
     result = ""
     if full_list:
       result = full_list[0]
@@ -452,13 +482,12 @@ class FacterLinux(Facter):
     import struct
     primary_ip = self.getIpAddress().strip()
 
-    for line in self.DATA_IFCONFIG_SHORT_OUTPUT.splitlines()[1:]:
-      if line.strip():
-        i = line.split()[0]
-        ip_address_by_ifname = self.get_ip_address_by_ifname(i.strip())
+    for ifname in self.getInterfaces().split(","):
+      if ifname.strip():
+        ip_address_by_ifname = self.get_ip_address_by_ifname(ifname)
         if ip_address_by_ifname is not None:
           if primary_ip == ip_address_by_ifname.strip():
-            return socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 35099, struct.pack('256s', i))[20:24])
+            return socket.inet_ntoa(fcntl.ioctl(socket.socket(socket.AF_INET, socket.SOCK_DGRAM), 35099, struct.pack('256s', ifname))[20:24])
 
     return None
       
@@ -483,16 +512,21 @@ class FacterLinux(Facter):
   # Return interfaces
   def getInterfaces(self):
     result = self.return_first_words_from_list(self.DATA_IFCONFIG_SHORT_OUTPUT.splitlines()[1:])
-    if result == '':
-      log.warn("Can't get a network interfaces list from {0}".format(self.DATA_IFCONFIG_SHORT_OUTPUT))
-      return 'OS NOT SUPPORTED'
-    else:
+    # If the host has `ifconfig` command, then return that result.
+    if result != '':
       return result
+    # If the host has `ip` command, then return that result.
+    result = self.return_ifnames_from_ip_link(self.DATA_IP_LINK_OUTPUT)
+    if result != '':
+      return result
+    # If the host has neither `ifocnfig` command nor `ip` command, then return "OS NOT SUPPORTED"
+    log.warn("Can't get a network interfaces list from {0}".format(self.DATA_IFCONFIG_SHORT_OUTPUT))
+    return 'OS NOT SUPPORTED'
 
   # Return uptime seconds
   def getUptimeSeconds(self):
     try:
-      return int(self.data_return_first("\d+", self.DATA_UPTIME_OUTPUT))
+      return int(self.data_return_first(FacterLinux.DIGITS_REGEXP, self.DATA_UPTIME_OUTPUT))
     except ValueError:
       log.warn("Can't get an uptime value from {0}".format(self.DATA_UPTIME_OUTPUT))
       return 0
@@ -501,7 +535,7 @@ class FacterLinux(Facter):
   def getMemoryFree(self):
     #:memoryfree_mb => "MemFree",
     try:
-      return int(self.data_return_first("MemFree:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(FacterLinux.FREEMEM_REGEXP, self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get free memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -509,7 +543,7 @@ class FacterLinux(Facter):
   # Return memorytotal
   def getMemoryTotal(self):
     try:
-      return int(self.data_return_first("MemTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(FacterLinux.TOTALMEM_REGEXP, self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get total memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -518,7 +552,7 @@ class FacterLinux(Facter):
   def getSwapFree(self):
     #:swapfree_mb   => "SwapFree"
     try:
-      return int(self.data_return_first("SwapFree:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(FacterLinux.SWAPFREE_REGEXP, self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get free swap memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -527,7 +561,7 @@ class FacterLinux(Facter):
   def getSwapSize(self):
     #:swapsize_mb   => "SwapTotal",
     try:
-      return int(self.data_return_first("SwapTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(FacterLinux.SWAPTOTAL_REGEXP, self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get total swap memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0
@@ -536,7 +570,7 @@ class FacterLinux(Facter):
   def getMemorySize(self):
     #:memorysize_mb => "MemTotal"
     try:
-      return int(self.data_return_first("MemTotal:.*?(\d+) .*", self.DATA_MEMINFO_OUTPUT))
+      return int(self.data_return_first(FacterLinux.TOTALMEM_REGEXP, self.DATA_MEMINFO_OUTPUT))
     except ValueError:
       log.warn("Can't get memory size from {0}".format(self.DATA_MEMINFO_OUTPUT))
       return 0

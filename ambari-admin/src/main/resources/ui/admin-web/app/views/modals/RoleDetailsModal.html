@@ -36,14 +36,14 @@
     <div ng-repeat="level in orderedLevels">
       <div class="table-row-wrapper table-section-title">
         <div class="table-row">
-          <div class="table-cell" colspan="{{roles.length + 1}}">{{'users.roles.permissionLevel' | translate: '{level: getLevelName(level)}'}}</div>
+          <div class="table-cell" colspan="{{roles.length + 1}}">{{'users.roles.permissionLevel' | translate:{level: getLevelName(level)} }}</div>
         </div>
       </div>
       <div class="table-row-wrapper">
-        <div class="table-row" ng-repeat="auth in orderedAuthorizations" ng-if="authHash[level][auth]">
-          <div class="table-cell">{{authHash[level][auth]}}</div>
+        <div class="table-row" ng-repeat="auth_id in authHash[level].order">
+          <div class="table-cell">{{authHash[level][auth_id].name}}</div>
           <div class="table-cell text-center" ng-repeat="role in roles">
-            <i class="glyphicon glyphicon-ok green-icon" ng-show="role.authHash[auth]"></i>
+            <i class="glyphicon glyphicon-ok green-icon" ng-show="authHash[level][auth_id].roles[role.permission_name]"></i>
           </div>
         </div>
       </div>

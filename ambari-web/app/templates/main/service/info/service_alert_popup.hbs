@@ -23,14 +23,14 @@
         <div class="row">
           <div class="col-md-8 name-text">
             <div>
-              <a href="#" {{action "gotoAlertDetails" alert target="view"}}>{{alert.label}}</a>
+              <a class="accordion-toggle" href="#" {{action "gotoAlertDetails" alert target="view"}}>{{alert.label}}</a>
             </div>
-            <div class="definition-latest-text">
-              {{alert.latestText}}
+            <div class="definition-latest-text" {{bindAttr data-original-title="alert.latestText"}}>
+              {{alert.latestTextSummary}}
             </div>
           </div>
           <div class="col-md-4 status-col" rel="alert-status-tooltip" >
-            {{view App.AlertDefinitionSummary contentBinding="alert"}}
+            <div class="display-inline-block">{{view App.AlertDefinitionSummary contentBinding="alert"}}</div>
             <span class="timeago" {{bindAttr data-original-title="alert.lastTriggeredVerboseDisplay"}}>
               <span class="status-icon">{{{alert.status}}}</span>
               <time>{{alert.lastTriggeredForFormatted}}</time>

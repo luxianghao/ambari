@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -34,7 +34,8 @@ public enum UserHookParams {
   // identify security related values
   CLUSTER_SECURITY_TYPE("cluster-security-type"),
   CMD_HDFS_PRINCIPAL("cmd-hdfs-principal"),
-  CMD_HDFS_KEYTAB("cmd-hdfs-keytab");
+  CMD_HDFS_KEYTAB("cmd-hdfs-keytab"),
+  CMD_HDFS_USER("cmd-hdfs-user");
 
 
   private String param;

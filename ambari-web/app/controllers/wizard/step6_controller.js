@@ -161,17 +161,6 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
    */
   anyWarnings: Em.computed.or('anyGeneralWarnings', 'anyHostWarnings'),
 
-  openSlavesAndClientsIssues: function () {
-    App.ModalPopup.show({
-      header: Em.I18n.t('installer.step6.validationSlavesAndClients.popup.header'),
-      bodyClass: Em.View.extend({
-        controller: this,
-        templateName: require('templates/wizard/step6/step6_issues_popup')
-      }),
-      secondary: null
-    });
-  },
-
   /**
    * Verify condition that at least one checkbox of each component was checked
    * @method clearError
@@ -313,9 +302,11 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
     else if (this.get('isAddServiceWizard')) services = installedServices.concat(selectedServices);
 
     var headers = Em.A([]);
+    let doHideOzoneDataNodes = !!services.findProperty('serviceName', 'HDFS');
     services.forEach(function (stackService) {
       stackService.get('serviceComponents').forEach(function (serviceComponent) {
-        if (serviceComponent.get('isShownOnInstallerSlaveClientPage')) {
+        let hideComponent = serviceComponent.get('componentName') === 'OZONE_DATANODE' ? doHideOzoneDataNodes : false;
+        if (serviceComponent.get('isShownOnInstallerSlaveClientPage') && !hideComponent) {
           headers.pushObject(Em.Object.create({
             name: serviceComponent.get('componentName'),
             label: App.format.role(serviceComponent.get('componentName'), false),
@@ -349,6 +340,7 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
       this.callValidation();
     }
   },
+
 
   /**
    * Returns list of new hosts
@@ -392,9 +384,9 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
       masterHostNamesMap = masterHostNames.toWickMap(),
       hosts = this.get('isAddHostWizard') ? this.getNewHosts() : this.getAllHosts();
 
+    var i = 1;
     hosts.mapProperty('hostName').forEach(function (_hostName) {
       var hasMaster = masterHostNamesMap[_hostName];
-
       var obj = {
         hostName: _hostName,
         hasMaster: hasMaster,
@@ -405,9 +397,11 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
             checked: false,
             isInstalled: false,
             isDisabled: header.get('isDisabled'),
-            uId: _hostName + '-checkbox-' + index
+            uId: _hostName + '-checkbox-' + index,
+            dataQaAttr: header.name === 'CLIENT' ? 'client-component' : ''
           };
-        })
+        }),
+        isLast: i === hosts.length ? true : false
       };
 
       if (hasMaster) {
@@ -415,6 +409,7 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
       } else {
         hostsObj.pushObject(obj);
       }
+      i++;
     });
     //hosts with master components should be in the beginning of list
     hostsObj.unshift.apply(hostsObj, masterHosts);
@@ -441,7 +436,9 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
     } else {
      this.restoreComponentsSelection(hostsObj, slaveComponents);
     }
-    this.enableCheckboxesForDependentComponents(hostsObj);
+    if (this.get('isAddServiceWizard')) {
+      this.enableCheckboxesForDependentComponents(hostsObj);
+    }
     this.selectClientHost(hostsObj);
     return hostsObj;
   },
@@ -478,6 +475,9 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
       service.get('serviceComponents').forEach(function (component) {
         component.get('dependencies').forEach(function (dependency) {
           var dependentService = App.StackService.find().findProperty('serviceName', dependency.serviceName);
+          if (!dependentService) {
+            return;
+          }
           var dependentComponent = dependentService.get('serviceComponents').findProperty('componentName', dependency.componentName);
           if (dependentComponent.get('isSlave') && dependentService.get('isInstalled')) {
             dependentSlaves[dependentComponent.get('componentName')] = [];
@@ -629,8 +629,7 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
     clearTimeout(this.get('timer'));
     if (this.get('validationInProgress')) {
       this.set('timer', setTimeout(function () {
-        self.callValidation()
-          .then(validationCallback);
+        self.callValidation();
       }, 700));
     } else {
       this.callServerSideValidation()
@@ -705,8 +704,6 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
    * @override App.HostComponentRecommendationMixin
    */
   updateValidationsSuccessCallback: function (data) {
-    var self = this;
-
     var clientComponents = App.get('components.clients');
 
     this.set('generalErrorMessages', []);
@@ -726,7 +723,7 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
     }).forEach(function (item) {
       var checkboxWithIssue = null;
       var isGeneralClientValidationItem = clientComponents.contains(item['component-name']); // it is an error/warning for any client component (under "CLIENT" alias)
-      var host = self.get('hosts').find(function (h) {
+      var host = this.get('hosts').find(function (h) {
         return h.hostName === item.host && h.checkboxes.some(function (checkbox) {
           var isClientComponent = checkbox.component === "CLIENT" && isGeneralClientValidationItem;
           if (checkbox.component === item['component-name'] || isClientComponent) {
@@ -750,6 +747,11 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
           }
       }
       else {
+        var componentHeader = this.get('headers').findProperty('name', item['component-name']);
+        if (componentHeader && componentHeader.get('isDisabled')) {
+          // skip validation messages for components which disabled for editing
+          return;
+        }
         var component;
         if (isGeneralClientValidationItem) {
           if (!anyGeneralClientErrors) {
@@ -768,15 +770,15 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
           }
 
           if (item.level === 'ERROR') {
-            self.get('generalErrorMessages').push(item.message + details);
+            this.get('generalErrorMessages').push(item.message + details);
           }
           else
             if (item.level === 'WARN') {
-              self.get('generalWarningMessages').push(item.message + details);
+              this.get('generalWarningMessages').push(item.message + details);
             }
         }
       }
-    });
+    }, this);
   },
 
   /**
@@ -833,6 +835,7 @@ App.WizardStep6Controller = Em.Controller.extend(App.HostComponentValidationMixi
 
     if (self.get('anyWarnings') || self.get('anyErrors')) {
       App.ModalPopup.show({
+        'data-qa': 'validation-issues-modal',
         primary: Em.I18n.t('common.continueAnyway'),
         header: Em.I18n.t('installer.step6.validationIssuesAttention.header'),
         body: Em.I18n.t('installer.step6.validationIssuesAttention'),

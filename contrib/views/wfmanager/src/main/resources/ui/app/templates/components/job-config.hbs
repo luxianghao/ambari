@@ -21,13 +21,41 @@
       <div class="modal-header">
         <button type="button" class="close" data-dismiss="modal">&times;</button>
         {{#if isDryrun}}
-          <h4 class="modal-title">Dryrun {{displayName}}</h4>
+          <h4 class="modal-title">Validate {{displayName}}</h4>
         {{else}}
           <h4 class="modal-title">Submit {{displayName}}</h4>
         {{/if}}
-
       </div>
       <div class="modal-body">
+        {{designer-errors errors=jobConfigs.errors}}
+        {{#if (and (eq type 'coord') containsParameteriedPaths)}}
+        <div class="col-xs-24">
+          <div class="alert alert-warning" role="alert">
+            Workflow path contains variables. Please provide the absolute path to auto detect templatized variables. Skip this step if you have configured all the templatized variables of the workflow in the coordinator.
+          </div>
+        </div>
+        <div class="row form-group">
+          <div class="col-xs-3">
+            <label class="control-label" for="path">Workflow path</label><span class="requiredField">&nbsp;*</span>
+          </div>
+          <div class="col-xs-8">
+            <div class="input-group">
+              {{input class="form-control" type="text" name='wfPath' value=parameterizedWorkflowPath}}
+              <span class="input-group-btn">
+                <button type="button" class="btn btn-secondary" {{action "selectFile" 'wfPath'}}>Browse</button>
+              </span>
+            </div>
+            {{field-error model=this field='filePath' showErrorMessage=showErrorMessage}}
+          </div>
+        </div>
+        {{else}}
+        {{#if (and (eq type 'bundle') containsParameteriedPaths)}}
+          <div class="col-xs-24">
+            <div class="alert alert-warning" role="alert">
+              <span>Auto detecting variables is not possible as one or more underlying workflow/coordinator path contains variables.  You have to configure the variables in custom job properties/coordinator configuration.</span>
+            </div>
+          </div>
+        {{/if}}
         <div class="panel panel-default">
           <div class="panel-body">
             {{#if alertType}}
@@ -36,24 +64,24 @@
               <div>{{alertDetails}}</div>
               {{#if isStackTraceAvailable}}
                 {{#if isStackTraceVisible}}
-                  <a href="#" {{action "hideStackTrace"}}>Hide Log</a>
+                  <a href="#" class="action-link" {{action "hideStackTrace"}}>Hide Log</a>
                   <div id="stackTrace">{{{stackTrace}}}</div>
                 {{/if}}
-                {{#unless isStackTraceVisible}}  
-                  <a href="#" {{action "showStackTrace"}}>Show Log</a>
+                {{#unless isStackTraceVisible}}
+                  <a href="#" class="action-link" {{action "showStackTrace"}}>Show Log</a>
                 {{/unless}}
               {{/if}}
             </div>
             {{/if}}
             <div class="row form-group">
-              <div class="col-xs-3"> 
+              <div class="col-xs-3">
                 <label class="control-label" for="{{type}}-path">{{displayName}} path</label><span class="requiredField">&nbsp;*</span>
               </div>
               <div class="col-xs-8">
                 <div class="input-group">
-                  {{input class="form-control" type="text" name="{{type}}-path"  value=filePath}}
+                  {{input class="form-control" name="filePath" type="text" value=filePath}}
                   <span class="input-group-btn">
-                    <button type="button" class="btn btn-primary" {{action "selectFile"}}>Browse</button>
+                    <button type="button" class="btn btn-secondary" {{action "selectFile" "filePath"}}>Browse</button>
                   </span>
                 </div>
                 {{field-error model=this field='filePath' showErrorMessage=showErrorMessage}}
@@ -76,51 +104,67 @@
         </div>
         <div id="jobProperties">
           {{#if configMap.length}}
-          <div class="panel panel-default">
-            <div class="panel-heading">
-              Job Properties
-            </div>
-            <div class="panel-body">
-              {{field-error model=this field='configMap' showErrorMessage=showErrorMessage}}
-              {{#each configMap as |prop|}}
-              <div class="row form-group">
-                <div class="col-xs-3">
-                  <label class="control-label" for="{{prop}}">{{prop.name}}</label>
-                  {{#if prop.isRequired}}
-                  <span class="requiredField">&nbsp;*</span>
-                  {{/if}}
-                </div>
-                <div class="col-xs-8">
-                  {{input class="form-control" type="text" value=prop.value}}
-                </div>
+            <div class="panel panel-default">
+              <div class="panel-heading">
+                Job Properties
               </div>
-              {{/each}}
+              <div class="panel-body">
+                {{field-error model=this field='configMap' showErrorMessage=showErrorMessage}}
+                {{#each configMap as |prop index|}}
+                  <div class="row form-group">
+                    <div class="col-xs-3">
+                      <label class="control-label" for="{{prop}}">{{prop.name}}</label>
+                      {{#if prop.isRequired}}
+                        <span class="requiredField">&nbsp;*</span>
+                      {{/if}}
+                    </div>
+                    <div class="col-xs-8">
+                      {{input class="form-control" type="text" value=prop.value}}
+                    </div>
+                  </div>
+                {{/each}}
+              </div>
+            </div>
+          {{/if}}
+          <div class=" panel panel-default">
+            <div class="panel-heading">Custom Job Properties</div>
+            <div class="panel-body handlerPanel">
+              <form class="form-horizontal">
+                {{#name-value-config configuration=customProps.configuration register="register"}}{{/name-value-config}}
+              </form>
             </div>
           </div>
-          {{/if}}
         </div>
-      </div>
-      <div class="modal-footer">
-        {{#if savingInProgress}}
-        {{spin-spinner lines=10 length=10 width=5 radius=10 }}
-        <span class="pull-left">Saving {{displayName}}</span>
-        {{/if}}
-        {{#if startingInProgress}}
-        {{spin-spinner lines=8 length=5 width=10 radius=5}}
-        <span class="pull-left">Starting {{displayName}}</span>
-        {{/if}}
-        <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
-        {{#if isDryrun}}
-          <button type="button" class="btn btn-primary" {{action "dryrun"}}>Test Run</button>
-        {{else}}
-          <button type="button" class="btn btn-default" {{action "dryrun"}}>Test Run</button>
-          <button type="button" class="btn btn-primary" {{action "save"}}>Submit</button>
         {{/if}}
 
+      </div>
+      <div class="modal-footer">
+        {{#if (and (eq type 'coord') containsParameteriedPaths)}}
+          <button type="button" class="btn btn-default" {{action "skip"}}>Skip</button>
+          <button type="button" class="btn btn-primary" {{action "next"}}>Next</button>
+        {{else}}
+          {{#if savingInProgress}}
+            {{spin-spinner lines=10 length=10 width=5 radius=10 }}
+            <span class="pull-left">Saving {{displayName}}</span>
+            {{/if}}
+          {{#if startingInProgress}}
+            {{spin-spinner lines=8 length=5 width=10 radius=5}}
+            <span class="pull-left">Starting {{displayName}}</span>
+          {{/if}}
+          <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+          {{#if isDryrun}}
+            <button type="button" class="btn btn-primary" {{action "dryrun"}}>Validate</button>
+          {{else}}
+            {{#if (not (eq type 'bundle'))}}
+              <button type="button" class="btn btn-default" {{action "dryrun"}}>Validate</button>
+            {{/if}}
+            <button type="button" class="btn btn-primary" {{action "save"}}>Submit</button>
+          {{/if}}
+        {{/if}}
       </div>
     </div>
   </div>
 </div>
 {{#if showingFileBrowser}}
-{{hdfs-browser closeFileBrowser="closeFileBrowser" selectFileCallback=selectFileCallback filePath=filePath}}
+{{hdfs-browser closeFileBrowser="closeFileBrowser" selectFileCallback=selectFileCallback filePath=selectedPath}}
 {{/if}}

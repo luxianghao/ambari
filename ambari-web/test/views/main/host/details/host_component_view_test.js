@@ -30,7 +30,9 @@ function getView() {
     content: Em.Object.create({
       componentName: 'component'
     }),
-    hostComponent: Em.Object.create()
+    controller: Em.Object.create({
+      installClients: sinon.spy()
+    })
   });
 }
 
@@ -42,32 +44,32 @@ describe('App.HostComponentView', function() {
 
   App.TestAliases.testAsComputedNotEqual(getView(), 'isRestartComponentDisabled', 'workStatus', App.HostComponentStatus.started);
 
-  describe('#disabled', function() {
+  describe('#isDisabled', function() {
 
     var tests = Em.A([
       {
         parentView: {content: {healthClass: 'health-status-DEAD-YELLOW'}},
         noActionAvailable: '',
         isRestartComponentDisabled: true,
-        e: 'disabled'
+        e: true
       },
       {
         parentView: {content: {healthClass: 'another-class'}},
         noActionAvailable: '',
         isRestartComponentDisabled: true,
-        e: ''
+        e: false
       },
       {
         parentView: {content: {healthClass: 'another-class'}},
         noActionAvailable: 'hidden',
         isRestartComponentDisabled: true,
-        e: 'disabled'
+        e: true
       },
       {
         parentView: {content: {healthClass: 'another-class'}},
         noActionAvailable: 'hidden',
         isRestartComponentDisabled: false,
-        e: ''
+        e: false
       }
     ]);
 
@@ -80,7 +82,7 @@ describe('App.HostComponentView', function() {
           noActionAvailable: test.noActionAvailable,
           isRestartComponentDisabled: test.isRestartComponentDisabled
         });
-        expect(hostComponentView.get('disabled')).to.equal(test.e);
+        expect(hostComponentView.get('isDisabled')).to.equal(test.e);
       });
     });
 
@@ -127,21 +129,21 @@ describe('App.HostComponentView', function() {
 
     it('delete is disabled because min cardinality 1', function() {
       this.mock.returns(Em.Object.create({minToInstall: 1}));
-      hostComponentView.get('hostComponent').set('componentName', 'C1');
+      hostComponentView.get('content').set('componentName', 'C1');
       hostComponentView.propertyDidChange('isDeleteComponentDisabled');
       expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.true;
     });
 
     it('delete is disabled because min cardinality 0 and status INSTALLED', function() {
       this.mock.returns(Em.Object.create({minToInstall: 0}));
-      hostComponentView.get('hostComponent').set('workStatus', 'INIT');
+      hostComponentView.get('content').set('workStatus', 'INIT');
       hostComponentView.propertyDidChange('isDeleteComponentDisabled');
       expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.false;
     });
 
     it('delete is enabled because min cardinality 0 and status STARTED', function() {
       this.mock.returns(Em.Object.create({minToInstall: 0}));
-      hostComponentView.get('hostComponent').set('workStatus', 'STARTED');
+      hostComponentView.get('content').set('workStatus', 'STARTED');
       hostComponentView.propertyDidChange('isDeleteComponentDisabled');
       expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.true;
     });
@@ -149,77 +151,11 @@ describe('App.HostComponentView', function() {
     it('delete is enabled because mysql server is stopped and hive is using external database', function() {
       App.db.setConfigs(configs);
       this.mock.returns(Em.Object.create({minToInstall: 0}));
-      hostComponentView.get('hostComponent').set('componentName', 'MYSQL_SERVER');
-      hostComponentView.get('hostComponent').set('workStatus', 'STOPPED');
+      hostComponentView.get('content').set('componentName', 'MYSQL_SERVER');
+      hostComponentView.get('content').set('workStatus', 'STOPPED');
       hostComponentView.propertyDidChange('isDeleteComponentDisabled');
       expect(hostComponentView.get('isDeleteComponentDisabled')).to.be.true;
     });
-  });
-
-  describe('#componentTextStatus', function() {
-
-    var tests = Em.A([
-      {
-        componentTextStatus: 'status',
-        hostComponent: null,
-        e: 'status',
-        m: 'get content status'
-      },
-      {
-        componentTextStatus: 'status',
-        hostComponent: Em.Object.create({componentTextStatus: 'new_status'}),
-        e: 'new_status',
-        m: 'get hostComponent status'
-      }
-    ]);
-
-    tests.forEach(function(test) {
-      it(test.m, function() {
-        hostComponentView = App.HostComponentView.create({
-          startBlinking: function(){},
-          doBlinking: function(){},
-          getDesiredAdminState: function(){return $.ajax({});},
-          hostComponent: test.hostComponent,
-          content: Em.Object.create()
-        });
-        hostComponentView.get('content').set('componentTextStatus', test.componentTextStatus);
-        expect(hostComponentView.get('componentTextStatus')).to.equal(test.e);
-      });
-    });
-
-  });
-
-  describe('#workStatus', function() {
-
-    var tests = Em.A([
-      {
-        workStatus: 'status',
-        hostComponent: null,
-        e: 'status',
-        m: 'get content workStatus'
-      },
-      {
-        workStatus: 'status',
-        hostComponent: Em.Object.create({workStatus: 'new_status'}),
-        e: 'new_status',
-        m: 'get hostComponent workStatus'
-      }
-    ]);
-
-    tests.forEach(function(test) {
-      it(test.m, function() {
-        hostComponentView = App.HostComponentView.create({
-          startBlinking: function(){},
-          doBlinking: function(){},
-          getDesiredAdminState: function(){return $.ajax({});},
-          hostComponent: test.hostComponent,
-          content: Em.Object.create()
-        });
-        hostComponentView.get('content').set('workStatus', test.workStatus);
-        expect(hostComponentView.get('workStatus')).to.equal(test.e);
-      });
-    });
-
   });
 
   describe('#statusClass', function() {
@@ -249,19 +185,25 @@ describe('App.HostComponentView', function() {
         workStatus: 'STARTED',
         passiveState: 'OFF',
         e: 'health-status-started'
+      },
+      {
+        workStatus: App.HostComponentStatus.stopped,
+        passiveState: 'OFF',
+        isClient: true,
+        e: 'health-status-started'
       }
     ]);
 
     tests.forEach(function(test) {
       it(test.workStatus + ' ' + test.passiveState, function() {
         hostComponentView = App.HostComponentView.create({
-          startBlinking: function(){},
-          doBlinking: function(){},
+          startBlinking: Em.K,
+          doBlinking: Em.K,
           getDesiredAdminState: function(){return $.ajax({});},
-          content: Em.Object.create(),
-          hostComponent: Em.Object.create()
+          content: Em.Object.create()
         });
-        hostComponentView.get('hostComponent').set('workStatus',test.workStatus);
+        hostComponentView.get('content').set('isClient', test.isClient);
+        hostComponentView.get('content').set('workStatus', test.workStatus);
         hostComponentView.get('content').set('passiveState', test.passiveState);
         expect(hostComponentView.get('statusClass')).to.equal(test.e);
       });
@@ -384,24 +326,7 @@ describe('App.HostComponentView', function() {
     });
   });
 
-  describe("#isDeletableComponent", function() {
-    beforeEach(function(){
-      sinon.stub(App, 'get').returns(['C1']);
-    });
-    afterEach(function(){
-      App.get.restore();
-    });
-    it("component deletable", function() {
-      hostComponentView.set('content.componentName', 'C1');
-      hostComponentView.propertyDidChange('isDeletableComponent');
-      expect(hostComponentView.get('isDeletableComponent')).to.be.true;
-    });
-    it("component is not deletable", function() {
-      hostComponentView.set('content.componentName', 'C2');
-      hostComponentView.propertyDidChange('isDeletableComponent');
-      expect(hostComponentView.get('isDeletableComponent')).to.be.false;
-    });
-  });
+  App.TestAliases.testAsComputedExistsInByKey(getView(), 'isDeletableComponent', 'content.componentName', 'App.components.deletable', ['DATANODE', 'HDFS_CLIENT', 'NFS_GATEWAY'])
 
   describe("#isMoveComponentDisabled", function() {
     beforeEach(function(){
@@ -450,21 +375,20 @@ describe('App.HostComponentView', function() {
 
   describe("#isReassignable", function() {
     beforeEach(function(){
-      sinon.stub(App, 'get').returns(['C1']);
-      this.mock = sinon.stub(App.router, 'get');
+      this.mock = sinon.stub(App, 'get');
+      this.mock.withArgs('components.reassignable').returns(['C1'])
     });
     afterEach(function(){
-      App.get.restore();
       this.mock.restore();
     });
     it("component reassignable and count is 2", function() {
-      this.mock.returns({TOTAL: 2});
+      this.mock.withArgs('allHostNames.length').returns(2);
       hostComponentView.set('content.componentName', 'C1');
       hostComponentView.propertyDidChange('isReassignable');
       expect(hostComponentView.get('isReassignable')).to.be.true;
     });
     it("component reassignable and count is 1", function() {
-      this.mock.returns({TOTAL: 1});
+      this.mock.withArgs('allHostNames.length').returns(1);
       hostComponentView.set('content.componentName', 'C1');
       hostComponentView.propertyDidChange('isReassignable');
       expect(hostComponentView.get('isReassignable')).to.be.false;
@@ -476,24 +400,9 @@ describe('App.HostComponentView', function() {
     });
   });
 
-  describe("#isRestartableComponent", function() {
-    beforeEach(function(){
-      sinon.stub(App, 'get').returns(['C1']);
-    });
-    afterEach(function(){
-      App.get.restore();
-    });
-    it("component deletable", function() {
-      hostComponentView.set('content.componentName', 'C1');
-      hostComponentView.propertyDidChange('isRestartableComponent');
-      expect(hostComponentView.get('isRestartableComponent')).to.be.true;
-    });
-    it("component is not deletable", function() {
-      hostComponentView.set('content.componentName', 'C2');
-      hostComponentView.propertyDidChange('isRestartableComponent');
-      expect(hostComponentView.get('isRestartableComponent')).to.be.false;
-    });
-  });
+  App.TestAliases.testAsComputedExistsInByKey(getView(), 'isRestartableComponent', 'content.componentName', 'App.components.restartable', ['DATANODE', 'JOURNALNODE', 'NAMENODE']);
+
+  App.TestAliases.testAsComputedExistsInByKey(getView(), 'isRefreshConfigsAllowed', 'content.componentName', 'App.components.refreshConfigsAllowed', ['FLUME_HANDLER']);
 
   describe("#isRefreshConfigsAllowed", function() {
     beforeEach(function(){
@@ -511,6 +420,139 @@ describe('App.HostComponentView', function() {
       hostComponentView.set('content.componentName', 'C2');
       hostComponentView.propertyDidChange('isRefreshConfigsAllowed');
       expect(hostComponentView.get('isRefreshConfigsAllowed')).to.be.false;
+    });
+  });
+
+  describe('#clientCustomCommands', function() {
+    beforeEach(function() {
+      sinon.stub(App.StackServiceComponent, 'find').returns(Em.Object.create({
+        customCommands: ['COMMAND1']
+      }));
+    });
+    afterEach(function() {
+      App.StackServiceComponent.find.restore();
+    });
+
+    it('should return list of commands', function() {
+      hostComponentView.propertyDidChange('clientCustomCommands');
+      expect(hostComponentView.get('clientCustomCommands')).to.be.eql([{
+        command: 'COMMAND1',
+        label: Em.I18n.t('services.service.actions.run.executeCustomCommand.menu').format('COMMAND1')
+      }]);
+    });
+  
+    it('should return empty list of commands', function() {
+      hostComponentView.set('content.componentName', 'KERBEROS_CLIENT');
+      hostComponentView.propertyDidChange('clientCustomCommands');
+      expect(hostComponentView.get('clientCustomCommands')).to.be.empty;
+    });
+  });
+
+  describe('#installClient', function() {
+
+    it('installClients should be called', function() {
+      hostComponentView.installClient();
+      expect(hostComponentView.get('controller').installClients.calledOnce).to.be.true;
+    });
+  });
+  
+  describe('#typeDisplay', function() {
+    
+    it('should return label for master component', function() {
+      hostComponentView.set('content.isMaster', true);
+      hostComponentView.propertyDidChange('typeDisplay');
+      expect(hostComponentView.get('typeDisplay')).to.be.equal(Em.I18n.t('common.master'));
+    });
+  
+    it('should return label for slave component', function() {
+      hostComponentView.set('content.isSlave', true);
+      hostComponentView.propertyDidChange('typeDisplay');
+      expect(hostComponentView.get('typeDisplay')).to.be.equal(Em.I18n.t('common.slave'));
+    });
+  
+    it('should return label for client component', function() {
+      hostComponentView.set('content.isClient', true);
+      hostComponentView.propertyDidChange('typeDisplay');
+      expect(hostComponentView.get('typeDisplay')).to.be.equal(Em.I18n.t('common.client'));
+    });
+  });
+  
+  describe('#maintenanceTooltip', function() {
+    beforeEach(function() {
+      hostComponentView.get('content').setProperties({
+        service: {
+          serviceName: 'S1'
+        },
+        displayName: 's1',
+        host: {
+          hostName: 'host1'
+        }
+      });
+    });
+    
+    it('should return label for IMPLIED_FROM_SERVICE', function() {
+      hostComponentView.set('content.passiveState', 'IMPLIED_FROM_SERVICE');
+      hostComponentView.propertyDidChange('maintenanceTooltip');
+      expect(hostComponentView.get('maintenanceTooltip')).to.be.equal(
+        Em.I18n.t('passiveState.disabled.impliedFromHighLevel').format('s1', 'S1')
+      );
+    });
+  
+    it('should return label for IMPLIED_FROM_HOST', function() {
+      hostComponentView.set('content.passiveState', 'IMPLIED_FROM_HOST');
+      hostComponentView.propertyDidChange('maintenanceTooltip');
+      expect(hostComponentView.get('maintenanceTooltip')).to.be.equal(
+        Em.I18n.t('passiveState.disabled.impliedFromHighLevel').format('s1', 'host1')
+      );
+    });
+  
+    it('should return label for IMPLIED_FROM_SERVICE_AND_HOST', function() {
+      hostComponentView.set('content.passiveState', 'IMPLIED_FROM_SERVICE_AND_HOST');
+      hostComponentView.propertyDidChange('maintenanceTooltip');
+      expect(hostComponentView.get('maintenanceTooltip')).to.be.equal(
+        Em.I18n.t('passiveState.disabled.impliedFromServiceAndHost').format('s1', 'S1', 'host1')
+      );
+    });
+  
+    it('should return label for unknown', function() {
+      hostComponentView.set('content.passiveState', '');
+      hostComponentView.propertyDidChange('maintenanceTooltip');
+      expect(hostComponentView.get('maintenanceTooltip')).to.be.empty;
+    });
+  });
+  
+  describe('#meetsCustomCommandReq', function() {
+    var component = Em.Object.create({cardinality: "1"});
+    beforeEach(function() {
+      sinon.stub(hostComponentView, 'runningComponentCounter').returns(true);
+      this.mock = sinon.stub(App.HostComponent, 'getCount');
+      hostComponentView.set('excludedMasterCommands', ['command1']);
+    });
+    afterEach(function() {
+      hostComponentView.runningComponentCounter.restore();
+      this.mock.restore();
+    });
+    
+    it('should return false when command excluded', function() {
+      expect(hostComponentView.meetsCustomCommandReq(component, 'command1')).to.be.false;
+    });
+  
+    it('should return true when cardinality !== 1', function() {
+      expect(hostComponentView.meetsCustomCommandReq(component, 'command2')).to.be.true;
+    });
+  
+    it('should return false when total count > 2 and running', function() {
+      component.set('cardinality', '0+');
+      hostComponentView.set('workStatus', App.HostComponentStatus.stopped);
+      this.mock.returns(2);
+      expect(hostComponentView.meetsCustomCommandReq(component, 'command2')).to.be.false;
+    });
+  
+    it('should return false when total count = 1', function() {
+      component.set('cardinality', '0+');
+      hostComponentView.set('workStatus', App.HostComponentStatus.stopped);
+      this.mock.returns(1);
+      expect(hostComponentView.meetsCustomCommandReq(component, 'command2')).to.be.false;
     });
   });
 

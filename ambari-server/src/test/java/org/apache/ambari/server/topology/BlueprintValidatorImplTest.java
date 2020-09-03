@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,6 +22,7 @@ import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.reset;
 import static org.easymock.EasyMock.verify;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -78,15 +79,15 @@ public class BlueprintValidatorImplTest {
   @Mock(type = MockType.NICE)
   private DependencyConditionInfo dependencyConditionInfo2;
 
-  private final Collection<String> group1Components = new ArrayList<String>();
-  private final Collection<String> group2Components = new ArrayList<String>();
-  private final Collection<String> services = new ArrayList<String>();
+  private final Collection<String> group1Components = new ArrayList<>();
+  private final Collection<String> group2Components = new ArrayList<>();
+  private final Collection<String> services = new ArrayList<>();
 
-  private Collection<DependencyInfo> dependencies1 = new ArrayList<DependencyInfo>();
-  private List<DependencyConditionInfo> dependenciesConditionInfos1 = new ArrayList<DependencyConditionInfo>();
+  private Collection<DependencyInfo> dependencies1 = new ArrayList<>();
+  private List<DependencyConditionInfo> dependenciesConditionInfos1 = new ArrayList<>();
   private AutoDeployInfo autoDeploy = new AutoDeployInfo();
-  private Map<String, Map<String, String>> configProperties = new HashMap<String, Map<String, String>>();
-  private Configuration configuration = new Configuration(configProperties, Collections.<String, Map<String, Map<String, String>>>emptyMap());
+  private Map<String, Map<String, String>> configProperties = new HashMap<>();
+  private Configuration configuration = new Configuration(configProperties, Collections.emptyMap());
 
 
   @Before
@@ -151,7 +152,7 @@ public class BlueprintValidatorImplTest {
 
     expect(stack.getComponents("service1")).andReturn(Arrays.asList("component1", "component2")).anyTimes();
 
-    expect(blueprint.getHostGroupsForComponent("component1")).andReturn(Collections.<HostGroup>emptyList()).anyTimes();
+    expect(blueprint.getHostGroupsForComponent("component1")).andReturn(Collections.emptyList()).anyTimes();
     expect(blueprint.getHostGroupsForComponent("component2")).andReturn(Arrays.asList(group1, group2)).anyTimes();
 
     replay(blueprint, stack, group1, group2, dependency1);
@@ -164,7 +165,7 @@ public class BlueprintValidatorImplTest {
     group1Components.add("component2");
     services.addAll(Collections.singleton("service1"));
 
-    expect(blueprint.getHostGroupsForComponent("component1")).andReturn(Collections.<HostGroup>emptyList()).anyTimes();
+    expect(blueprint.getHostGroupsForComponent("component1")).andReturn(Collections.emptyList()).anyTimes();
     expect(blueprint.getHostGroupsForComponent("component2")).andReturn(Arrays.asList(group1, group2)).anyTimes();
 
     expect(stack.getComponents("service1")).andReturn(Arrays.asList("component1", "component2")).anyTimes();
@@ -179,15 +180,16 @@ public class BlueprintValidatorImplTest {
     verify(group1);
   }
 
-  @Test
-  public void testValidateTopology_autoDeploy_hasDependency() throws Exception {
+  @Test(expected=InvalidTopologyException.class)
+  public void testValidateTopology_exclusiveDependency() throws Exception {
     group1Components.add("component2");
+    group1Components.add("component3");
     dependencies1.add(dependency1);
     services.addAll(Collections.singleton("service1"));
 
-    expect(blueprint.getHostGroupsForComponent("component1")).andReturn(Collections.<HostGroup>emptyList()).anyTimes();
+    expect(blueprint.getHostGroupsForComponent("component1")).andReturn(Arrays.asList(group1, group2)).anyTimes();
     expect(blueprint.getHostGroupsForComponent("component2")).andReturn(Arrays.asList(group1, group2)).anyTimes();
-    expect(blueprint.getHostGroupsForComponent("component3")).andReturn(Collections.<HostGroup>emptyList()).anyTimes();
+    expect(blueprint.getHostGroupsForComponent("component3")).andReturn(Arrays.asList(group1, group2)).anyTimes();
 
     expect(stack.getComponents("service1")).andReturn(Arrays.asList("component1", "component2")).anyTimes();
     expect(stack.getComponents("service2")).andReturn(Collections.singleton("component3")).anyTimes();
@@ -198,6 +200,43 @@ public class BlueprintValidatorImplTest {
     dependencyAutoDeploy.setCoLocate("service1/component1");
 
     expect(dependency1.getScope()).andReturn("host").anyTimes();
+    expect(dependency1.getType()).andReturn("exclusive").anyTimes();
+    expect(dependency1.getAutoDeploy()).andReturn(dependencyAutoDeploy).anyTimes();
+    expect(dependency1.getComponentName()).andReturn("component3").anyTimes();
+    expect(dependency1.getServiceName()).andReturn("service1").anyTimes();
+    expect(dependency1.getName()).andReturn("dependency1").anyTimes();
+
+    expect(dependencyComponentInfo.isClient()).andReturn(true).anyTimes();
+    expect(stack.getComponentInfo("component3")).andReturn(dependencyComponentInfo).anyTimes();
+
+    replay(blueprint, stack, group1, group2, dependency1, dependencyComponentInfo);
+
+    BlueprintValidator validator = new BlueprintValidatorImpl(blueprint);
+    validator.validateTopology();
+
+    verify(group1);
+  }
+
+  @Test
+  public void testValidateTopology_autoDeploy_hasDependency() throws Exception {
+    group1Components.add("component2");
+    dependencies1.add(dependency1);
+    services.addAll(Collections.singleton("service1"));
+
+    expect(blueprint.getHostGroupsForComponent("component1")).andReturn(Collections.emptyList()).anyTimes();
+    expect(blueprint.getHostGroupsForComponent("component2")).andReturn(Arrays.asList(group1, group2)).anyTimes();
+    expect(blueprint.getHostGroupsForComponent("component3")).andReturn(Collections.emptyList()).anyTimes();
+
+    expect(stack.getComponents("service1")).andReturn(Arrays.asList("component1", "component2")).anyTimes();
+    expect(stack.getComponents("service2")).andReturn(Collections.singleton("component3")).anyTimes();
+    expect(stack.getAutoDeployInfo("component1")).andReturn(autoDeploy).anyTimes();
+
+    AutoDeployInfo dependencyAutoDeploy = new AutoDeployInfo();
+    dependencyAutoDeploy.setEnabled(true);
+    dependencyAutoDeploy.setCoLocate("service1/component1");
+
+    expect(dependency1.getScope()).andReturn("host").anyTimes();
+    expect(dependency1.getType()).andReturn("inclusive").anyTimes();
     expect(dependency1.getAutoDeploy()).andReturn(dependencyAutoDeploy).anyTimes();
     expect(dependency1.getComponentName()).andReturn("component3").anyTimes();
     expect(dependency1.getServiceName()).andReturn("service1").anyTimes();
@@ -219,7 +258,7 @@ public class BlueprintValidatorImplTest {
 
   @Test(expected=InvalidTopologyException.class)
   public void testValidateRequiredProperties_SqlaInHiveStackHdp22() throws Exception {
-    Map<String, String> hiveEnvConfig = new HashMap<String, String>();
+    Map<String, String> hiveEnvConfig = new HashMap<>();
     hiveEnvConfig.put("hive_database","Existing SQL Anywhere Database");
     configProperties.put("hive-env", hiveEnvConfig);
 
@@ -227,7 +266,11 @@ public class BlueprintValidatorImplTest {
 
     services.addAll(Arrays.asList("HIVE"));
 
-    expect(group1.getConfiguration()).andReturn(new Configuration(new HashMap(), new HashMap())).anyTimes();
+    org.apache.ambari.server.configuration.Configuration serverConfig =
+        BlueprintImplTest.setupConfigurationWithGPLLicense(true);
+
+    Configuration config = new Configuration(new HashMap<>(), new HashMap<>());
+    expect(group1.getConfiguration()).andReturn(config).anyTimes();
 
     expect(stack.getComponents("HIVE")).andReturn(Collections.singleton("HIVE_METASTORE")).anyTimes();
     expect(stack.getVersion()).andReturn("2.2").once();
@@ -235,14 +278,14 @@ public class BlueprintValidatorImplTest {
 
     expect(blueprint.getHostGroupsForComponent("HIVE_METASTORE")).andReturn(Collections.singleton(group1)).anyTimes();
 
-    replay(blueprint, stack, group1, group2, dependency1);
+    replay(blueprint, stack, group1, group2, dependency1, serverConfig);
     BlueprintValidator validator = new BlueprintValidatorImpl(blueprint);
     validator.validateRequiredProperties();
   }
 
   @Test(expected=InvalidTopologyException.class)
   public void testValidateRequiredProperties_SqlaInOozieStackHdp22() throws Exception {
-    Map<String, String> hiveEnvConfig = new HashMap<String, String>();
+    Map<String, String> hiveEnvConfig = new HashMap<>();
     hiveEnvConfig.put("oozie_database","Existing SQL Anywhere Database");
     configProperties.put("oozie-env", hiveEnvConfig);
 
@@ -250,7 +293,11 @@ public class BlueprintValidatorImplTest {
 
     services.addAll(Arrays.asList("OOZIE"));
 
-    expect(group1.getConfiguration()).andReturn(new Configuration(new HashMap(), new HashMap())).anyTimes();
+    org.apache.ambari.server.configuration.Configuration serverConfig =
+        BlueprintImplTest.setupConfigurationWithGPLLicense(true);
+
+    Configuration config = new Configuration(new HashMap<>(), new HashMap<>());
+    expect(group1.getConfiguration()).andReturn(config).anyTimes();
 
     expect(stack.getComponents("OOZIE")).andReturn(Collections.singleton("OOZIE_SERVER")).anyTimes();
     expect(stack.getVersion()).andReturn("2.2").once();
@@ -258,7 +305,7 @@ public class BlueprintValidatorImplTest {
 
     expect(blueprint.getHostGroupsForComponent("OOZIE_SERVER")).andReturn(Collections.singleton(group1)).anyTimes();
 
-    replay(blueprint, stack, group1, group2, dependency1);
+    replay(blueprint, stack, group1, group2, dependency1, serverConfig);
     BlueprintValidator validator = new BlueprintValidatorImpl(blueprint);
     validator.validateRequiredProperties();
   }
@@ -334,6 +381,7 @@ public class BlueprintValidatorImplTest {
     AutoDeployInfo dependencyAutoDeploy = null;
 
     expect(dependency1.getScope()).andReturn("host").anyTimes();
+    expect(dependency1.getType()).andReturn("inclusive").anyTimes();
     expect(dependency1.getAutoDeploy()).andReturn(dependencyAutoDeploy).anyTimes();
     expect(dependency1.getComponentName()).andReturn("component-d").anyTimes();
     expect(dependency1.getServiceName()).andReturn("service-d").anyTimes();
@@ -366,13 +414,13 @@ public class BlueprintValidatorImplTest {
 
     expect(blueprint.getHostGroupsForComponent("component-1")).andReturn(Arrays.asList(group1)).anyTimes();
     expect(blueprint.getName()).andReturn("blueprint-1").anyTimes();
-    Map<String, Map<String, String>> properties = new HashMap<String, Map<String, String>>();
-    Map<String, String> typeProps = new HashMap<String, String>();
+    Map<String, Map<String, String>> properties = new HashMap<>();
+    Map<String, String> typeProps = new HashMap<>();
     typeProps.put("yarn.resourcemanager.hostname", "testhost");
     properties.put("yarn-site", typeProps);
 
     Configuration clusterConfig = new Configuration(properties,
-       Collections.<String, Map<String, Map<String, String>>>emptyMap());
+       Collections.emptyMap());
 
     Cardinality cardinality = new Cardinality("1");
 
@@ -384,6 +432,7 @@ public class BlueprintValidatorImplTest {
     AutoDeployInfo dependencyAutoDeploy = null;
 
     expect(dependency1.getScope()).andReturn("host").anyTimes();
+    expect(dependency1.getType()).andReturn("inclusive").anyTimes();
     expect(dependency1.getAutoDeploy()).andReturn(dependencyAutoDeploy).anyTimes();
     expect(dependency1.getComponentName()).andReturn("component-d").anyTimes();
     expect(dependency1.getServiceName()).andReturn("service-d").anyTimes();
@@ -391,14 +440,15 @@ public class BlueprintValidatorImplTest {
     expect(dependency1.hasDependencyConditions()).andReturn(true).anyTimes();
     expect(dependency1.getDependencyConditions()).andReturn(dependenciesConditionInfos1).anyTimes();
     expect(dependency2.getScope()).andReturn("host").anyTimes();
+    expect(dependency2.getType()).andReturn("inclusive").anyTimes();
     expect(dependency2.getAutoDeploy()).andReturn(dependencyAutoDeploy).anyTimes();
     expect(dependency2.getComponentName()).andReturn("component-d").anyTimes();
     expect(dependency2.getServiceName()).andReturn("service-d").anyTimes();
     expect(dependency2.getName()).andReturn("dependency-2").anyTimes();
     expect(dependency2.hasDependencyConditions()).andReturn(false).anyTimes();
 
-    expect(dependencyConditionInfo1.isResolved(EasyMock.anyObject(Map.class))).andReturn(true).anyTimes();
-    expect(dependencyConditionInfo2.isResolved(EasyMock.anyObject(Map.class))).andReturn(false).anyTimes();
+    expect(dependencyConditionInfo1.isResolved(EasyMock.anyObject())).andReturn(true).anyTimes();
+    expect(dependencyConditionInfo2.isResolved(EasyMock.anyObject())).andReturn(false).anyTimes();
 
 
     expect(dependencyComponentInfo.isClient()).andReturn(false).anyTimes();

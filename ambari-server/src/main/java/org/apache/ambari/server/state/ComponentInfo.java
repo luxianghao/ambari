@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,6 +18,9 @@
 
 package org.apache.ambari.server.state;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlElement;
@@ -26,9 +29,6 @@ import javax.xml.bind.annotation.XmlElements;
 
 import org.apache.commons.lang.builder.ToStringBuilder;
 import org.apache.commons.lang.builder.ToStringStyle;
-
-import java.util.ArrayList;
-import java.util.List;
 
 @XmlAccessorType(XmlAccessType.FIELD)
 public class ComponentInfo {
@@ -60,6 +60,15 @@ public class ComponentInfo {
    * */
   @XmlElements(@XmlElement(name = "decommissionAllowed"))
   private String decommissionAllowed;
+
+  @XmlElement(name="unlimitedKeyJCERequired")
+  private UnlimitedKeyJCERequirement unlimitedKeyJCERequired;
+
+  /**
+   * Used to determine if rolling restart is supported
+   * */
+  @XmlElements(@XmlElement(name = "rollingRestartSupported"))
+  private boolean rollingRestartSupported;
 
   /**
   * Added at schema ver 2
@@ -108,7 +117,7 @@ public class ComponentInfo {
    */
   @XmlElementWrapper(name="dependencies")
   @XmlElements(@XmlElement(name="dependency"))
-  private List<DependencyInfo> dependencies = new ArrayList<DependencyInfo>();
+  private List<DependencyInfo> dependencies = new ArrayList<>();
 
   @XmlElementWrapper(name="configuration-dependencies")
   @XmlElements(@XmlElement(name="config-type"))
@@ -133,6 +142,15 @@ public class ComponentInfo {
 
   private String timelineAppid;
 
+  @XmlElement(name="customFolder")
+  private String customFolder;
+
+  /**
+   * Optional component type like HCFS_CLIENT.
+   * HCFS_CLIENT indicates compatibility with HDFS_CLIENT
+   */
+  private String componentType;
+
   public ComponentInfo() {
   }
 
@@ -147,6 +165,7 @@ public class ComponentInfo {
     versionAdvertisedField = prototype.versionAdvertisedField;
     versionAdvertisedInternal = prototype.versionAdvertisedInternal;
     decommissionAllowed = prototype.decommissionAllowed;
+    unlimitedKeyJCERequired = prototype.unlimitedKeyJCERequired;
     clientsToUpdateConfigs = prototype.clientsToUpdateConfigs;
     commandScript = prototype.commandScript;
     logs = prototype.logs;
@@ -158,6 +177,9 @@ public class ComponentInfo {
     clientConfigFiles = prototype.clientConfigFiles;
     timelineAppid = prototype.timelineAppid;
     reassignAllowed = prototype.reassignAllowed;
+    customFolder = prototype.customFolder;
+    rollingRestartSupported = prototype.rollingRestartSupported;
+    componentType = prototype.componentType;
   }
 
   public String getName() {
@@ -214,7 +236,7 @@ public class ComponentInfo {
 
   public List<LogDefinition> getLogs() {
     if (logs == null) {
-      logs = new ArrayList<LogDefinition>();
+      logs = new ArrayList<>();
     }
     
     return logs;
@@ -244,7 +266,7 @@ public class ComponentInfo {
 
   public List<CustomCommandDefinition> getCustomCommands() {
     if (customCommands == null) {
-      customCommands = new ArrayList<CustomCommandDefinition>();
+      customCommands = new ArrayList<>();
     }
     return customCommands;
   }
@@ -364,6 +386,22 @@ public class ComponentInfo {
     this.decommissionAllowed = decommissionAllowed;
   }
 
+  public boolean getRollingRestartSupported() {
+    return rollingRestartSupported;
+  }
+
+  public void setRollingRestartSupported(boolean rollingRestartSupported) {
+    this.rollingRestartSupported = rollingRestartSupported;
+  }
+
+  public UnlimitedKeyJCERequirement getUnlimitedKeyJCERequired() {
+    return unlimitedKeyJCERequired;
+  }
+
+  public void setUnlimitedKeyJCERequired(UnlimitedKeyJCERequirement unlimitedKeyJCERequired) {
+    this.unlimitedKeyJCERequired = unlimitedKeyJCERequired;
+  }
+
   public void setRecoveryEnabled(boolean recoveryEnabled) {
     this.recoveryEnabled = recoveryEnabled;
   }
@@ -396,6 +434,22 @@ public class ComponentInfo {
     this.reassignAllowed = reassignAllowed;
   }
 
+  public String getCustomFolder() {
+    return customFolder;
+  }
+
+  public void setCustomFolder(String customFolder) {
+    this.customFolder = customFolder;
+  }
+
+  public String getComponentType() {
+    return componentType;
+  }
+
+  public void setComponentType(String componentType) {
+    this.componentType = componentType;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -409,6 +463,7 @@ public class ComponentInfo {
     if (versionAdvertisedField != null ? !versionAdvertisedField.equals(that.versionAdvertisedField) : that.versionAdvertisedField != null) return false;
     if (versionAdvertisedInternal != that.versionAdvertisedInternal) return false;
     if (decommissionAllowed != null ? !decommissionAllowed.equals(that.decommissionAllowed) : that.decommissionAllowed != null) return false;
+    if (unlimitedKeyJCERequired != null ? !unlimitedKeyJCERequired.equals(that.unlimitedKeyJCERequired) : that.unlimitedKeyJCERequired != null) return false;
     if (reassignAllowed != null ? !reassignAllowed.equals(that.reassignAllowed) : that.reassignAllowed != null) return false;
     if (category != null ? !category.equals(that.category) : that.category != null) return false;
     if (clientConfigFiles != null ? !clientConfigFiles.equals(that.clientConfigFiles) : that.clientConfigFiles != null)
@@ -426,6 +481,7 @@ public class ComponentInfo {
     if (name != null ? !name.equals(that.name) : that.name != null) return false;
     if (clientConfigFiles != null ? !clientConfigFiles.equals(that.clientConfigFiles) :
         that.clientConfigFiles != null) return false;
+    if (customFolder != null ? !customFolder.equals(that.customFolder) : that.customFolder != null) return false;
 
     return true;
   }
@@ -438,6 +494,7 @@ public class ComponentInfo {
     result = 31 * result + (deleted ? 1 : 0);
     result = 31 * result + (cardinality != null ? cardinality.hashCode() : 0);
     result = 31 * result + (decommissionAllowed != null ? decommissionAllowed.hashCode() : 0);
+    result = 31 * result + (unlimitedKeyJCERequired != null ? unlimitedKeyJCERequired.hashCode() : 0);
     result = 31 * result + (reassignAllowed != null ? reassignAllowed.hashCode() : 0);
     result = 31 * result + (commandScript != null ? commandScript.hashCode() : 0);
     result = 31 * result + (logs != null ? logs.hashCode() : 0);
@@ -450,6 +507,7 @@ public class ComponentInfo {
     result = 31 * result + (clientConfigFiles != null ? clientConfigFiles.hashCode() : 0);
     // NULL = 0, TRUE = 2, FALSE = 1
     result = 31 * result + (versionAdvertisedField != null ? (versionAdvertisedField.booleanValue() ? 2 : 1) : 0);
+    result = 31 * result + (customFolder != null ? customFolder.hashCode() : 0);
     return result;
   }
 

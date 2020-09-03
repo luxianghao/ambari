@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,25 +26,33 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.Role;
 import org.apache.ambari.server.RoleCommand;
-import org.apache.ambari.server.agent.ActionQueue;
 import org.apache.ambari.server.agent.CommandReport;
 import org.apache.ambari.server.audit.AuditLogger;
 import org.apache.ambari.server.events.publishers.JPAEventPublisher;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
+import org.apache.ambari.server.orm.dao.StageDAO;
+import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
+import org.apache.ambari.server.orm.entities.StageEntity;
+import org.apache.ambari.server.orm.entities.StageEntityPK;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostStartEvent;
 import org.apache.ambari.server.utils.CommandUtils;
 import org.apache.ambari.server.utils.StageUtils;
+import org.apache.commons.collections.CollectionUtils;
 import org.easymock.EasyMock;
 import org.junit.After;
 import org.junit.Before;
@@ -53,7 +61,6 @@ import org.junit.Test;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 import com.google.inject.persist.UnitOfWork;
 
 import junit.framework.Assert;
@@ -73,7 +80,9 @@ public class TestActionManager {
   @Before
   public void setup() throws AmbariException {
     injector = Guice.createInjector(new InMemoryDefaultTestModule());
+    H2DatabaseCleaner.resetSequences(injector);
     injector.getInstance(GuiceJpaInitializer.class);
+
     clusters = injector.getInstance(Clusters.class);
     stageFactory = injector.getInstance(StageFactory.class);
 
@@ -86,8 +95,8 @@ public class TestActionManager {
   }
 
   @After
-  public void teardown() throws AmbariException {
-    injector.getInstance(PersistService.class).stop();
+  public void tearDown() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
   @Test
@@ -99,7 +108,7 @@ public class TestActionManager {
     Assert.assertEquals(stageId, stage.getStageId());
     stage.setHostRoleStatus(hostname, "HBASE_MASTER", HostRoleStatus.QUEUED);
     db.hostRoleScheduled(stage, hostname, "HBASE_MASTER");
-    List<CommandReport> reports = new ArrayList<CommandReport>();
+    List<CommandReport> reports = new ArrayList<>();
     CommandReport cr = new CommandReport();
     cr.setTaskId(1);
     cr.setActionId(StageUtils.getActionId(requestId, stageId));
@@ -140,7 +149,7 @@ public class TestActionManager {
     Assert.assertEquals(stageId, stage.getStageId());
     stage.setHostRoleStatus(hostname, "HBASE_MASTER", HostRoleStatus.QUEUED);
     db.hostRoleScheduled(stage, hostname, "HBASE_MASTER");
-    List<CommandReport> reports = new ArrayList<CommandReport>();
+    List<CommandReport> reports = new ArrayList<>();
     CommandReport cr = new CommandReport();
     cr.setTaskId(2);
     cr.setActionId(StageUtils.getActionId(requestId, stageId));
@@ -177,7 +186,7 @@ public class TestActionManager {
     Assert.assertEquals(stageId, stage.getStageId());
     stage.setHostRoleStatus(hostname, "HBASE_MASTER", HostRoleStatus.QUEUED);
     db.hostRoleScheduled(stage, hostname, "HBASE_MASTER");
-    List<CommandReport> reports = new ArrayList<CommandReport>();
+    List<CommandReport> reports = new ArrayList<>();
     CommandReport cr = new CommandReport();
     cr.setTaskId(1);
     cr.setActionId(StageUtils.getActionId(requestId, stageId));
@@ -210,20 +219,20 @@ public class TestActionManager {
   }
 
   private void populateActionDB(ActionDBAccessor db, String hostname) throws AmbariException {
-    Stage s = stageFactory.createNew(requestId, "/a/b", "cluster1", 1L, "action manager test", "clusterHostInfo", "commandParamsStage", "hostParamsStage");
+    Stage s = stageFactory.createNew(requestId, "/a/b", "cluster1", 1L, "action manager test", "commandParamsStage", "hostParamsStage");
     s.setStageId(stageId);
     s.addHostRoleExecutionCommand(hostname, Role.HBASE_MASTER,
         RoleCommand.START,
         new ServiceComponentHostStartEvent(Role.HBASE_MASTER.toString(),
             hostname, System.currentTimeMillis()), "cluster1", "HBASE", false, false);
-    List<Stage> stages = new ArrayList<Stage>();
+    List<Stage> stages = new ArrayList<>();
     stages.add(s);
-    Request request = new Request(stages, clusters);
+    Request request = new Request(stages, "clusterHostInfo", clusters);
     db.persistActions(request);
   }
 
   private void populateActionDBWithTwoCommands(ActionDBAccessor db, String hostname) throws AmbariException {
-    Stage s = stageFactory.createNew(requestId, "/a/b", "cluster1", 1L, "action manager test", "clusterHostInfo", "commandParamsStage", "hostParamsStage");
+    Stage s = stageFactory.createNew(requestId, "/a/b", "cluster1", 1L, "action manager test", "commandParamsStage", "hostParamsStage");
     s.setStageId(stageId);
     s.addHostRoleExecutionCommand(hostname, Role.HBASE_MASTER,
         RoleCommand.START,
@@ -233,9 +242,9 @@ public class TestActionManager {
         RoleCommand.START,
         new ServiceComponentHostStartEvent(Role.HBASE_REGIONSERVER.toString(),
           hostname, System.currentTimeMillis()), "cluster1", "HBASE", false, false);
-    List<Stage> stages = new ArrayList<Stage>();
+    List<Stage> stages = new ArrayList<>();
     stages.add(s);
-    Request request = new Request(stages, clusters);
+    Request request = new Request(stages, "clusterHostInfo", clusters);
     db.persistActions(request);
   }
 
@@ -262,12 +271,11 @@ public class TestActionManager {
   @Test
   public void testGetActions() throws Exception {
     int requestId = 500;
-    ActionQueue queue = createNiceMock(ActionQueue.class);
     ActionDBAccessor db = createStrictMock(ActionDBAccessor.class);
     Clusters clusters = createNiceMock(Clusters.class);
     Stage stage1 = createNiceMock(Stage.class);
     Stage stage2 = createNiceMock(Stage.class);
-    List<Stage> listStages = new ArrayList<Stage>();
+    List<Stage> listStages = new ArrayList<>();
     listStages.add(stage1);
     listStages.add(stage2);
 
@@ -275,12 +283,41 @@ public class TestActionManager {
     expect(db.getLastPersistedRequestIdWhenInitialized()).andReturn(Long.valueOf(1000));
     expect(db.getAllStages(requestId)).andReturn(listStages);
 
-    replay(queue, db, clusters);
+    replay(db, clusters);
 
     ActionScheduler actionScheduler = new ActionScheduler(0, 0, db, createNiceMock(JPAEventPublisher.class));
     ActionManager manager = new ActionManager(db, injector.getInstance(RequestFactory.class), actionScheduler);
     assertSame(listStages, manager.getActions(requestId));
 
-    verify(queue, db, clusters);
+    verify(db, clusters);
+  }
+
+  /**
+   * Tests whether {@link ActionDBAccessor#persistActions(Request)} associates tasks with their
+   * stages.  Improvements to {@code Stage} processing exposed the fact that the association wasn't
+   * being made, and JPA didn't know of the Stage-to-Tasks child relationship.
+   *
+   * @throws Exception
+   */
+  @Test
+  public void testPersistCommandsWithStages() throws Exception {
+    ActionDBAccessor db = injector.getInstance(ActionDBAccessorImpl.class);
+
+    populateActionDBWithTwoCommands(db, hostname);
+
+    List<Stage> stages = db.getAllStages(requestId);
+    assertEquals(1, stages.size());
+    Stage stage = stages.get(0);
+
+    StageEntityPK pk = new StageEntityPK();
+    pk.setRequestId(stage.getRequestId());
+    pk.setStageId(stage.getStageId());
+
+    StageDAO dao = injector.getInstance(StageDAO.class);
+    StageEntity stageEntity = dao.findByPK(pk);
+    assertNotNull(stageEntity);
+
+    Collection<HostRoleCommandEntity> commandEntities = stageEntity.getHostRoleCommands();
+    assertTrue(CollectionUtils.isNotEmpty(commandEntities));
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,15 +18,16 @@
 
 package org.apache.ambari.server.api.services;
 
-import org.apache.ambari.server.api.resources.ResourceDefinition;
-import org.apache.ambari.server.api.resources.ResourceInstance;
-
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.UriInfo;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.UriInfo;
+
+import org.apache.ambari.server.api.resources.ResourceDefinition;
+import org.apache.ambari.server.api.resources.ResourceInstance;
 
 /**
  * Factory for {@link Request} instances.
@@ -115,7 +116,7 @@ public class RequestFactory {
    * @return map of query parameters or an empty map if no parameters are present
    */
   private Map<String, String> getQueryParameters(UriInfo uriInfo, RequestBody body) {
-    Map<String, String> queryParameters = new HashMap<String, String>();
+    Map<String, String> queryParameters = new HashMap<>();
     for (Map.Entry<String, List<String>> entry : uriInfo.getQueryParameters().entrySet()) {
       queryParameters.put(entry.getKey(), entry.getValue().get(0));
     }

@@ -20,6 +20,13 @@ from unittest import TestCase
 from mock.mock import patch, MagicMock
 from only_for_platform import get_platform, not_for_platform, os_distro_value, PLATFORM_WINDOWS
 
+import os
+
+if get_platform() != PLATFORM_WINDOWS:
+  with patch.object(os, "geteuid", return_value=0):
+    from resource_management.core import sudo
+    reload(sudo)
+
 from ambari_commons.os_check import OSCheck
 
 from resource_management.core import Environment
@@ -29,12 +36,8 @@ from resource_management.core.source import DownloadSource
 from resource_management.core.source import Template
 from resource_management.core.source import InlineTemplate
 
-if get_platform() != PLATFORM_WINDOWS:
-  from resource_management.core import sudo
-
 from ambari_jinja2 import UndefinedError, TemplateNotFound
 import urllib2
-import os
 
 
 @patch.object(OSCheck, "os_distribution", new = MagicMock(return_value = os_distro_value))
@@ -96,13 +99,14 @@ class TestContentSources(TestCase):
     self.assertEqual(opener_mock.call_count, 1)
     request_mock.assert_called_with('http://download/source')
     self.assertEqual(web_file_mock.read.call_count, 1)
-    
+
   @patch("__builtin__.open")
   @patch.object(urllib2, "Request")
   @patch.object(urllib2, "build_opener")
   @patch.object(os, "makedirs")
   @patch.object(os.path, "exists")
-  def test_download_source_get_content_cache_new(self, exists_mock, makedirs_mock, opener_mock, request_mock, open_mock):
+  @patch("resource_management.core.sudo.create_file")
+  def test_download_source_get_content_cache_new(self, create_mock, exists_mock, makedirs_mock, opener_mock, request_mock, open_mock):
     """
     Testing DownloadSource.get_content with cache on non-cached resource
     """

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,9 +21,11 @@ package org.apache.ambari.server.state;
 
 import java.util.ArrayList;
 import java.util.List;
+
 import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlElementWrapper;
 import javax.xml.bind.annotation.XmlElements;
+
 import org.apache.commons.collections.CollectionUtils;
 
 /**
@@ -40,6 +42,13 @@ public class DependencyInfo {
    * The scope of the dependency.  Either "cluster" or "host".
    */
   private String scope;
+
+  /**
+   * The type of the dependency.  Either "inclusive" or "exclusive".
+   * "inclusive" means the dependent component MUST be co-hosted or installed on the same cluster
+   * "exclusive" means the dependent component CAN'T be co-hosted or installed on the same cluster
+   */
+  private String type = "inclusive";
 
   /**
    * Service name of the dependency.
@@ -62,7 +71,7 @@ public class DependencyInfo {
   /**
    * Conditions for Component dependency to other components.
    */
-  private List<DependencyConditionInfo> dependencyConditions = new ArrayList<DependencyConditionInfo>();
+  private List<DependencyConditionInfo> dependencyConditions = new ArrayList<>();
   /**
    * Setter for name property.
    *
@@ -171,11 +180,21 @@ public class DependencyInfo {
     return !CollectionUtils.isEmpty(dependencyConditions);
   }
 
+  public String getType() {
+    return type;
+  }
+
+  public void setType(String type) {
+    this.type = type;
+  }
+
   @Override
   public String toString() {
+    String autoDeployString = m_autoDeploy == null? "false" : String.valueOf(m_autoDeploy.isEnabled());
     return "DependencyInfo[name=" + getName() +
            ", scope=" + getScope() +
-           ", auto-deploy=" + m_autoDeploy.isEnabled() +
+           ", type=" + getType() +
+           ", auto-deploy=" + autoDeployString +
            "]";
   }
 
@@ -190,6 +209,7 @@ public class DependencyInfo {
     if (m_autoDeploy != null ? !m_autoDeploy.equals(that.m_autoDeploy) : that.m_autoDeploy != null) return false;
     if (name != null ? !name.equals(that.name) : that.name != null) return false;
     if (scope != null ? !scope.equals(that.scope) : that.scope != null) return false;
+    if (type != null ? !type.equals(that.type) : that.type != null) return false;
     if (serviceName != null ? !serviceName.equals(that.serviceName) : that.serviceName != null) return false;
 
     return true;

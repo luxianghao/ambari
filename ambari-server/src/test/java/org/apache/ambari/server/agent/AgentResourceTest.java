@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -32,16 +32,45 @@ import org.apache.ambari.server.actionmanager.ActionManager;
 import org.apache.ambari.server.actionmanager.ExecutionCommandWrapperFactory;
 import org.apache.ambari.server.actionmanager.HostRoleCommandFactory;
 import org.apache.ambari.server.actionmanager.HostRoleCommandFactoryImpl;
+import org.apache.ambari.server.actionmanager.RequestFactory;
 import org.apache.ambari.server.actionmanager.StageFactory;
 import org.apache.ambari.server.agent.rest.AgentResource;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.configuration.AmbariServerConfiguration;
+import org.apache.ambari.server.controller.AbstractRootServiceResponseFactory;
+import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.controller.KerberosHelper;
+import org.apache.ambari.server.controller.RootServiceResponseFactory;
+import org.apache.ambari.server.events.AgentConfigsUpdateEvent;
+import org.apache.ambari.server.events.AmbariEvent;
 import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
+import org.apache.ambari.server.hooks.AmbariEventFactory;
+import org.apache.ambari.server.hooks.HookContext;
+import org.apache.ambari.server.hooks.HookContextFactory;
+import org.apache.ambari.server.hooks.HookService;
+import org.apache.ambari.server.hooks.users.PostUserCreationHookContext;
+import org.apache.ambari.server.hooks.users.UserCreatedEvent;
+import org.apache.ambari.server.hooks.users.UserHookService;
+import org.apache.ambari.server.ldap.service.AmbariLdapConfigurationProvider;
+import org.apache.ambari.server.ldap.service.LdapFacade;
+import org.apache.ambari.server.metadata.CachedRoleCommandOrderProvider;
+import org.apache.ambari.server.metadata.RoleCommandOrderProvider;
+import org.apache.ambari.server.mpack.MpackManagerFactory;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.dao.HostDAO;
 import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
+import org.apache.ambari.server.scheduler.ExecutionScheduler;
+import org.apache.ambari.server.scheduler.ExecutionSchedulerImpl;
 import org.apache.ambari.server.security.SecurityHelper;
 import org.apache.ambari.server.security.SecurityHelperImpl;
+import org.apache.ambari.server.security.encryption.AESEncryptionService;
+import org.apache.ambari.server.security.encryption.CredentialStoreService;
+import org.apache.ambari.server.security.encryption.CredentialStoreServiceImpl;
+import org.apache.ambari.server.security.encryption.EncryptionService;
+import org.apache.ambari.server.security.encryption.Encryptor;
 import org.apache.ambari.server.stack.StackManagerFactory;
+import org.apache.ambari.server.stack.upgrade.orchestrate.UpgradeContextFactory;
+import org.apache.ambari.server.stageplanner.RoleGraphFactory;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
@@ -69,20 +98,25 @@ import org.apache.ambari.server.state.scheduler.RequestExecutionImpl;
 import org.apache.ambari.server.state.stack.OsFamily;
 import org.apache.ambari.server.state.svccomphost.ServiceComponentHostImpl;
 import org.apache.ambari.server.topology.PersistedState;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.apache.ambari.server.topology.tasks.ConfigureClusterTaskFactory;
 import org.codehaus.jettison.json.JSONException;
 import org.codehaus.jettison.json.JSONObject;
 import org.easymock.EasyMock;
-import org.eclipse.jetty.server.SessionManager;
+import org.eclipse.jetty.server.session.SessionHandler;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.crypto.password.StandardPasswordEncoder;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.google.inject.TypeLiteral;
 import com.google.inject.assistedinject.FactoryModuleBuilder;
+import com.google.inject.name.Names;
 import com.sun.jersey.api.client.Client;
 import com.sun.jersey.api.client.UniformInterfaceException;
 import com.sun.jersey.api.client.WebResource;
@@ -97,11 +131,11 @@ import junit.framework.Assert;
 
 public class AgentResourceTest extends RandomPortJerseyTest {
   static String PACKAGE_NAME = "org.apache.ambari.server.agent.rest";
-  private static Log LOG = LogFactory.getLog(AgentResourceTest.class);
+  private static final Logger LOG = LoggerFactory.getLogger(AgentResourceTest.class);
   protected Client client;
   HeartBeatHandler handler;
   ActionManager actionManager;
-  SessionManager sessionManager;
+  SessionHandler sessionHandler;
   Injector injector;
   AmbariMetaInfo ambariMetaInfo;
   OsFamily os_family;
@@ -210,7 +244,7 @@ public class AgentResourceTest extends RandomPortJerseyTest {
             ", \"existingUsers\": "+ ExistingUserJSON +
             ", \"umask\": \"18\", \"installedPackages\": "+
             PackageDetailJSON +", \"stackFoldersAndFiles\": "+ DirectoryJSON +
-            ", \"firewallRunning\": \"true\", \"firewallName\": \"iptables\", \"transparentHugePage\": \"never\"}";
+            ", \"firewallRunning\": \"true\", \"firewallName\": \"iptables\", \"transparentHugePage\": \"never\", \"hasUnlimitedJcePolicy\" : true}";
     AgentEnv.Directory[] dirs = getJsonFormString(
             DirectoryJSON, AgentEnv.Directory[].class);
     Assert.assertEquals("/var/lib", dirs[0].getName());
@@ -246,6 +280,7 @@ public class AgentResourceTest extends RandomPortJerseyTest {
             AgentEnvJSON, AgentEnv.class);
     Assert.assertTrue(18 == agentEnv.getUmask());
     Assert.assertEquals("never", agentEnv.getTransparentHugePage());
+    Assert.assertTrue(agentEnv.getHasUnlimitedJcePolicy());
     Assert.assertTrue(Boolean.TRUE == agentEnv.getFirewallRunning());
     Assert.assertEquals("iptables", agentEnv.getFirewallName());
     Assert.assertEquals("/etc/alternatives/hdfs-conf", agentEnv.getAlternatives()[0].getName());
@@ -302,12 +337,17 @@ public class AgentResourceTest extends RandomPortJerseyTest {
       actionManager = mock(ActionManager.class);
       ambariMetaInfo = mock(AmbariMetaInfo.class);
       actionDBAccessor = mock(ActionDBAccessor.class);
-      sessionManager = mock(SessionManager.class);
+      sessionHandler = mock(SessionHandler.class);
       bind(OsFamily.class).toInstance(os_family);
       bind(ActionDBAccessor.class).toInstance(actionDBAccessor);
       bind(ActionManager.class).toInstance(actionManager);
-      bind(SessionManager.class).toInstance(sessionManager);
+      bind(SessionHandler.class).toInstance(sessionHandler);
       bind(AgentCommand.class).to(ExecutionCommand.class);
+      bind(AbstractRootServiceResponseFactory.class).to(RootServiceResponseFactory.class);
+      bind(CredentialStoreService.class).to(CredentialStoreServiceImpl.class);
+      bind(PasswordEncoder.class).toInstance(new StandardPasswordEncoder());
+      bind(HookService.class).to(UserHookService.class);
+      bind(ExecutionScheduler.class).to(ExecutionSchedulerImpl.class);
       bind(HeartBeatHandler.class).toInstance(handler);
       bind(AmbariMetaInfo.class).toInstance(ambariMetaInfo);
       bind(DBAccessor.class).toInstance(mock(DBAccessor.class));
@@ -316,9 +356,21 @@ public class AgentResourceTest extends RandomPortJerseyTest {
       bind(HostDAO.class).toInstance(createNiceMock(HostDAO.class));
       bind(Clusters.class).toInstance(createNiceMock(Clusters.class));
       bind(PersistedState.class).toInstance(createNiceMock(PersistedState.class));
+      bind(RoleCommandOrderProvider.class).to(CachedRoleCommandOrderProvider.class);
+      bind(AmbariManagementController.class).toInstance(createNiceMock(AmbariManagementController.class));
+      bind(KerberosHelper.class).toInstance(createNiceMock(KerberosHelper.class));
+      bind(MpackManagerFactory.class).toInstance(createNiceMock(MpackManagerFactory.class));
+      bind(EncryptionService.class).to(AESEncryptionService.class);
+      bind(new TypeLiteral<Encryptor<AgentConfigsUpdateEvent>>() {}).annotatedWith(Names.named("AgentConfigEncryptor")).toInstance(Encryptor.NONE);
+      bind(new TypeLiteral<Encryptor<Config>>() {}).annotatedWith(Names.named("ConfigPropertiesEncryptor")).toInstance(Encryptor.NONE);
+      bind(new TypeLiteral<Encryptor<AmbariServerConfiguration>>() {}).annotatedWith(Names.named("AmbariServerConfigurationEncryptor")).toInstance(Encryptor.NONE);
+      bind(LdapFacade.class).toInstance(createNiceMock(LdapFacade.class));
+      bind(AmbariLdapConfigurationProvider.class).toInstance(createNiceMock(AmbariLdapConfigurationProvider.class));
     }
 
     private void installDependencies() {
+      install(new FactoryModuleBuilder().build(UpgradeContextFactory.class));
+      install(new FactoryModuleBuilder().build(RoleGraphFactory.class));
       install(new FactoryModuleBuilder().implement(
           Cluster.class, ClusterImpl.class).build(ClusterFactory.class));
       install(new FactoryModuleBuilder().implement(
@@ -339,6 +391,14 @@ public class AgentResourceTest extends RandomPortJerseyTest {
         RequestExecutionImpl.class).build(RequestExecutionFactory.class));
       install(new FactoryModuleBuilder().build(StageFactory.class));
       install(new FactoryModuleBuilder().build(ExecutionCommandWrapperFactory.class));
+      install(new FactoryModuleBuilder().build(ConfigureClusterTaskFactory.class));
+
+      install(new FactoryModuleBuilder().build(RequestFactory.class));
+      install(new FactoryModuleBuilder().implement(AmbariEvent.class, Names.named("userCreated"), UserCreatedEvent.class)
+          .build(AmbariEventFactory.class));
+      install(new FactoryModuleBuilder().implement(HookContext.class, PostUserCreationHookContext.class)
+          .build(HookContextFactory.class));
+
 
       bind(HostRoleCommandFactory.class).to(HostRoleCommandFactoryImpl.class);
       bind(SecurityHelper.class).toInstance(SecurityHelperImpl.getInstance());

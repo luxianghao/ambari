@@ -68,7 +68,7 @@ App.configGroupsMapper = App.QuickDataMapper.create({
               configGroup.id = App.ServiceConfigGroup.groupId(configGroup.service_name, configGroup.group_name);
             } else {
               configGroup.id = App.ServiceConfigGroup.groupId(configGroup.ConfigGroup.tag, configGroup.ConfigGroup.group_name);
-              configGroup.hosts = configGroup.ConfigGroup.hosts.mapProperty('host_name');
+              configGroup.hosts = configGroup.ConfigGroup.hosts.mapProperty('host_name').sort();
               configGroup.service_name = configGroup.ConfigGroup.tag;
             }
 
@@ -108,9 +108,7 @@ App.configGroupsMapper = App.QuickDataMapper.create({
       configGroups.sort(function (configGroupA, configGroupB) {
         return configGroupA.is_default || (configGroupA.name > configGroupB.name);
       });
-      App.store.commit();
-      App.store.loadMany(this.get('model'), configGroups);
-      App.store.commit();
+      App.store.safeLoadMany(this.get('model'), configGroups);
     }
     console.timeEnd('App.configGroupsMapper');
   },

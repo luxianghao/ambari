@@ -22,6 +22,11 @@
       "min_version": "0.2.0.0"
     },
     {
+      "name": "secure_zookeeper",
+      "description": "Protect ZNodes with SASL acl in secure clusters",
+      "min_version": "2.6.0.0"
+    },
+    {
       "name": "config_versioning",
       "description": "Configurable versions support",
       "min_version": "0.3.0.0"
@@ -93,12 +98,6 @@
       "min_version": "0.2.0.0"
     },
     {
-      "name": "create_kafka_broker_id",
-      "description": "Ambari should create Kafka Broker Id (AMBARI-12678)",
-      "min_version": "0.2.0.0",
-      "max_version": "0.3.0.0"
-    },
-    {
       "name": "kafka_listeners",
       "description": "Kafka listeners (AMBARI-10984)",
       "min_version": "0.3.0.0"
@@ -162,8 +161,7 @@
     {
       "name": "oozie_host_kerberos",
       "description": "Oozie in secured clusters uses _HOST in Kerberos principal (AMBARI-9775)",
-      "min_version": "0.0.0.0",
-      "max_version": "0.2.0.0"
+      "min_version": "0.0.0.0"
     },
     {
       "name": "falcon_extensions",

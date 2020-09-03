@@ -30,8 +30,9 @@
      <xs:element name="type" type="repo-type" />
      <xs:element name="stack-id" type="xs:string" />
      <xs:element name="version" type="xs:string" />
-     <xs:element name="build" type="xs:string" minOccurs="0" maxOccurs="1"/>
-     <xs:element name="compatible-with" type="xs:string" minOccurs="0"/>
+     <xs:element name="hotfix" type="xs:string" minOccurs="0" maxOccurs="1" />
+     <xs:element name="build" type="xs:string" minOccurs="0" maxOccurs="1" />
+     <xs:element name="compatible-with" type="xs:string" minOccurs="0" />
      <xs:element name="release-notes" type="xs:string" maxOccurs="1" />
      <xs:element name="display" type="xs:string" minOccurs="0" />
      <!-- deprecated and will be removed -->
@@ -44,6 +45,7 @@
       <xs:enumeration value="STANDARD" />
       <xs:enumeration value="SERVICE" />
       <xs:enumeration value="PATCH" />
+      <xs:enumeration value="MAINT" />
     </xs:restriction>
   </xs:simpleType>
 
@@ -51,16 +53,27 @@
     <xs:restriction base="xs:string">
       <xs:enumeration value="redhat6" />
       <xs:enumeration value="redhat7" />
+      <xs:enumeration value="redhat-ppc6" />
+      <xs:enumeration value="redhat-ppc7" />
       <xs:enumeration value="debian6" />
       <xs:enumeration value="debian7" />
+      <xs:enumeration value="debian9" />
       <xs:enumeration value="ubuntu12" />
       <xs:enumeration value="ubuntu14" />
       <xs:enumeration value="ubuntu16" />
+      <xs:enumeration value="ubuntu18" />
       <xs:enumeration value="suse11" />
       <xs:enumeration value="suse12" />
+      <xs:enumeration value="amazonlinux2" />
     </xs:restriction>
   </xs:simpleType>
-
+  
+  <xs:simpleType name="tag-type">
+    <xs:restriction base="xs:NMTOKEN">
+      <xs:enumeration value="GPL" />
+    </xs:restriction>
+  </xs:simpleType>
+  
   <xs:complexType name="manifest-service-type">
     <xs:annotation>
       <xs:documentation>
@@ -82,6 +95,7 @@
           <xs:attribute name="version" type="xs:string" use="required" />
           <xs:attribute name="id" type="xs:string" use="required" />
           <xs:attribute name="version-id" type="xs:string" />
+          <xs:attribute name="release-version" type="xs:string" />
         </xs:complexType>
       </xs:element>
     </xs:sequence>
@@ -109,6 +123,20 @@
       </xs:element>
     </xs:sequence>
   </xs:complexType>
+  
+  <xs:complexType name="tags-type">
+    <xs:annotation>
+      <xs:documentation>
+      Tags are a way to mark a repository for special purposes.  There
+      may be logic surrounding a tag in the code, or used by agents.
+      
+      Tags are NOT meant to be random strings, they must be defined
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="tag" type="tag-type" minOccurs="0" maxOccurs="unbounded" />
+    </xs:sequence>
+  </xs:complexType>
 
   <xs:complexType name="repository-info-type">
     <xs:sequence>
@@ -122,7 +150,11 @@
                   <xs:element name="baseurl" type="xs:string" />
                   <xs:element name="repoid" type="xs:string" />
                   <xs:element name="reponame" type="xs:string" />
-                  <xs:element name="unique" type="xs:boolean" minOccurs="0" maxOccurs="1"/>
+                  <xs:element name="distribution" type="xs:string" minOccurs="0" maxOccurs="1" />
+                  <xs:element name="components" type="xs:string" minOccurs="0" maxOccurs="1" />
+                  <xs:element name="mirrorslist" type="xs:string" minOccurs="0" maxOccurs="1" />
+                  <xs:element name="unique" type="xs:boolean" minOccurs="0" maxOccurs="1" />
+                  <xs:element name="tags" type="tags-type" minOccurs="0" maxOccurs="1" />
                 </xs:sequence>
               </xs:complexType>
             </xs:element>

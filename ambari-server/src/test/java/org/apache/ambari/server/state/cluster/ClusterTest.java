@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,10 +26,9 @@ import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.lang.reflect.Field;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -45,9 +44,9 @@ import java.util.Map;
 import java.util.Set;
 
 import javax.persistence.EntityManager;
-import javax.persistence.RollbackException;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.agent.AgentEnv;
 import org.apache.ambari.server.agent.AgentEnv.Directory;
 import org.apache.ambari.server.agent.DiskInfo;
@@ -56,23 +55,21 @@ import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.controller.ClusterResponse;
 import org.apache.ambari.server.controller.ConfigurationResponse;
 import org.apache.ambari.server.controller.ServiceConfigVersionResponse;
+import org.apache.ambari.server.controller.internal.DeleteHostComponentStatusMetaData;
 import org.apache.ambari.server.events.ClusterConfigChangedEvent;
 import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
 import org.apache.ambari.server.orm.OrmTestHelper;
 import org.apache.ambari.server.orm.dao.ClusterDAO;
-import org.apache.ambari.server.orm.dao.ClusterVersionDAO;
 import org.apache.ambari.server.orm.dao.HostComponentStateDAO;
 import org.apache.ambari.server.orm.dao.HostDAO;
 import org.apache.ambari.server.orm.dao.HostVersionDAO;
 import org.apache.ambari.server.orm.dao.RepositoryVersionDAO;
 import org.apache.ambari.server.orm.dao.StackDAO;
 import org.apache.ambari.server.orm.entities.ClusterConfigEntity;
-import org.apache.ambari.server.orm.entities.ClusterConfigMappingEntity;
 import org.apache.ambari.server.orm.entities.ClusterEntity;
 import org.apache.ambari.server.orm.entities.ClusterServiceEntity;
-import org.apache.ambari.server.orm.entities.ClusterVersionEntity;
 import org.apache.ambari.server.orm.entities.HostComponentStateEntity;
 import org.apache.ambari.server.orm.entities.HostEntity;
 import org.apache.ambari.server.orm.entities.HostStateEntity;
@@ -87,7 +84,6 @@ import org.apache.ambari.server.state.ComponentInfo;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.ConfigFactory;
 import org.apache.ambari.server.state.ConfigHelper;
-import org.apache.ambari.server.state.ConfigImpl;
 import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.HostHealthStatus;
@@ -107,13 +103,11 @@ import org.apache.ambari.server.state.configgroup.ConfigGroupFactory;
 import org.apache.ambari.server.state.fsm.InvalidStateTransitionException;
 import org.apache.ambari.server.state.host.HostHealthyHeartbeatEvent;
 import org.apache.ambari.server.state.host.HostRegistrationRequestEvent;
-import org.apache.ambari.server.state.stack.upgrade.UpgradeType;
 import org.apache.ambari.server.utils.EventBusSynchronizer;
 import org.apache.commons.lang.StringUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.ArgumentCaptor;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -122,9 +116,6 @@ import com.google.gson.Gson;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.Singleton;
-import com.google.inject.persist.PersistService;
-import com.google.inject.persist.Transactional;
 import com.google.inject.persist.UnitOfWork;
 import com.google.inject.util.Modules;
 
@@ -148,42 +139,15 @@ public class ClusterTest {
   private StackDAO stackDAO;
   private ClusterDAO clusterDAO;
   private HostDAO hostDAO;
-  private ClusterVersionDAO clusterVersionDAO;
+
   private HostVersionDAO hostVersionDAO;
   private HostComponentStateDAO hostComponentStateDAO;
   private RepositoryVersionDAO repositoryVersionDAO;
   private Gson gson;
 
-  @Singleton
-  static class ClusterVersionDAOMock extends ClusterVersionDAO {
-    static boolean failOnCurrentVersionState;
-    static List<ClusterVersionEntity> mockedClusterVersions;
-
-    @Override
-    @Transactional
-    public ClusterVersionEntity merge(ClusterVersionEntity entity) {
-      if (!failOnCurrentVersionState || entity.getState() != RepositoryVersionState.CURRENT) {
-        return super.merge(entity);
-      } else {
-        throw new RollbackException();
-      }
-    }
-
-    @Override
-    @Transactional
-    public List<ClusterVersionEntity> findByCluster(String clusterName) {
-      if (mockedClusterVersions == null) {
-        return super.findByCluster(clusterName);
-      } else {
-        return mockedClusterVersions;
-      }
-    }
-  }
-
   private static class MockModule extends AbstractModule {
     @Override
     protected void configure() {
-      bind(ClusterVersionDAO.class).to(ClusterVersionDAOMock.class);
       EventBusSynchronizer.synchronizeAmbariEventPublisher(binder());
     }
   }
@@ -192,6 +156,7 @@ public class ClusterTest {
   public void setup() throws Exception {
     injector = Guice.createInjector(Modules.override(new InMemoryDefaultTestModule()).with(new MockModule()));
     injector.getInstance(GuiceJpaInitializer.class);
+    EventBusSynchronizer.synchronizeAmbariEventPublisher(injector);
     clusters = injector.getInstance(Clusters.class);
     serviceFactory = injector.getInstance(ServiceFactory.class);
     configGroupFactory = injector.getInstance(ConfigGroupFactory.class);
@@ -205,7 +170,6 @@ public class ClusterTest {
     stackDAO = injector.getInstance(StackDAO.class);
     clusterDAO = injector.getInstance(ClusterDAO.class);
     hostDAO = injector.getInstance(HostDAO.class);
-    clusterVersionDAO = injector.getInstance(ClusterVersionDAO.class);
     hostVersionDAO = injector.getInstance(HostVersionDAO.class);
     hostComponentStateDAO = injector.getInstance(HostComponentStateDAO.class);
     repositoryVersionDAO = injector.getInstance(RepositoryVersionDAO.class);
@@ -214,14 +178,22 @@ public class ClusterTest {
   }
 
   @After
-  public void teardown() {
+  public void teardown() throws AmbariException, SQLException {
     injector.getInstance(UnitOfWork.class).end();
-    injector.getInstance(PersistService.class).stop();
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
   private void createDefaultCluster() throws Exception {
-    // TODO, use common function
+    createDefaultCluster(Sets.newHashSet("h1", "h2"));
+  }
+
+  private void createDefaultCluster(Set<String> hostNames) throws Exception {
     StackId stackId = new StackId("HDP", "0.1");
+    createDefaultCluster(hostNames, stackId);
+  }
+
+  private void createDefaultCluster(Set<String> hostNames, StackId stackId) throws Exception {
+    // TODO, use common function
     StackEntity stackEntity = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
     org.junit.Assert.assertNotNull(stackEntity);
 
@@ -229,11 +201,12 @@ public class ClusterTest {
 
     clusters.addCluster(clusterName, stackId);
 
-    Map<String, String> hostAttributes = new HashMap<String, String>();
+    Map<String, String> hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "5.9");
 
-    Set<String> hostNames = new HashSet<String>() {{ add("h1"); add("h2"); }};
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
+
     for (String hostName : hostNames) {
       clusters.addHost(hostName);
 
@@ -241,19 +214,15 @@ public class ClusterTest {
       hostEntity.setIpv4("ipv4");
       hostEntity.setIpv6("ipv6");
       hostEntity.setHostAttributes(gson.toJson(hostAttributes));
+
+
       hostDAO.merge(hostEntity);
     }
 
-    clusters.mapHostsToCluster(hostNames, clusterName);
+    clusters.mapAndPublishHostsToCluster(hostNames, clusterName);
     c1 = clusters.getCluster(clusterName);
 
-    helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
-    c1.createClusterVersion(stackId, stackId.getStackVersion(), "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.transitionClusterVersion(stackId, stackId.getStackVersion(),
-        RepositoryVersionState.CURRENT);
 
-    ClusterVersionDAOMock.failOnCurrentVersionState = false;
   }
 
   public ClusterEntity createDummyData() {
@@ -278,12 +247,12 @@ public class ClusterTest {
     host2.setIpv4("192.168.0.2");
     host3.setIpv4("192.168.0.3");
 
-    List<HostEntity> hostEntities = new ArrayList<HostEntity>();
+    List<HostEntity> hostEntities = new ArrayList<>();
     hostEntities.add(host1);
     hostEntities.add(host2);
 
     clusterEntity.setHostEntities(hostEntities);
-    clusterEntity.setClusterConfigEntities(Collections.EMPTY_LIST);
+    clusterEntity.setClusterConfigEntities(Collections.emptyList());
     //both sides of relation should be set when modifying in runtime
     host1.setClusterEntities(Arrays.asList(clusterEntity));
     host2.setClusterEntities(Arrays.asList(clusterEntity));
@@ -301,60 +270,44 @@ public class ClusterTest {
     clusterServiceEntity.setServiceName("HDFS");
     clusterServiceEntity.setClusterEntity(clusterEntity);
     clusterServiceEntity.setServiceComponentDesiredStateEntities(
-        Collections.EMPTY_LIST);
+        Collections.emptyList());
 
     ServiceDesiredStateEntity stateEntity = mock(ServiceDesiredStateEntity.class);
 
     when(stateEntity.getDesiredStack()).thenReturn(stackEntity);
 
     clusterServiceEntity.setServiceDesiredStateEntity(stateEntity);
-    List<ClusterServiceEntity> clusterServiceEntities = new ArrayList<ClusterServiceEntity>();
+    List<ClusterServiceEntity> clusterServiceEntities = new ArrayList<>();
     clusterServiceEntities.add(clusterServiceEntity);
     clusterEntity.setClusterServiceEntities(clusterServiceEntities);
     return clusterEntity;
   }
 
-  private void checkStackVersionState(StackId stackId, String version, RepositoryVersionState state) {
-    Collection<ClusterVersionEntity> allClusterVersions = c1.getAllClusterVersions();
-    for (ClusterVersionEntity entity : allClusterVersions) {
-      StackId repoVersionStackId = new StackId(entity.getRepositoryVersion().getStack());
-      if (repoVersionStackId.equals(stackId)
-          && repoVersionStackId.getStackVersion().equals(version)) {
-        assertEquals(state, entity.getState());
-      }
-    }
-  }
-
-  private void assertStateException(StackId stackId, String version,
-      RepositoryVersionState transitionState,
-                                    RepositoryVersionState stateAfter) {
-    try {
-      c1.transitionClusterVersion(stackId, version, transitionState);
-      Assert.fail();
-    } catch (AmbariException e) {}
-    checkStackVersionState(stackId, version, stateAfter);
-    assertNotNull(c1.getCurrentClusterVersion());
-  }
-
   /**
-   * For Rolling Upgrades, create a cluster with the following components
-   * HDFS: NameNode, DataNode, HDFS Client
-   * ZK: Zookeeper Server, Zookeeper Monitor
+   * For Rolling Upgrades, create a cluster with the following components HDFS:
+   * NameNode, DataNode, HDFS Client ZK: Zookeeper Server, Zookeeper Monitor
    * Ganglia: Ganglia Server, Ganglia Monitor
    *
-   * Further, 3 hosts will be added.
-   * Finally, verify that only the Ganglia components do not need to advertise a version.
-   * @param clusterName Cluster Name
-   * @param stackId Stack to set for the cluster
-   * @param hostAttributes Host attributes to use for 3 hosts (h-1, h-2, h-3)
+   * Further, 3 hosts will be added. Finally, verify that only the Ganglia
+   * components do not need to advertise a version.
+   *
+   * @param clusterName
+   *          Cluster Name
+   * @param repositoryVersion
+   *          the repository to use for new services being installed in the
+   *          cluster
+   * @param hostAttributes
+   *          Host attributes to use for 3 hosts (h-1, h-2, h-3)
    * @throws Exception
    * @return Cluster that was created
    */
-  private Cluster createClusterForRU(String clusterName, StackId stackId, Map<String, String> hostAttributes) throws Exception {
+  private Cluster createClusterForRU(String clusterName, RepositoryVersionEntity repositoryVersion,
+      Map<String, String> hostAttributes) throws Exception {
+    StackId stackId = repositoryVersion.getStackId();
     clusters.addCluster(clusterName, stackId);
     Cluster cluster = clusters.getCluster(clusterName);
     Assert.assertEquals(clusterName, cluster.getClusterName());
-    Assert.assertEquals(1, cluster.getClusterId());
+    //Assert.assertEquals(1, cluster.getClusterId());
 
     // Add Hosts
     List<String> hostNames = new ArrayList<String>() {{ add("h-1"); add("h-2"); add("h-3"); }};
@@ -375,9 +328,9 @@ public class ClusterTest {
     }
 
     // Add Services
-    Service s1 = serviceFactory.createNew(cluster, "HDFS");
-    Service s2 = serviceFactory.createNew(cluster, "ZOOKEEPER");
-    Service s3 = serviceFactory.createNew(cluster, "GANGLIA");
+    Service s1 = serviceFactory.createNew(cluster, "HDFS", repositoryVersion);
+    Service s2 = serviceFactory.createNew(cluster, "ZOOKEEPER", repositoryVersion);
+    Service s3 = serviceFactory.createNew(cluster, "GANGLIA", repositoryVersion);
     cluster.addService(s1);
     cluster.addService(s2);
     cluster.addService(s3);
@@ -443,8 +396,8 @@ public class ClusterTest {
     For some reason this still uses the metainfo.xml files for these services
     from HDP-2.0.5 stack instead of the provided Stack Id
     */
-    HashMap<String, Set<String>> componentsThatAdvertiseVersion = new HashMap<String, Set<String>>();
-    HashMap<String, Set<String>> componentsThatDontAdvertiseVersion = new HashMap<String, Set<String>>();
+    HashMap<String, Set<String>> componentsThatAdvertiseVersion = new HashMap<>();
+    HashMap<String, Set<String>> componentsThatDontAdvertiseVersion = new HashMap<>();
 
     Set<String> hdfsComponents = new HashSet<String>() {{ add("NAMENODE"); add("DATANODE"); add("HDFS_CLIENT"); }};
     Set<String> zkComponents = new HashSet<String>() {{ add("ZOOKEEPER_SERVER"); add("ZOOKEEPER_CLIENT"); }};
@@ -480,12 +433,14 @@ public class ClusterTest {
    * @param hostAttributes Host Attributes
    * @throws Exception
    */
-  private void addHost(String hostName, Map<String, String> hostAttributes) throws Exception {
+  private Host addHost(String hostName, Map<String, String> hostAttributes) throws Exception {
     clusters.addHost(hostName);
     Host host = clusters.getHost(hostName);
     host.setIPv4("ipv4");
     host.setIPv6("ipv6");
     host.setHostAttributes(hostAttributes);
+
+    return host;
   }
 
   /**
@@ -511,7 +466,7 @@ public class ClusterTest {
         hostComponentStateDAO.merge(hce);
       }
 
-      RepositoryVersionEntity rv = helper.getOrCreateRepositoryVersion(stackId, version);
+      helper.getOrCreateRepositoryVersion(stackId, version);
 
       // Simulate the StackVersionListener during the installation
       Service svc = cluster.getService(hce.getServiceName());
@@ -519,7 +474,6 @@ public class ClusterTest {
       ServiceComponentHost scHost = svcComp.getServiceComponentHost(hce.getHostName());
 
       scHost.recalculateHostVersionState();
-      cluster.recalculateClusterVersionState(rv);
     }
   }
 
@@ -566,7 +520,7 @@ public class ClusterTest {
     hostInfo.setMemoryTotal(10);
     hostInfo.setMemorySize(100);
     hostInfo.setProcessorCount(10);
-    List<DiskInfo> mounts = new ArrayList<DiskInfo>();
+    List<DiskInfo> mounts = new ArrayList<>();
     mounts.add(new DiskInfo("/dev/sda", "/mnt/disk1",
         "5000000", "4000000", "10%", "size", "fstype"));
     hostInfo.setMounts(mounts);
@@ -585,7 +539,7 @@ public class ClusterTest {
     long currentTime = 1001;
 
     clusters.getHost("h1").handleEvent(new HostRegistrationRequestEvent(
-        "h1", agentVersion, currentTime, hostInfo, agentEnv));
+        "h1", agentVersion, currentTime, hostInfo, agentEnv, currentTime));
 
     Assert.assertEquals(HostState.WAITING_FOR_HOST_STATUS_UPDATES,
         clusters.getHost("h1").getState());
@@ -641,8 +595,10 @@ public class ClusterTest {
     // public Service getService(String serviceName) throws AmbariException;
     // public Map<String, Service> getServices();
 
-    Service s1 = serviceFactory.createNew(c1, "HDFS");
-    Service s2 = serviceFactory.createNew(c1, "MAPREDUCE");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    serviceFactory.createNew(c1, "HDFS", repositoryVersion);
+    serviceFactory.createNew(c1, "MAPREDUCE", repositoryVersion);
 
     Service s = c1.getService("HDFS");
     Assert.assertNotNull(s);
@@ -669,7 +625,9 @@ public class ClusterTest {
     // TODO write unit tests
     // public List<ServiceComponentHost> getServiceComponentHosts(String hostname);
 
-    Service s = serviceFactory.createNew(c1, "HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service s = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
     c1.addService(s);
     ServiceComponent sc = serviceComponentFactory.createNew(s, "NAMENODE");
     s.addServiceComponent(sc);
@@ -687,7 +645,7 @@ public class ClusterTest {
     try {
       while (iterator.hasNext()) {
         iterator.next();
-        Service s1 = serviceFactory.createNew(c1, "PIG");
+        Service s1 = serviceFactory.createNew(c1, "PIG", repositoryVersion);
         c1.addService(s1);
         ServiceComponent sc1 = serviceComponentFactory.createNew(s1, "PIG");
         s1.addServiceComponent(sc1);
@@ -706,7 +664,9 @@ public class ClusterTest {
   public void testGetServiceComponentHosts_ForService() throws Exception {
     createDefaultCluster();
 
-    Service s = serviceFactory.createNew(c1, "HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service s = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
     c1.addService(s);
 
     ServiceComponent scNN = serviceComponentFactory.createNew(s, "NAMENODE");
@@ -734,7 +694,9 @@ public class ClusterTest {
   public void testGetServiceComponentHosts_ForServiceComponent() throws Exception {
     createDefaultCluster();
 
-    Service s = serviceFactory.createNew(c1, "HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service s = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
     c1.addService(s);
 
     ServiceComponent scNN = serviceComponentFactory.createNew(s, "NAMENODE");
@@ -768,7 +730,9 @@ public class ClusterTest {
   public void testGetServiceComponentHostMap() throws Exception {
     createDefaultCluster();
 
-    Service s = serviceFactory.createNew(c1, "HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service s = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
     c1.addService(s);
 
     ServiceComponent scNN = serviceComponentFactory.createNew(s, "NAMENODE");
@@ -800,10 +764,12 @@ public class ClusterTest {
   public void testGetServiceComponentHostMap_ForService() throws Exception {
     createDefaultCluster();
 
-    Service sfHDFS = serviceFactory.createNew(c1, "HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service sfHDFS = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
     c1.addService(sfHDFS);
 
-    Service sfMR = serviceFactory.createNew(c1, "MAPREDUCE");
+    Service sfMR = serviceFactory.createNew(c1, "MAPREDUCE", repositoryVersion);
     c1.addService(sfMR);
 
     ServiceComponent scNN = serviceComponentFactory.createNew(sfHDFS, "NAMENODE");
@@ -838,7 +804,7 @@ public class ClusterTest {
     Assert.assertEquals(1, componentHostMap.get("JOBTRACKER").size());
     Assert.assertTrue(componentHostMap.get("JOBTRACKER").contains("h1"));
 
-    componentHostMap = c1.getServiceComponentHostMap(null, new HashSet<String>(Arrays.asList("HDFS", "MAPREDUCE")));
+    componentHostMap = c1.getServiceComponentHostMap(null, new HashSet<>(Arrays.asList("HDFS", "MAPREDUCE")));
     Assert.assertEquals(3, componentHostMap.size());
     Assert.assertEquals(1, componentHostMap.get("NAMENODE").size());
     Assert.assertTrue(componentHostMap.get("NAMENODE").contains("h1"));
@@ -856,10 +822,12 @@ public class ClusterTest {
   public void testGetServiceComponentHostMap_ForHost() throws Exception {
     createDefaultCluster();
 
-    Service sfHDFS = serviceFactory.createNew(c1, "HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service sfHDFS = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
     c1.addService(sfHDFS);
 
-    Service sfMR = serviceFactory.createNew(c1, "MAPREDUCE");
+    Service sfMR = serviceFactory.createNew(c1, "MAPREDUCE", repositoryVersion);
     c1.addService(sfMR);
 
     ServiceComponent scNN = serviceComponentFactory.createNew(sfHDFS, "NAMENODE");
@@ -895,7 +863,7 @@ public class ClusterTest {
     Assert.assertEquals(1, componentHostMap.get("DATANODE").size());
     Assert.assertTrue(componentHostMap.get("DATANODE").contains("h2"));
 
-    componentHostMap = c1.getServiceComponentHostMap(new HashSet<String>(Arrays.asList("h1", "h2", "h3")), null);
+    componentHostMap = c1.getServiceComponentHostMap(new HashSet<>(Arrays.asList("h1", "h2", "h3")), null);
     Assert.assertEquals(3, componentHostMap.size());
     Assert.assertEquals(1, componentHostMap.get("NAMENODE").size());
     Assert.assertTrue(componentHostMap.get("NAMENODE").contains("h1"));
@@ -913,10 +881,12 @@ public class ClusterTest {
   public void testGetServiceComponentHostMap_ForHostAndService() throws Exception {
     createDefaultCluster();
 
-    Service sfHDFS = serviceFactory.createNew(c1, "HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service sfHDFS = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
     c1.addService(sfHDFS);
 
-    Service sfMR = serviceFactory.createNew(c1, "MAPREDUCE");
+    Service sfMR = serviceFactory.createNew(c1, "MAPREDUCE", repositoryVersion);
     c1.addService(sfMR);
 
     ServiceComponent scNN = serviceComponentFactory.createNew(sfHDFS, "NAMENODE");
@@ -958,27 +928,20 @@ public class ClusterTest {
   public void testGetAndSetConfigs() throws Exception {
     createDefaultCluster();
 
-    Map<String, Map<String, String>> c1PropAttributes = new HashMap<String, Map<String,String>>();
-    c1PropAttributes.put("final", new HashMap<String, String>());
+    Map<String, Map<String, String>> c1PropAttributes = new HashMap<>();
+    c1PropAttributes.put("final", new HashMap<>());
     c1PropAttributes.get("final").put("a", "true");
-    Map<String, Map<String, String>> c2PropAttributes = new HashMap<String, Map<String,String>>();
-    c2PropAttributes.put("final", new HashMap<String, String>());
+    Map<String, Map<String, String>> c2PropAttributes = new HashMap<>();
+    c2PropAttributes.put("final", new HashMap<>());
     c2PropAttributes.get("final").put("x", "true");
-    Config config1 = configFactory.createNew(c1, "global",
+    Config config1 = configFactory.createNew(c1, "global", "version1",
         new HashMap<String, String>() {{ put("a", "b"); }}, c1PropAttributes);
-    config1.setTag("version1");
 
-    Config config2 = configFactory.createNew(c1, "global",
+    Config config2 = configFactory.createNew(c1, "global", "version2",
         new HashMap<String, String>() {{ put("x", "y"); }}, c2PropAttributes);
-    config2.setTag("version2");
 
-    Config config3 = configFactory.createNew(c1, "core-site",
-        new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<String, Map<String,String>>());
-    config3.setTag("version2");
-
-    c1.addConfig(config1);
-    c1.addConfig(config2);
-    c1.addConfig(config3);
+    configFactory.createNew(c1, "core-site", "version2",
+        new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<>());
 
     c1.addDesiredConfig("_test", Collections.singleton(config1));
     Config res = c1.getDesiredConfigByType("global");
@@ -988,6 +951,7 @@ public class ClusterTest {
     res = c1.getDesiredConfigByType("core-site");
     Assert.assertNull("Expected null config", res);
 
+    Thread.sleep(1);
     c1.addDesiredConfig("_test", Collections.singleton(config2));
     res = c1.getDesiredConfigByType("global");
     Assert.assertEquals("Expected version tag to be 'version2'", "version2", res.getTag());
@@ -998,21 +962,14 @@ public class ClusterTest {
   public void testDesiredConfigs() throws Exception {
     createDefaultCluster();
 
-    Config config1 = configFactory.createNew(c1, "global",
-        new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<String, Map<String,String>>());
-    config1.setTag("version1");
+    Config config1 = configFactory.createNew(c1, "global", "version1",
+        new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<>());
 
-    Config config2 = configFactory.createNew(c1, "global",
-        new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<String, Map<String,String>>());
-    config2.setTag("version2");
+    Config config2 = configFactory.createNew(c1, "global", "version2",
+        new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<>());
 
-    Config config3 = configFactory.createNew(c1, "core-site",
-        new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<String, Map<String,String>>());
-    config3.setTag("version2");
-
-    c1.addConfig(config1);
-    c1.addConfig(config2);
-    c1.addConfig(config3);
+    Config config3 = configFactory.createNew(c1, "core-site", "version2",
+        new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<>());
 
     try {
       c1.addDesiredConfig(null, Collections.singleton(config1));
@@ -1023,6 +980,7 @@ public class ClusterTest {
     }
 
     c1.addDesiredConfig("_test1", Collections.singleton(config1));
+    Thread.sleep(1);
     c1.addDesiredConfig("_test3", Collections.singleton(config3));
 
     Map<String, DesiredConfig> desiredConfigs = c1.getDesiredConfigs();
@@ -1031,15 +989,14 @@ public class ClusterTest {
     Assert.assertTrue("Expect desired config contain " + config3.getType(), desiredConfigs.containsKey("core-site"));
     Assert.assertEquals("Expect desired config for global should be " + config1.getTag(),
       config1.getTag(), desiredConfigs.get(config1.getType()).getTag());
-    Assert.assertEquals("_test1", desiredConfigs.get(config1.getType()).getUser());
-    Assert.assertEquals("_test3", desiredConfigs.get(config3.getType()).getUser());
     DesiredConfig dc = desiredConfigs.get(config1.getType());
     Assert.assertTrue("Expect no host-level overrides",
       (null == dc.getHostOverrides() || dc.getHostOverrides().size() == 0));
 
+    Thread.sleep(1);
     c1.addDesiredConfig("_test2", Collections.singleton(config2));
-    Assert.assertEquals("_test2", c1.getDesiredConfigs().get(config2.getType()).getUser());
 
+    Thread.sleep(1);
     c1.addDesiredConfig("_test1", Collections.singleton(config1));
 
     // setup a host that also has a config override
@@ -1058,9 +1015,9 @@ public class ClusterTest {
     createDefaultCluster();
 
     ClusterResponse r = c1.convertToResponse();
-    Assert.assertEquals(c1.getClusterId(), r.getClusterId().longValue());
+    Assert.assertEquals(c1.getClusterId(), r.getClusterId());
     Assert.assertEquals(c1.getClusterName(), r.getClusterName());
-    Assert.assertEquals(Integer.valueOf(2), r.getTotalHosts());
+    Assert.assertEquals(2, r.getTotalHosts());
     Assert.assertEquals(0, r.getClusterHealthReport().getAlertStatusHosts());
     Assert.assertEquals(0, r.getClusterHealthReport().getHealthyStatusHosts());
     Assert.assertEquals(0, r.getClusterHealthReport().getUnhealthyStatusHosts());
@@ -1077,7 +1034,7 @@ public class ClusterTest {
     host.setIPv4("ipv4");
     host.setIPv6("ipv6");
 
-    Map<String, String> hostAttributes = new HashMap<String, String>();
+    Map<String, String> hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "5.9");
     host.setHostAttributes(hostAttributes);
@@ -1089,7 +1046,7 @@ public class ClusterTest {
 
     r = c1.convertToResponse();
 
-    Assert.assertEquals(Integer.valueOf(3), r.getTotalHosts());
+    Assert.assertEquals(3, r.getTotalHosts());
     Assert.assertEquals(0, r.getClusterHealthReport().getAlertStatusHosts());
     Assert.assertEquals(1, r.getClusterHealthReport().getHealthyStatusHosts());
     Assert.assertEquals(0, r.getClusterHealthReport().getUnhealthyStatusHosts());
@@ -1110,16 +1067,18 @@ public class ClusterTest {
   public void testDeleteService() throws Exception {
     createDefaultCluster();
 
-    c1.addService("MAPREDUCE");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
 
-    Service hdfs = c1.addService("HDFS");
-    ServiceComponent nameNode = hdfs.addServiceComponent("NAMENODE");
+    c1.addService("MAPREDUCE", repositoryVersion);
+
+    Service hdfs = c1.addService("HDFS", repositoryVersion);
+    hdfs.addServiceComponent("NAMENODE");
 
     assertEquals(2, c1.getServices().size());
     assertEquals(2, injector.getProvider(EntityManager.class).get().
         createQuery("SELECT service FROM ClusterServiceEntity service").getResultList().size());
 
-    c1.deleteService("HDFS");
+    c1.deleteService("HDFS", new DeleteHostComponentStatusMetaData());
 
     assertEquals(1, c1.getServices().size());
     assertEquals(1, injector.getProvider(EntityManager.class).get().
@@ -1130,22 +1089,17 @@ public class ClusterTest {
   public void testDeleteServiceWithConfigHistory() throws Exception {
     createDefaultCluster();
 
-    c1.addService("HDFS");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
 
-    Config config1 = configFactory.createNew(c1, "hdfs-site",
-      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<String, Map<String,String>>());
-    config1.setTag("version1");
+    c1.addService("HDFS", repositoryVersion);
 
-    Config config2 = configFactory.createNew(c1, "core-site",
-      new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<String, Map<String,String>>());
-    config2.setTag("version2");
+    Config config1 = configFactory.createNew(c1, "hdfs-site", "version1",
+      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<>());
 
-    config1.persist();
-    c1.addConfig(config1);
-    config2.persist();
-    c1.addConfig(config2);
+    Config config2 = configFactory.createNew(c1, "core-site", "version2",
+      new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<>());
 
-    Set<Config> configs = new HashSet<Config>();
+    Set<Config> configs = new HashSet<>();
     configs.add(config1);
     configs.add(config2);
 
@@ -1163,7 +1117,7 @@ public class ClusterTest {
       c1.getActiveServiceConfigVersions();
     Assert.assertEquals(1, activeServiceConfigVersions.size());
 
-    c1.deleteService("HDFS");
+    c1.deleteService("HDFS", new DeleteHostComponentStatusMetaData());
 
     Assert.assertEquals(0, c1.getServices().size());
     Assert.assertEquals(0, c1.getServiceConfigVersions().size());
@@ -1173,24 +1127,22 @@ public class ClusterTest {
     // ServiceConfig
     Assert.assertEquals(0,
       em.createQuery("SELECT serviceConfig from ServiceConfigEntity serviceConfig").getResultList().size());
+
     // ClusterConfig
-    Assert.assertEquals(2,
-      em.createQuery("SELECT config from ClusterConfigEntity config").getResultList().size());
-    // ClusterConfigMapping
-    List<ClusterConfigMappingEntity> configMappingEntities =
-        em.createQuery("SELECT configmapping from ClusterConfigMappingEntity configmapping",
-        ClusterConfigMappingEntity.class).getResultList();
+    List<ClusterConfigEntity> clusterConfigs = em.createQuery(
+        "SELECT config from ClusterConfigEntity config", ClusterConfigEntity.class).getResultList();
 
-    Assert.assertEquals(2, configMappingEntities.size());
+    Assert.assertEquals(2, clusterConfigs.size());
 
-    for (ClusterConfigMappingEntity configMappingEntity : configMappingEntities) {
-      if (StringUtils.equals(configMappingEntity.getType(), "core-site")) {
+    for (ClusterConfigEntity configEntity : clusterConfigs) {
+      if (StringUtils.equals(configEntity.getType(), "core-site")) {
         assertEquals("core-site is not part of HDFS in test stack, should remain mapped to cluster",
-            1, configMappingEntity.isSelected());
+            true, configEntity.isSelected());
       }
-      if (StringUtils.equals(configMappingEntity.getType(), "hdfs-site")) {
+
+      if (StringUtils.equals(configEntity.getType(), "hdfs-site")) {
         assertEquals("hdfs-site should be unmapped from cluster when HDFS service is removed",
-            0, configMappingEntity.isSelected());
+            false, configEntity.isSelected());
       }
     }
 
@@ -1206,13 +1158,12 @@ public class ClusterTest {
     Host host1 = clusters.getHost("h1");
     HostEntity hostEntity1 = hostDAO.findByName("h1");
 
-    Map<String, Map<String, String>> propAttributes = new HashMap<String, Map<String,String>>();
-    propAttributes.put("final", new HashMap<String, String>());
+    Map<String, Map<String, String>> propAttributes = new HashMap<>();
+    propAttributes.put("final", new HashMap<>());
     propAttributes.get("final").put("test", "true");
-    Config config = configFactory.createNew(c1, "hdfs-site", new HashMap<String, String>(){{
+    Config config = configFactory.createNew(c1, "hdfs-site", "1", new HashMap<String, String>(){{
       put("test", "test");
     }}, propAttributes);
-    config.setTag("1");
 
     host1.addDesiredConfig(c1.getClusterId(), true, "test", config);
 
@@ -1221,7 +1172,7 @@ public class ClusterTest {
     assertTrue(configs.containsKey(hostEntity1.getHostId()));
     assertEquals(1, configs.get(hostEntity1.getHostId()).size());
 
-    List<Long> hostIds = new ArrayList<Long>();
+    List<Long> hostIds = new ArrayList<>();
     hostIds.add(hostEntity1.getHostId());
 
     configs = c1.getHostsDesiredConfigs(hostIds);
@@ -1246,17 +1197,13 @@ public class ClusterTest {
   @Test
   public void testServiceConfigVersions() throws Exception {
     createDefaultCluster();
+    c1.addService("HDFS", helper.getOrCreateRepositoryVersion(new StackId("HDP", "0.1"), "0.1"));
 
-    Config config1 = configFactory.createNew(c1, "hdfs-site",
-      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<String, Map<String,String>>());
-    config1.setTag("version1");
+    Config config1 = configFactory.createNew(c1, "hdfs-site", "version1",
+      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<>());
 
-    Config config2 = configFactory.createNew(c1, "hdfs-site",
-      new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<String, Map<String,String>>());
-    config2.setTag("version2");
-
-    c1.addConfig(config1);
-    c1.addConfig(config2);
+    Config config2 = configFactory.createNew(c1, "hdfs-site", "version2",
+      new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<>());
 
     c1.addDesiredConfig("admin", Collections.singleton(config1));
     List<ServiceConfigVersionResponse> serviceConfigVersions =
@@ -1309,19 +1256,15 @@ public class ClusterTest {
   @Test
   public void testSingleServiceVersionForMultipleConfigs() throws Exception {
     createDefaultCluster();
+    c1.addService("HDFS", helper.getOrCreateRepositoryVersion(new StackId("HDP", "0.1"), "0.1"));
 
-    Config config1 = configFactory.createNew(c1, "hdfs-site",
-      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<String, Map<String,String>>());
-    config1.setTag("version1");
+    Config config1 = configFactory.createNew(c1, "hdfs-site", "version1",
+      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<>());
 
-    Config config2 = configFactory.createNew(c1, "core-site",
-      new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<String, Map<String,String>>());
-    config2.setTag("version2");
+    Config config2 = configFactory.createNew(c1, "core-site", "version2",
+      new HashMap<String, String>() {{ put("x", "y"); }}, new HashMap<>());
 
-    c1.addConfig(config1);
-    c1.addConfig(config2);
-
-    Set<Config> configs = new HashSet<Config>();
+    Set<Config> configs = new HashSet<>();
     configs.add(config1);
     configs.add(config2);
 
@@ -1345,11 +1288,11 @@ public class ClusterTest {
   public void testServiceConfigVersionsForGroups() throws Exception {
     createDefaultCluster();
 
-    Config config1 = configFactory.createNew(c1, "hdfs-site",
-      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<String, Map<String,String>>());
-    config1.setTag("version1");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+    c1.addService("HDFS", repositoryVersion);
 
-    c1.addConfig(config1);
+    Config config1 = configFactory.createNew(c1, "hdfs-site", "version1",
+      new HashMap<String, String>() {{ put("a", "b"); }}, new HashMap<>());
 
     ServiceConfigVersionResponse scvResponse =
       c1.addDesiredConfig("admin", Collections.singleton(config1));
@@ -1361,15 +1304,12 @@ public class ClusterTest {
     Assert.assertEquals("Only one scv should be active", 1, activeServiceConfigVersions.get("HDFS").size());
 
     //create config group
-    Config config2 = configFactory.createNew(c1, "hdfs-site",
-      new HashMap<String, String>() {{ put("a", "c"); }}, new HashMap<String, Map<String,String>>());
-    config2.setTag("version2");
+    Config config2 = configFactory.createNew(c1, "hdfs-site", "version2",
+      new HashMap<String, String>() {{ put("a", "c"); }}, new HashMap<>());
 
     ConfigGroup configGroup =
-      configGroupFactory.createNew(c1, "test group", "HDFS", "descr", Collections.singletonMap("hdfs-site", config2),
-        Collections.<Long, Host>emptyMap());
-
-    configGroup.persist();
+      configGroupFactory.createNew(c1, "HDFS", "test group", "HDFS", "descr", Collections.singletonMap("hdfs-site", config2),
+        Collections.emptyMap());
 
     c1.addConfigGroup(configGroup);
 
@@ -1381,12 +1321,11 @@ public class ClusterTest {
     Assert.assertEquals("Two service config versions should be active, for default and test groups",
       2, activeServiceConfigVersions.get("HDFS").size());
 
-    Config config3 = configFactory.createNew(c1, "hdfs-site",
-      new HashMap<String, String>() {{ put("a", "d"); }}, new HashMap<String, Map<String,String>>());
+    Config config3 = configFactory.createNew(c1, "hdfs-site", "version3",
+      new HashMap<String, String>() {{ put("a", "d"); }}, new HashMap<>());
 
     configGroup.setConfigurations(Collections.singletonMap("hdfs-site", config3));
 
-    configGroup.persist();
     scvResponse = c1.createServiceConfigVersion("HDFS", "admin", "test note", configGroup);
     assertEquals("SCV 3 should be created", Long.valueOf(3), scvResponse.getVersion());
 
@@ -1417,16 +1356,14 @@ public class ClusterTest {
 
     //check config with empty cluster
 
-    Config config4 = new ConfigImpl("hdfs-site");
-    config4.setProperties(new HashMap<String, String>() {{
-      put("a", "b");
-    }});
+    Config config4 = configFactory.createReadOnly("hdfs-site", "version4",
+        Collections.singletonMap("a", "b"), null);
 
     ConfigGroup configGroup2 =
-        configGroupFactory.createNew(c1, "test group 2", "HDFS", "descr", Collections.singletonMap("hdfs-site", config4),
-            Collections.<Long, Host>emptyMap());
+        configGroupFactory.createNew(c1, "HDFS", "test group 2", "HDFS", "descr",
+            new HashMap<>(Collections.singletonMap("hdfs-site", config4)),
+            Collections.emptyMap());
 
-    configGroup2.persist();
     c1.addConfigGroup(configGroup2);
 
     scvResponse = c1.createServiceConfigVersion("HDFS", "admin", "test note", configGroup2);
@@ -1442,13 +1379,10 @@ public class ClusterTest {
   public void testAllServiceConfigVersionsWithConfigGroups() throws Exception {
     // Given
     createDefaultCluster();
+    c1.addService("HDFS", helper.getOrCreateRepositoryVersion(new StackId("HDP", "0.1"), "0.1"));
 
-    Config hdfsSiteConfigV1 = configFactory.createNew(c1, "hdfs-site", ImmutableMap.of("p1", "v1"), ImmutableMap.<String, Map<String,String>>of());
-    hdfsSiteConfigV1.setTag("version1");
-    hdfsSiteConfigV1.persist();
-
-    c1.addConfig(hdfsSiteConfigV1);
-
+    Config hdfsSiteConfigV1 = configFactory.createNew(c1, "hdfs-site", "version1",
+        ImmutableMap.of("p1", "v1"), ImmutableMap.of());
 
     ServiceConfigVersionResponse hdfsSiteConfigResponseV1 = c1.addDesiredConfig("admin", Collections.singleton(hdfsSiteConfigV1));
     List<ConfigurationResponse> configResponsesDefaultGroup =  Collections.singletonList(
@@ -1459,11 +1393,10 @@ public class ClusterTest {
 
     hdfsSiteConfigResponseV1.setConfigurations(configResponsesDefaultGroup);
 
-    Config hdfsSiteConfigV2 = configFactory.createNew(c1, "hdfs-site", ImmutableMap.of("p1", "v2"), ImmutableMap.<String, Map<String,String>>of());
-    hdfsSiteConfigV2.setTag("version2");
+    Config hdfsSiteConfigV2 = configFactory.createNew(c1, "hdfs-site", "version2",
+        ImmutableMap.of("p1", "v2"), ImmutableMap.of());
 
-    ConfigGroup configGroup = configGroupFactory.createNew(c1, "configGroup1", "version1", "test description", ImmutableMap.of(hdfsSiteConfigV2.getType(), hdfsSiteConfigV2), ImmutableMap.<Long, Host>of());
-    configGroup.persist();
+    ConfigGroup configGroup = configGroupFactory.createNew(c1, "HDFS", "configGroup1", "version1", "test description", ImmutableMap.of(hdfsSiteConfigV2.getType(), hdfsSiteConfigV2), ImmutableMap.of());
 
     c1.addConfigGroup(configGroup);
     ServiceConfigVersionResponse hdfsSiteConfigResponseV2 = c1.createServiceConfigVersion("HDFS", "admin", "test note", configGroup);
@@ -1506,13 +1439,10 @@ public class ClusterTest {
   public void testAllServiceConfigVersionsWithDeletedConfigGroups() throws Exception {
     // Given
     createDefaultCluster();
+    c1.addService("HDFS", helper.getOrCreateRepositoryVersion(new StackId("HDP", "0.1"), "0.1"));
 
-    Config hdfsSiteConfigV1 = configFactory.createNew(c1, "hdfs-site", ImmutableMap.of("p1", "v1"), ImmutableMap.<String, Map<String,String>>of());
-    hdfsSiteConfigV1.setTag("version1");
-    hdfsSiteConfigV1.persist();
-
-    c1.addConfig(hdfsSiteConfigV1);
-
+    Config hdfsSiteConfigV1 = configFactory.createNew(c1, "hdfs-site", "version1",
+        ImmutableMap.of("p1", "v1"), ImmutableMap.of());
 
     ServiceConfigVersionResponse hdfsSiteConfigResponseV1 = c1.addDesiredConfig("admin", Collections.singleton(hdfsSiteConfigV1));
     List<ConfigurationResponse> configResponsesDefaultGroup =  Collections.singletonList(
@@ -1523,11 +1453,10 @@ public class ClusterTest {
 
     hdfsSiteConfigResponseV1.setConfigurations(configResponsesDefaultGroup);
 
-    Config hdfsSiteConfigV2 = configFactory.createNew(c1, "hdfs-site", ImmutableMap.of("p1", "v2"), ImmutableMap.<String, Map<String,String>>of());
-    hdfsSiteConfigV2.setTag("version2");
+    Config hdfsSiteConfigV2 = configFactory.createNew(c1, "hdfs-site", "version2",
+        ImmutableMap.of("p1", "v2"), ImmutableMap.of());
 
-    ConfigGroup configGroup = configGroupFactory.createNew(c1, "configGroup1", "version1", "test description", ImmutableMap.of(hdfsSiteConfigV2.getType(), hdfsSiteConfigV2), ImmutableMap.<Long, Host>of());
-    configGroup.persist();
+    ConfigGroup configGroup = configGroupFactory.createNew(c1, "HDFS", "configGroup1", "version1", "test description", ImmutableMap.of(hdfsSiteConfigV2.getType(), hdfsSiteConfigV2), ImmutableMap.of());
 
     c1.addConfigGroup(configGroup);
     ServiceConfigVersionResponse hdfsSiteConfigResponseV2 = c1.createServiceConfigVersion("HDFS", "admin", "test note", configGroup);
@@ -1581,144 +1510,32 @@ public class ClusterTest {
     assertEquals(false, allServiceConfigResponses.get(1).getIsCurrent());
     assertEquals(ServiceConfigVersionResponse.DELETED_CONFIG_GROUP_NAME, allServiceConfigResponses.get(1).getGroupName());
 
-
-
-  }
-
-  @Test
-  public void testTransitionClusterVersion() throws Exception {
-    createDefaultCluster();
-
-    String stack = "HDP";
-    String version = "0.2";
-
-    StackId stackId = new StackId(stack, version);
-
-    helper.getOrCreateRepositoryVersion(stackId, version);
-    c1.createClusterVersion(stackId, version, "admin",
-        RepositoryVersionState.INSTALLING);
-
-    assertStateException(stackId, version, RepositoryVersionState.CURRENT,
-        RepositoryVersionState.INSTALLING);
-
-    c1.transitionClusterVersion(stackId, version,
-        RepositoryVersionState.INSTALL_FAILED);
-    checkStackVersionState(stackId, version,
-        RepositoryVersionState.INSTALL_FAILED);
-
-    assertStateException(stackId, version, RepositoryVersionState.CURRENT,
-        RepositoryVersionState.INSTALL_FAILED);
-    assertStateException(stackId, version, RepositoryVersionState.INSTALLED,
-        RepositoryVersionState.INSTALL_FAILED);
-    assertStateException(stackId, version, RepositoryVersionState.OUT_OF_SYNC,
-        RepositoryVersionState.INSTALL_FAILED);
-
-    c1.transitionClusterVersion(stackId, version,
-        RepositoryVersionState.INSTALLING);
-    checkStackVersionState(stackId, version, RepositoryVersionState.INSTALLING);
-
-    c1.transitionClusterVersion(stackId, version,
-        RepositoryVersionState.INSTALLED);
-    checkStackVersionState(stackId, version, RepositoryVersionState.INSTALLED);
-
-    assertStateException(stackId, version,
-        RepositoryVersionState.INSTALL_FAILED, RepositoryVersionState.INSTALLED);
-
-    c1.transitionClusterVersion(stackId, version,
-        RepositoryVersionState.OUT_OF_SYNC);
-    checkStackVersionState(stackId, version, RepositoryVersionState.OUT_OF_SYNC);
-
-    assertStateException(stackId, version, RepositoryVersionState.CURRENT,
-        RepositoryVersionState.OUT_OF_SYNC);
-    assertStateException(stackId, version, RepositoryVersionState.INSTALLED,
-        RepositoryVersionState.OUT_OF_SYNC);
-    assertStateException(stackId, version,
-        RepositoryVersionState.INSTALL_FAILED,
-        RepositoryVersionState.OUT_OF_SYNC);
-
-    c1.transitionClusterVersion(stackId, version,
-        RepositoryVersionState.INSTALLING);
-    checkStackVersionState(stackId, version, RepositoryVersionState.INSTALLING);
-
-    c1.transitionClusterVersion(stackId, version,
-        RepositoryVersionState.INSTALLED);
-    checkStackVersionState(stackId, version, RepositoryVersionState.INSTALLED);
-
-    c1.setDesiredStackVersion(stackId);
-    c1.transitionClusterVersion(stackId, version,
-        RepositoryVersionState.CURRENT);
-
-    checkStackVersionState(stackId, version, RepositoryVersionState.CURRENT);
-
-    checkStackVersionState(new StackId("HDP", "0.1"), "0.1",
-        RepositoryVersionState.INSTALLED);
-
-    // The only CURRENT state should not be changed
-    assertStateException(stackId, version, RepositoryVersionState.INSTALLED,
-        RepositoryVersionState.CURRENT);
-  }
-
-  @Test
-  public void testTransitionClusterVersionTransactionFail() throws Exception {
-    createDefaultCluster();
-
-    StackId stackId = new StackId("HDP", "0.2");
-    helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
-    c1.createClusterVersion(stackId, "0.2", "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.transitionClusterVersion(stackId, "0.2",
-        RepositoryVersionState.INSTALLED);
-    try {
-      ClusterVersionDAOMock.failOnCurrentVersionState = true;
-      c1.transitionClusterVersion(stackId, "0.2",
-          RepositoryVersionState.CURRENT);
-      Assert.fail();
-    } catch (AmbariException e) {
-
-    } finally {
-      ClusterVersionDAOMock.failOnCurrentVersionState = false;
-    }
-
-    // There must be CURRENT state for cluster
-    assertNotNull(c1.getCurrentClusterVersion());
   }
 
   /**
    * Tests that hosts can be correctly transitioned into the "INSTALLING" state.
    * This method also tests that hosts in MM will not be transitioned, as per
    * the contract of
-   * {@link Cluster#transitionHostsToInstalling(ClusterVersionEntity)}.
+   * {@link Cluster#transitionHostsToInstalling(RepositoryVersionEntity, org.apache.ambari.server.state.repository.VersionDefinitionXml, boolean)}.
    *
    * @throws Exception
    */
   @Test
-  public void testTransitionHostVersions() throws Exception {
-    createDefaultCluster();
-
-    StackId stackId = new StackId("HDP", "0.2");
-    helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
-
-    c1.createClusterVersion(stackId, "0.2", "admin",
-        RepositoryVersionState.INSTALLING);
-
-    ClusterVersionEntity entityHDP2 = null;
-    for (ClusterVersionEntity entity : c1.getAllClusterVersions()) {
-      StackEntity repoVersionStackEntity = entity.getRepositoryVersion().getStack();
-      StackId repoVersionStackId = new StackId(repoVersionStackEntity);
-
-      if (repoVersionStackId.getStackName().equals("HDP")
-          && repoVersionStackId.getStackVersion().equals("0.2")) {
-        entityHDP2 = entity;
-        break;
-      }
-    }
-
-    assertNotNull(entityHDP2);
+  public void testTransitionHostsToInstalling() throws Exception {
+    // this will create a cluster with a few hosts and no host components
+    StackId originalStackId = new StackId("HDP", "2.0.5");
+    createDefaultCluster(Sets.newHashSet("h1", "h2"), originalStackId);
 
     List<HostVersionEntity> hostVersionsH1Before = hostVersionDAO.findByClusterAndHost("c1", "h1");
     assertEquals(1, hostVersionsH1Before.size());
 
-    c1.transitionHosts(entityHDP2, RepositoryVersionState.INSTALLING);
+    StackId stackId = new StackId("HDP", "2.0.6");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
+
+
+    // this should move both to NOT_REQUIRED since they have no versionable
+    // components
+    c1.transitionHostsToInstalling(repositoryVersion, null, false);
 
     List<HostVersionEntity> hostVersionsH1After = hostVersionDAO.findByClusterAndHost("c1", "h1");
     assertEquals(2, hostVersionsH1After.size());
@@ -1727,8 +1544,8 @@ public class ClusterTest {
     for (HostVersionEntity entity : hostVersionsH1After) {
       StackEntity repoVersionStackEntity = entity.getRepositoryVersion().getStack();
       if (repoVersionStackEntity.getStackName().equals("HDP")
-          && repoVersionStackEntity.getStackVersion().equals("0.2")) {
-        assertEquals(RepositoryVersionState.INSTALLING, entity.getState());
+          && repoVersionStackEntity.getStackVersion().equals("2.0.6")) {
+        assertEquals(RepositoryVersionState.NOT_REQUIRED, entity.getState());
         checked = true;
         break;
       }
@@ -1736,8 +1553,26 @@ public class ClusterTest {
 
     assertTrue(checked);
 
-    // Test for update of existing host stack version
-    c1.transitionHosts(entityHDP2, RepositoryVersionState.INSTALLING);
+    // add some host components
+    Service hdfs = serviceFactory.createNew(c1, "HDFS", repositoryVersion);
+    c1.addService(hdfs);
+
+    // Add HDFS components
+    ServiceComponent datanode = serviceComponentFactory.createNew(hdfs, "NAMENODE");
+    ServiceComponent namenode = serviceComponentFactory.createNew(hdfs, "DATANODE");
+    hdfs.addServiceComponent(datanode);
+    hdfs.addServiceComponent(namenode);
+
+    // add to hosts
+    ServiceComponentHost namenodeHost1 = serviceComponentHostFactory.createNew(namenode, "h1");
+    ServiceComponentHost datanodeHost2 = serviceComponentHostFactory.createNew(datanode, "h2");
+
+    assertNotNull(namenodeHost1);
+    assertNotNull(datanodeHost2);
+
+    // with hosts now having components which report versions, we should have
+    // two in the INSTALLING state
+    c1.transitionHostsToInstalling(repositoryVersion, null, false);
 
     hostVersionsH1After = hostVersionDAO.findByClusterAndHost("c1", "h1");
     assertEquals(2, hostVersionsH1After.size());
@@ -1746,7 +1581,7 @@ public class ClusterTest {
     for (HostVersionEntity entity : hostVersionsH1After) {
       StackEntity repoVersionStackEntity = entity.getRepositoryVersion().getStack();
       if (repoVersionStackEntity.getStackName().equals("HDP")
-          && repoVersionStackEntity.getStackVersion().equals("0.2")) {
+          && repoVersionStackEntity.getStackVersion().equals("2.0.6")) {
         assertEquals(RepositoryVersionState.INSTALLING, entity.getState());
         checked = true;
         break;
@@ -1776,7 +1611,7 @@ public class ClusterTest {
     hostInMaintenanceMode.setMaintenanceState(c1.getClusterId(), MaintenanceState.ON);
 
     // transition host versions to INSTALLING
-    c1.transitionHosts(entityHDP2, RepositoryVersionState.INSTALLING);
+    c1.transitionHostsToInstalling(repositoryVersion, null, false);
 
     List<HostVersionEntity> hostInMaintModeVersions = hostVersionDAO.findByClusterAndHost("c1",
         hostInMaintenanceMode.getHostName());
@@ -1788,7 +1623,7 @@ public class ClusterTest {
     for (HostVersionEntity hostVersionEntity : hostInMaintModeVersions) {
       StackEntity repoVersionStackEntity = hostVersionEntity.getRepositoryVersion().getStack();
       if (repoVersionStackEntity.getStackName().equals("HDP")
-          && repoVersionStackEntity.getStackVersion().equals("0.2")) {
+          && repoVersionStackEntity.getStackVersion().equals("2.0.6")) {
         assertEquals(RepositoryVersionState.OUT_OF_SYNC, hostVersionEntity.getState());
       }
     }
@@ -1797,194 +1632,23 @@ public class ClusterTest {
     for (HostVersionEntity hostVersionEntity : otherHostVersions) {
       StackEntity repoVersionStackEntity = hostVersionEntity.getRepositoryVersion().getStack();
       if (repoVersionStackEntity.getStackName().equals("HDP")
-          && repoVersionStackEntity.getStackVersion().equals("0.2")) {
+          && repoVersionStackEntity.getStackVersion().equals("2.0.6")) {
       assertEquals(RepositoryVersionState.INSTALLING, hostVersionEntity.getState());
       }
     }
   }
 
-  @Test
-  public void testRecalculateClusterVersionState() throws Exception {
-    createDefaultCluster();
-
-    Host h1 = clusters.getHost("h1");
-    h1.setState(HostState.HEALTHY);
-
-    Host h2 = clusters.getHost("h2");
-    h2.setState(HostState.HEALTHY);
-
-    // Phase 1: Install bits during distribution
-    StackId stackId = new StackId("HDP-0.1");
-    final String stackVersion = "0.1-1000";
-    RepositoryVersionEntity repositoryVersionEntity = helper.getOrCreateRepositoryVersion(
-        stackId,
-        stackVersion);
-    // Because the cluster already has a Cluster Version, an additional stack must init with INSTALLING
-    c1.createClusterVersion(stackId, stackVersion, "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.setCurrentStackVersion(stackId);
-
-    HostVersionEntity hv1 = helper.createHostVersion("h1", repositoryVersionEntity, RepositoryVersionState.INSTALLING);
-    HostVersionEntity hv2 = helper.createHostVersion("h2", repositoryVersionEntity, RepositoryVersionState.INSTALLING);
-
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    //Should remain in its current state
-    checkStackVersionState(stackId, stackVersion,
-        RepositoryVersionState.INSTALLING);
-
-    h2.setState(HostState.UNHEALTHY);
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    // In order for the states to be accurately reflected, the host health status should not impact the status
-    // of the host_version.
-    checkStackVersionState(stackId, stackVersion,
-        RepositoryVersionState.INSTALLING);
-    // Retry by going back to INSTALLING
-    c1.transitionClusterVersion(stackId, stackVersion,
-        RepositoryVersionState.INSTALLING);
-
-    // Installation on one host fails (other is continuing)
-    hv1.setState(RepositoryVersionState.INSTALL_FAILED);
-    hostVersionDAO.merge(hv1);
-    // Check that cluster version is still in a non-final state
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    checkStackVersionState(stackId, stackVersion,
-      RepositoryVersionState.INSTALLING);
-
-    h2.setState(HostState.HEALTHY);
-    hv2.setState(RepositoryVersionState.INSTALLED);
-    hostVersionDAO.merge(hv2);
-    // Now both cluster versions are in a final state, so
-    // cluster version state changes to final state
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    checkStackVersionState(stackId, stackVersion,
-        RepositoryVersionState.INSTALL_FAILED);
-
-    // Retry by going back to INSTALLING
-    c1.transitionClusterVersion(stackId, stackVersion,
-      RepositoryVersionState.INSTALLING);
-
-    h2.setState(HostState.HEALTHY);
-    hv2.setState(RepositoryVersionState.INSTALLED);
-    hostVersionDAO.merge(hv2);
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    checkStackVersionState(stackId, stackVersion,
-      RepositoryVersionState.INSTALLING);
-
-    // Make the last host fail
-    hv1.setState(RepositoryVersionState.INSTALL_FAILED);
-    hostVersionDAO.merge(hv1);
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    checkStackVersionState(stackId, stackVersion,
-        RepositoryVersionState.INSTALL_FAILED);
-    // Retry by going back to INSTALLING
-    c1.transitionClusterVersion(stackId, stackVersion,
-        RepositoryVersionState.INSTALLING);
-
-    // Now, all hosts are in INSTALLED
-    hv1.setState(RepositoryVersionState.INSTALLED);
-    hostVersionDAO.merge(hv1);
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    checkStackVersionState(stackId, stackVersion,
-        RepositoryVersionState.INSTALLED);
-
-    // Set both hosts to CURRENT
-    hv1.setState(RepositoryVersionState.CURRENT);
-    hostVersionDAO.merge(hv1);
-    hv2.setState(RepositoryVersionState.CURRENT);
-    hostVersionDAO.merge(hv2);
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    checkStackVersionState(stackId, stackVersion,
-        RepositoryVersionState.CURRENT);
-  }
-
-  @Test
-  public void testRecalculateClusterVersionStateWithNotRequired() throws Exception {
-    createDefaultCluster();
-
-    Host h1 = clusters.getHost("h1");
-    h1.setState(HostState.HEALTHY);
-
-    Host h2 = clusters.getHost("h2");
-    h2.setState(HostState.HEALTHY);
-
-    // Phase 1: Install bits during distribution
-    StackId stackId = new StackId("HDP-0.1");
-    final String stackVersion = "0.1-1000";
-    RepositoryVersionEntity repositoryVersionEntity = helper.getOrCreateRepositoryVersion(
-        stackId,
-        stackVersion);
-    // Because the cluster already has a Cluster Version, an additional stack must init with INSTALLING
-    c1.createClusterVersion(stackId, stackVersion, "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.setCurrentStackVersion(stackId);
-
-    HostVersionEntity hv1 = helper.createHostVersion("h1", repositoryVersionEntity, RepositoryVersionState.INSTALLED);
-    HostVersionEntity hv2 = helper.createHostVersion("h2", repositoryVersionEntity, RepositoryVersionState.NOT_REQUIRED);
-
-    c1.recalculateClusterVersionState(repositoryVersionEntity);
-    //Should remain in its current state
-    checkStackVersionState(stackId, stackVersion,
-        RepositoryVersionState.INSTALLED);
-  }
-
-
-  @Test
-  public void testRecalculateAllClusterVersionStates() throws Exception {
-    createDefaultCluster();
-
-    Host h1 = clusters.getHost("h1");
-    h1.setState(HostState.HEALTHY);
-
-    Host h2 = clusters.getHost("h2");
-    h2.setState(HostState.HEALTHY);
-
-    StackId stackId = new StackId("HDP-0.1");
-    RepositoryVersionEntity repositoryVersionEntity = helper.getOrCreateRepositoryVersion(
-        stackId,
-        "0.1-1000");
-    c1.createClusterVersion(stackId, "0.1-1000", "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.setCurrentStackVersion(stackId);
-    c1.recalculateAllClusterVersionStates();
-    checkStackVersionState(stackId, "0.1-1000",
-        RepositoryVersionState.INSTALLING);
-    checkStackVersionState(stackId, "0.1-2086", RepositoryVersionState.CURRENT);
-
-    HostVersionEntity hv1 = helper.createHostVersion("h1", repositoryVersionEntity, RepositoryVersionState.INSTALLING);
-    HostVersionEntity hv2 = helper.createHostVersion("h2", repositoryVersionEntity, RepositoryVersionState.INSTALLING);
-
-    c1.recalculateAllClusterVersionStates();
-    checkStackVersionState(stackId, "0.1-1000",
-        RepositoryVersionState.INSTALLING);
-    checkStackVersionState(stackId, "1.0-2086", RepositoryVersionState.CURRENT);
-
-    hv1.setState(RepositoryVersionState.INSTALL_FAILED);
-    hostVersionDAO.merge(hv1);
-    c1.recalculateAllClusterVersionStates();
-    checkStackVersionState(stackId, "0.1-1000",
-        RepositoryVersionState.INSTALL_FAILED);
-    checkStackVersionState(stackId, "0.1-2086", RepositoryVersionState.CURRENT);
-    // Retry by going back to INSTALLING
-    c1.transitionClusterVersion(stackId, "0.1-1000",
-        RepositoryVersionState.INSTALLING);
-
-    hv1.setState(RepositoryVersionState.CURRENT);
-    hostVersionDAO.merge(hv1);
-    c1.recalculateAllClusterVersionStates();
-    checkStackVersionState(stackId, "0.1-1000",
-        RepositoryVersionState.OUT_OF_SYNC);
-    checkStackVersionState(stackId, "0.1-2086", RepositoryVersionState.CURRENT);
-  }
-
   /**
-   * Comprehensive test for transitionHostVersion and recalculateClusterVersion.
-   * It creates a cluster with 3 hosts and 3 services, one of which does not advertise a version.
-   * It then verifies that all 3 hosts have a version of CURRENT, and so does the cluster.
-   * It then adds one more host with a component, so its HostVersion will initialize in CURRENT.
-   * Next, it distributes a repo so that it is INSTALLED on the 4 hosts.
-   * It then adds one more host, whose HostVersion will be OUT_OF_SYNC for the new repo.
-   * After redistributing bits again, it simulates an RU.
-   * Finally, some of the hosts will end up with a HostVersion in UPGRADED, and others still in INSTALLED.
+   * Comprehensive test for host versions. It creates a cluster with 3 hosts and
+   * 3 services, one of which does not advertise a version. It then verifies
+   * that all 3 hosts have a version of CURRENT, and so does the cluster. It
+   * then adds one more host with a component, so its HostVersion will
+   * initialize in CURRENT. Next, it distributes a repo so that it is INSTALLED
+   * on the 4 hosts. It then adds one more host, whose HostVersion will be
+   * OUT_OF_SYNC for the new repo. After redistributing bits again, it simulates
+   * an RU. Finally, some of the hosts will end up with a HostVersion in
+   * UPGRADED, and others still in INSTALLED.
+   *
    * @throws Exception
    */
   @Test
@@ -1995,11 +1659,11 @@ public class ClusterTest {
 
     RepositoryVersionEntity rv1 = helper.getOrCreateRepositoryVersion(stackId, v1);
 
-    Map<String, String> hostAttributes = new HashMap<String, String>();
+    Map<String, String> hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "6.4");
 
-    Cluster cluster = createClusterForRU(clusterName, stackId, hostAttributes);
+    Cluster cluster = createClusterForRU(clusterName, rv1, hostAttributes);
 
     // Begin install by starting to advertise versions
     // Set the version for the HostComponentState objects
@@ -2024,20 +1688,11 @@ public class ClusterTest {
       ServiceComponentHost scHost = svcComp.getServiceComponentHost(hce.getHostName());
 
       scHost.recalculateHostVersionState();
-      cluster.recalculateClusterVersionState(rv1);
-
-      Collection<ClusterVersionEntity> clusterVersions = cluster.getAllClusterVersions();
 
       if (versionedComponentCount > 0) {
         // On the first component with a version, a RepoVersion should have been created
         RepositoryVersionEntity repositoryVersion = repositoryVersionDAO.findByStackAndVersion(stackId, v1);
         Assert.assertNotNull(repositoryVersion);
-        Assert.assertTrue(clusterVersions != null && clusterVersions.size() == 1);
-
-        // Last component to report a version should cause the ClusterVersion to go to CURRENT
-        if (i == hostComponentStates.size() - 1) {
-          Assert.assertEquals(clusterVersions.iterator().next().getState(), RepositoryVersionState.CURRENT);
-        }
       }
     }
 
@@ -2063,7 +1718,10 @@ public class ClusterTest {
     simulateStackVersionListener(stackId, v1, cluster, hostComponentStateDAO.findByHost("h-4"));
 
     Collection<HostVersionEntity> hostVersions = hostVersionDAO.findAll();
+
+    // h-4 doesn't have a host version record yet
     Assert.assertEquals(hostVersions.size(), clusters.getHosts().size());
+
     HostVersionEntity h4Version1 = hostVersionDAO.findByClusterStackVersionAndHost(clusterName, stackId, v1, "h-4");
     Assert.assertNotNull(h4Version1);
     Assert.assertEquals(h4Version1.getState(), RepositoryVersionState.CURRENT);
@@ -2076,25 +1734,26 @@ public class ClusterTest {
       HostVersionEntity hve = new HostVersionEntity(host, rv2, RepositoryVersionState.INSTALLED);
       hostVersionDAO.create(hve);
     }
-    cluster.createClusterVersion(stackId, v2, "admin",
-        RepositoryVersionState.INSTALLING);
-    cluster.transitionClusterVersion(stackId, v2,
-        RepositoryVersionState.INSTALLED);
 
-    ClusterVersionEntity cv2 = clusterVersionDAO.findByClusterAndStackAndVersion(clusterName, stackId, v2);
-    Assert.assertNotNull(cv2);
-    Assert.assertEquals(cv2.getState(), RepositoryVersionState.INSTALLED);
+    // Add one more Host, with only Ganglia on it. It should have a HostVersion in NOT_REQUIRED for v2,
+    // as Ganglia isn't versionable
+    Host host5 = addHost("h-5", hostAttributes);
+    clusters.mapAndPublishHostsToCluster(Collections.singleton("h-5"), clusterName);
 
-    // Add one more Host, with only Ganglia on it. It should have a HostVersion in OUT_OF_SYNC for v2
-    addHost("h-5", hostAttributes);
-    clusters.mapHostToCluster("h-5", clusterName);
+    // verify that the new host version was added for the existing repo
+    HostVersionEntity h5Version1 = hostVersionDAO.findHostVersionByHostAndRepository(host5.getHostEntity(), rv1);
+    HostVersionEntity h5Version2 = hostVersionDAO.findHostVersionByHostAndRepository(host5.getHostEntity(), rv2);
+
+    Assert.assertEquals(RepositoryVersionState.NOT_REQUIRED, h5Version1.getState());
+    Assert.assertEquals(RepositoryVersionState.NOT_REQUIRED, h5Version2.getState());
+
     ServiceComponentHost schHost5Serv3CompB = serviceComponentHostFactory.createNew(sc3CompB, "h-5");
     sc3CompB.addServiceComponentHost(schHost5Serv3CompB);
 
     // Host 5 will be in OUT_OF_SYNC, so redistribute bits to it so that it reaches a state of INSTALLED
-    HostVersionEntity h5Version2 = hostVersionDAO.findByClusterStackVersionAndHost(clusterName, stackId, v2, "h-5");
+    h5Version2 = hostVersionDAO.findByClusterStackVersionAndHost(clusterName, stackId, v2, "h-5");
     Assert.assertNotNull(h5Version2);
-    Assert.assertEquals(h5Version2.getState(), RepositoryVersionState.OUT_OF_SYNC);
+    Assert.assertEquals(RepositoryVersionState.NOT_REQUIRED, h5Version2.getState());
 
     h5Version2.setState(RepositoryVersionState.INSTALLED);
     hostVersionDAO.merge(h5Version2);
@@ -2124,15 +1783,11 @@ public class ClusterTest {
       ServiceComponentHost scHost = svcComp.getServiceComponentHost(hce.getHostName());
 
       scHost.recalculateHostVersionState();
-      cluster.recalculateClusterVersionState(rv2);
-
-      Collection<ClusterVersionEntity> clusterVersions = cluster.getAllClusterVersions();
 
       if (versionedComponentCount > 0) {
         // On the first component with a version, a RepoVersion should have been created
         RepositoryVersionEntity repositoryVersion = repositoryVersionDAO.findByStackAndVersion(stackId, v2);
         Assert.assertNotNull(repositoryVersion);
-        Assert.assertTrue(clusterVersions != null && clusterVersions.size() == 2);
       }
     }
 
@@ -2151,11 +1806,11 @@ public class ClusterTest {
 
     RepositoryVersionEntity rv1 = helper.getOrCreateRepositoryVersion(stackId, v1);
 
-    Map<String, String> hostAttributes = new HashMap<String, String>();
+    Map<String, String> hostAttributes = new HashMap<>();
     hostAttributes.put("os_family", "redhat");
     hostAttributes.put("os_release_version", "6.4");
 
-    Cluster cluster = createClusterForRU(clusterName, stackId, hostAttributes);
+    Cluster cluster = createClusterForRU(clusterName, rv1, hostAttributes);
 
     // Make one host unhealthy
     Host deadHost = cluster.getHosts().iterator().next();
@@ -2188,21 +1843,11 @@ public class ClusterTest {
       ServiceComponentHost scHost = svcComp.getServiceComponentHost(hce.getHostName());
 
       scHost.recalculateHostVersionState();
-      cluster.recalculateClusterVersionState(rv1);
-
-      Collection<ClusterVersionEntity> clusterVersions = cluster.getAllClusterVersions();
 
       if (versionedComponentCount > 0) {
         // On the first component with a version, a RepoVersion should have been created
         RepositoryVersionEntity repositoryVersion = repositoryVersionDAO.findByStackAndVersion(stackId, v1);
         Assert.assertNotNull(repositoryVersion);
-        Assert.assertTrue(clusterVersions != null && clusterVersions.size() == 1);
-
-        // Since host 2 is dead, and host 3 contains only components that dont report a version,
-        // cluster version transitions to CURRENT after first component on host 1 reports it's version
-        if (versionedComponentCount == 1 && i < (hostComponentStates.size() - 1)) {
-          Assert.assertEquals(clusterVersions.iterator().next().getState(), RepositoryVersionState.CURRENT);
-        }
       }
     }
   }
@@ -2215,7 +1860,6 @@ public class ClusterTest {
     clusters.addCluster(clusterName, stackId);
     Cluster c1 = clusters.getCluster(clusterName);
     Assert.assertEquals(clusterName, c1.getClusterName());
-    Assert.assertEquals(1, c1.getClusterId());
 
     clusters.addHost("h-1");
     clusters.addHost("h-2");
@@ -2226,139 +1870,54 @@ public class ClusterTest {
       h.setIPv4("ipv4");
       h.setIPv6("ipv6");
 
-      Map<String, String> hostAttributes = new HashMap<String, String>();
+      Map<String, String> hostAttributes = new HashMap<>();
       hostAttributes.put("os_family", "redhat");
       hostAttributes.put("os_release_version", "5.9");
       h.setHostAttributes(hostAttributes);
+
     }
 
     String v1 = "2.0.5-1";
     String v2 = "2.0.5-2";
     c1.setDesiredStackVersion(stackId);
-    RepositoryVersionEntity rve1 = helper.getOrCreateRepositoryVersion(stackId,
-        v1);
-    RepositoryVersionEntity rve2 = helper.getOrCreateRepositoryVersion(stackId,
-        v2);
+    helper.getOrCreateRepositoryVersion(stackId, v1);
+    helper.getOrCreateRepositoryVersion(stackId, v2);
 
     c1.setCurrentStackVersion(stackId);
-    c1.createClusterVersion(stackId, v1, "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.transitionClusterVersion(stackId, v1, RepositoryVersionState.CURRENT);
 
     clusters.mapHostToCluster("h-1", clusterName);
     clusters.mapHostToCluster("h-2", clusterName);
     clusters.mapHostToCluster("h-3", clusterName);
-    ClusterVersionDAOMock.failOnCurrentVersionState = false;
 
-    Service service = c1.addService("ZOOKEEPER");
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+
+    Service service = c1.addService("ZOOKEEPER", repositoryVersion);
     ServiceComponent sc = service.addServiceComponent("ZOOKEEPER_SERVER");
     sc.addServiceComponentHost("h-1");
     sc.addServiceComponentHost("h-2");
 
-    service = c1.addService("SQOOP");
+    service = c1.addService("SQOOP", repositoryVersion);
     sc = service.addServiceComponent("SQOOP");
     sc.addServiceComponentHost("h-3");
+
+    HostEntity hostEntity = hostDAO.findByName("h-3");
+    assertNotNull(hostEntity);
 
     List<HostVersionEntity> entities = hostVersionDAO.findByClusterAndHost(clusterName, "h-3");
     assertTrue("Expected no host versions", null == entities || 0 == entities.size());
 
-    c1.createClusterVersion(stackId, v2, "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.transitionClusterVersion(stackId, v2, RepositoryVersionState.INSTALLED);
-    c1.transitionClusterVersion(stackId, v2, RepositoryVersionState.CURRENT);
+    List<ServiceComponentHost> componentsOnHost3 = c1.getServiceComponentHosts("h-3");
+    componentsOnHost3.iterator().next().recalculateHostVersionState();
 
     entities = hostVersionDAO.findByClusterAndHost(clusterName, "h-3");
-
     assertEquals(1, entities.size());
   }
 
-  @Test
-  public void testTransitionHostVersionState_OutOfSync_BlankCurrent() throws Exception {
-    /**
-     * Checks case when there are 2 cluster stack versions present (CURRENT and OUT_OF_SYNC),
-     * and we add a new host to cluster. On a new host, both CURRENT and OUT_OF_SYNC host
-     * versions should be present
-     */
-    StackId stackId = new StackId("HDP-2.0.5");
-    String clusterName = "c1";
-    clusters.addCluster(clusterName, stackId);
-    final Cluster c1 = clusters.getCluster(clusterName);
-    Assert.assertEquals(clusterName, c1.getClusterName());
-    Assert.assertEquals(1, c1.getClusterId());
-
-    clusters.addHost("h-1");
-    clusters.addHost("h-2");
-    String h3 = "h-3";
-    clusters.addHost(h3);
-
-    for (String hostName : new String[] { "h-1", "h-2", h3}) {
-      Host h = clusters.getHost(hostName);
-      h.setIPv4("ipv4");
-      h.setIPv6("ipv6");
-
-      Map<String, String> hostAttributes = new HashMap<String, String>();
-      hostAttributes.put("os_family", "redhat");
-      hostAttributes.put("os_release_version", "5.9");
-      h.setHostAttributes(hostAttributes);
-    }
-
-    String v1 = "2.0.5-1";
-    String v2 = "2.0.5-2";
-    c1.setDesiredStackVersion(stackId);
-    RepositoryVersionEntity rve1 = helper.getOrCreateRepositoryVersion(stackId,
-        v1);
-    RepositoryVersionEntity rve2 = helper.getOrCreateRepositoryVersion(stackId,
-        v2);
-
-    c1.setCurrentStackVersion(stackId);
-    c1.createClusterVersion(stackId, v1, "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.transitionClusterVersion(stackId, v1, RepositoryVersionState.CURRENT);
-
-    clusters.mapHostToCluster("h-1", clusterName);
-    clusters.mapHostToCluster("h-2", clusterName);
-
-    ClusterVersionDAOMock.failOnCurrentVersionState = false;
-
-    Service service = c1.addService("ZOOKEEPER");
-    ServiceComponent sc = service.addServiceComponent("ZOOKEEPER_SERVER");
-    sc.addServiceComponentHost("h-1");
-    sc.addServiceComponentHost("h-2");
-
-    c1.createClusterVersion(stackId, v2, "admin",
-        RepositoryVersionState.INSTALLING);
-    c1.transitionClusterVersion(stackId, v2, RepositoryVersionState.INSTALLED);
-    c1.transitionClusterVersion(stackId, v2, RepositoryVersionState.OUT_OF_SYNC);
-
-    clusters.mapHostToCluster(h3, clusterName);
-
-    // This method is usually called when we receive heartbeat from new host
-    HostEntity hostEntity3 = mock(HostEntity.class);
-    when(hostEntity3.getHostName()).thenReturn(h3);
-
-    // HACK: to workaround issue with NullPointerException at
-    // org.eclipse.persistence.internal.sessions.MergeManager.registerObjectForMergeCloneIntoWorkingCopy(MergeManager.java:1037)
-    // during hostVersionDAO.merge()
-    HostVersionDAO hostVersionDAOMock = mock(HostVersionDAO.class);
-    Field field = ClusterImpl.class.getDeclaredField("hostVersionDAO");
-    field.setAccessible(true);
-    field.set(c1, hostVersionDAOMock);
-
-    ArgumentCaptor<HostVersionEntity> hostVersionCaptor = ArgumentCaptor.forClass(HostVersionEntity.class);
-
-    ClusterVersionDAOMock.mockedClusterVersions = new ArrayList<ClusterVersionEntity>() {{
-      addAll(c1.getAllClusterVersions());
-    }};
-
-    c1.transitionHostVersionState(hostEntity3, rve1, stackId);
-
-    // Revert fields of static instance
-    ClusterVersionDAOMock.mockedClusterVersions = null;
-
-    verify(hostVersionDAOMock).merge(hostVersionCaptor.capture());
-    assertEquals(hostVersionCaptor.getValue().getState(), RepositoryVersionState.CURRENT);
-  }
-
+  /**
+   * Checks case when there are 2 cluster stack versions present (CURRENT and OUT_OF_SYNC),
+   * and we add a new host to cluster. On a new host, both CURRENT and OUT_OF_SYNC host
+   * versions should be present
+   */
   /**
    * Tests that an existing configuration can be successfully updated without
    * creating a new version.
@@ -2373,25 +1932,20 @@ public class ClusterTest {
     ClusterEntity clusterEntity = clusterDAO.findByName("c1");
     assertEquals(0, clusterEntity.getClusterConfigEntities().size());
 
-    final Config originalConfig = configFactory.createNew(cluster, "foo-site",
+    final Config originalConfig = configFactory.createNew(cluster, "foo-site", "version3",
         new HashMap<String, String>() {
           {
             put("one", "two");
           }
-        }, new HashMap<String, Map<String, String>>());
+        }, new HashMap<>());
 
-    originalConfig.setTag("version3");
-    originalConfig.persist();
-    cluster.addConfig(originalConfig);
-
-    ConfigGroup configGroup = configGroupFactory.createNew(cluster, "g1", "t1", "",
+    ConfigGroup configGroup = configGroupFactory.createNew(cluster, "HDFS", "g1", "t1", "",
         new HashMap<String, Config>() {
           {
             put("foo-site", originalConfig);
           }
-        }, Collections.<Long, Host> emptyMap());
+        }, Collections.emptyMap());
 
-    configGroup.persist();
     cluster.addConfigGroup(configGroup);
 
     clusterEntity = clusterDAO.findByName("c1");
@@ -2403,8 +1957,7 @@ public class ClusterTest {
     Map<String, String> properties = config.getProperties();
     properties.put("three", "four");
     config.setProperties(properties);
-
-    config.persist(false);
+    config.save();
 
     clusterEntity = clusterDAO.findByName("c1");
     assertEquals(1, clusterEntity.getClusterConfigEntities().size());
@@ -2426,102 +1979,195 @@ public class ClusterTest {
   }
 
   /**
-   * Tests that {@link Cluster#applyLatestConfigurations(StackId)} sets the
+   * Tests that {@link Cluster#applyLatestConfigurations(StackId, String)} sets the
    * right configs to enabled.
    *
    * @throws Exception
    */
   @Test
   public void testApplyLatestConfigurations() throws Exception {
-    createDefaultCluster();
+    StackId stackId = new StackId("HDP-2.0.6");
+    StackId newStackId = new StackId("HDP-2.2.0");
+    createDefaultCluster(Sets.newHashSet("host-1"), stackId);
+
     Cluster cluster = clusters.getCluster("c1");
     ClusterEntity clusterEntity = clusterDAO.findByName("c1");
-    StackId stackId = cluster.getCurrentStackVersion();
-    StackId newStackId = new StackId("HDP-2.0.6");
+    RepositoryVersionEntity repoVersion220 = helper.getOrCreateRepositoryVersion(newStackId, "2.2.0-1234");
 
     StackEntity currentStack = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
     StackEntity newStack = stackDAO.find(newStackId.getStackName(), newStackId.getStackVersion());
 
-    Assert.assertFalse( stackId.equals(newStackId) );
+    Assert.assertFalse(stackId.equals(newStackId));
 
-    String configType = "foo-type";
+    // add a service
+    String serviceName = "ZOOKEEPER";
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+    Service service = cluster.addService(serviceName, repositoryVersion);
+    String configType = "zoo.cfg";
 
-    ClusterConfigEntity clusterConfig = new ClusterConfigEntity();
-    clusterConfig.setClusterEntity(clusterEntity);
-    clusterConfig.setConfigId(1L);
-    clusterConfig.setStack(currentStack);
-    clusterConfig.setTag("version-1");
-    clusterConfig.setData("{}");
-    clusterConfig.setType(configType);
-    clusterConfig.setTimestamp(1L);
-    clusterConfig.setVersion(1L);
+    ClusterConfigEntity clusterConfig1 = new ClusterConfigEntity();
+    clusterConfig1.setClusterEntity(clusterEntity);
+    clusterConfig1.setConfigId(1L);
+    clusterConfig1.setStack(currentStack);
+    clusterConfig1.setTag("version-1");
+    clusterConfig1.setData("{}");
+    clusterConfig1.setType(configType);
+    clusterConfig1.setTimestamp(1L);
+    clusterConfig1.setVersion(1L);
+    clusterConfig1.setSelected(true);
 
-    clusterDAO.createConfig(clusterConfig);
-    clusterEntity.getClusterConfigEntities().add(clusterConfig);
+    clusterDAO.createConfig(clusterConfig1);
+    clusterEntity.getClusterConfigEntities().add(clusterConfig1);
     clusterEntity = clusterDAO.merge(clusterEntity);
+    Config config = configFactory.createExisting(cluster, clusterConfig1);
+    cluster.addConfig(config);
 
-    ClusterConfigEntity newClusterConfig = new ClusterConfigEntity();
-    newClusterConfig.setClusterEntity(clusterEntity);
-    newClusterConfig.setConfigId(2L);
-    newClusterConfig.setStack(newStack);
-    newClusterConfig.setTag("version-2");
-    newClusterConfig.setData("{}");
-    newClusterConfig.setType(configType);
-    newClusterConfig.setTimestamp(2L);
-    newClusterConfig.setVersion(2L);
+    cluster.createServiceConfigVersion(serviceName, "", "version-1", null);
 
-    clusterDAO.createConfig(newClusterConfig);
-    clusterEntity.getClusterConfigEntities().add(newClusterConfig);
+    ClusterConfigEntity clusterConfig2 = new ClusterConfigEntity();
+    clusterConfig2.setClusterEntity(clusterEntity);
+    clusterConfig2.setConfigId(2L);
+    clusterConfig2.setStack(newStack);
+    clusterConfig2.setTag("version-2");
+    clusterConfig2.setData("{}");
+    clusterConfig2.setType(configType);
+    clusterConfig2.setTimestamp(2L);
+    clusterConfig2.setVersion(2L);
+    clusterConfig2.setSelected(false);
+
+    clusterDAO.createConfig(clusterConfig2);
+    clusterEntity.getClusterConfigEntities().add(clusterConfig2);
     clusterEntity = clusterDAO.merge(clusterEntity);
+    config = configFactory.createExisting(cluster, clusterConfig1);
+    cluster.addConfig(config);
 
-    // config mapping set to 1
-    ClusterConfigMappingEntity configMapping = new ClusterConfigMappingEntity();
-    configMapping.setClusterEntity(clusterEntity);
-    configMapping.setCreateTimestamp(1L);
-    configMapping.setSelected(1);
-    configMapping.setTag("version-1");
-    configMapping.setType(configType);
-    configMapping.setUser("admin");
+    // before creating the new service config version, we need to push the
+    // service's desired repository forward
+    service.setDesiredRepositoryVersion(repoVersion220);
+    cluster.createServiceConfigVersion(serviceName, "", "version-2", null);
 
-    // new config mapping set to 0
-    ClusterConfigMappingEntity newConfigMapping = new ClusterConfigMappingEntity();
-    newConfigMapping.setClusterEntity(clusterEntity);
-    newConfigMapping.setCreateTimestamp(2L);
-    newConfigMapping.setSelected(0);
-    newConfigMapping.setTag("version-2");
-    newConfigMapping.setType(configType);
-    newConfigMapping.setUser("admin");
-
-    clusterDAO.persistConfigMapping(configMapping);
-    clusterDAO.persistConfigMapping(newConfigMapping);
-    clusterEntity.getConfigMappingEntities().add(configMapping);
-    clusterEntity.getConfigMappingEntities().add(newConfigMapping);
-    clusterEntity = clusterDAO.merge(clusterEntity);
-
-    // check that the original mapping is enabled
-    Collection<ClusterConfigMappingEntity> clusterConfigMappings = clusterEntity.getConfigMappingEntities();
-    Assert.assertEquals(2, clusterConfigMappings.size());
-    for (ClusterConfigMappingEntity clusterConfigMapping : clusterConfigMappings) {
-      if (clusterConfigMapping.getTag().equals("version-1")) {
-        Assert.assertEquals(1, clusterConfigMapping.isSelected());
+    // check that the original config is enabled
+    Collection<ClusterConfigEntity> clusterConfigs = clusterEntity.getClusterConfigEntities();
+    Assert.assertEquals(2, clusterConfigs.size());
+    for (ClusterConfigEntity clusterConfig : clusterConfigs) {
+      if (clusterConfig.getTag().equals("version-1")) {
+        Assert.assertTrue(clusterConfig.isSelected());
       } else {
-        Assert.assertEquals(0, clusterConfigMapping.isSelected());
+        Assert.assertFalse(clusterConfig.isSelected());
       }
     }
 
-    cluster.applyLatestConfigurations(newStackId);
+    cluster.applyLatestConfigurations(newStackId, serviceName);
     clusterEntity = clusterDAO.findByName("c1");
 
-    // now check that the new config mapping is enabled
-    clusterConfigMappings = clusterEntity.getConfigMappingEntities();
-    Assert.assertEquals(2, clusterConfigMappings.size());
-    for (ClusterConfigMappingEntity clusterConfigMapping : clusterConfigMappings) {
-      if (clusterConfigMapping.getTag().equals("version-1")) {
-        Assert.assertEquals(0, clusterConfigMapping.isSelected());
+    // now check that the new config is enabled
+    clusterConfigs = clusterEntity.getClusterConfigEntities();
+    Assert.assertEquals(2, clusterConfigs.size());
+    for (ClusterConfigEntity clusterConfig : clusterConfigs) {
+      if (clusterConfig.getTag().equals("version-1")) {
+        Assert.assertFalse(clusterConfig.isSelected());
       } else {
-        Assert.assertEquals(1, clusterConfigMapping.isSelected());
+        Assert.assertTrue(clusterConfig.isSelected());
       }
     }
+  }
+
+  /**
+   * Tests that {@link Cluster#applyLatestConfigurations(StackId, String)} sets the
+   * right configs to enabled when setting them to a prior stack which has
+   * several configs.
+   *
+   * @throws Exception
+   */
+  @Test
+  public void testApplyLatestConfigurationsToPreviousStack() throws Exception {
+    StackId stackId = new StackId("HDP-2.0.6");
+    StackId newStackId = new StackId("HDP-2.2.0");
+    createDefaultCluster(Sets.newHashSet("host-1"), stackId);
+
+    Cluster cluster = clusters.getCluster("c1");
+    ClusterEntity clusterEntity = clusterDAO.findByName("c1");
+    RepositoryVersionEntity repoVersion220 = helper.getOrCreateRepositoryVersion(newStackId, "2.2.0-1234");
+
+    StackEntity currentStack = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
+    StackEntity newStack = stackDAO.find(newStackId.getStackName(), newStackId.getStackVersion());
+
+    Assert.assertFalse(stackId.equals(newStackId));
+
+    // add a service
+    String serviceName = "ZOOKEEPER";
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+    Service service = cluster.addService(serviceName, repositoryVersion);
+    String configType = "zoo.cfg";
+
+    // create 5 configurations in the current stack
+    for (int i = 1; i <= 5; i++) {
+      ClusterConfigEntity clusterConfig = new ClusterConfigEntity();
+      clusterConfig.setClusterEntity(clusterEntity);
+      clusterConfig.setConfigId(Long.valueOf(i));
+      clusterConfig.setStack(currentStack);
+      clusterConfig.setTag("version-" + i);
+      clusterConfig.setData("{}");
+      clusterConfig.setType(configType);
+      clusterConfig.setTimestamp(System.currentTimeMillis());
+      clusterConfig.setVersion(Long.valueOf(i));
+
+      // set to true, then back to false to get a value populated in the
+      // selected timestamp
+      clusterConfig.setSelected(true);
+      clusterConfig.setSelected(false);
+
+      clusterDAO.createConfig(clusterConfig);
+      clusterEntity.getClusterConfigEntities().add(clusterConfig);
+
+      // ensure there is at least some pause between to ensure that the
+      // timestamps are different
+      Thread.sleep(5);
+    }
+
+    // save them all
+    clusterEntity = clusterDAO.merge(clusterEntity);
+
+    // create a service configuration for them
+    cluster.createServiceConfigVersion(serviceName, "", "version-1", null);
+
+    // create a new configuration in the new stack and enable it
+    ClusterConfigEntity clusterConfigNewStack = new ClusterConfigEntity();
+    clusterConfigNewStack.setClusterEntity(clusterEntity);
+    clusterConfigNewStack.setConfigId(6L);
+    clusterConfigNewStack.setStack(newStack);
+    clusterConfigNewStack.setTag("version-6");
+    clusterConfigNewStack.setData("{}");
+    clusterConfigNewStack.setType(configType);
+    clusterConfigNewStack.setTimestamp(System.currentTimeMillis());
+    clusterConfigNewStack.setVersion(6L);
+    clusterConfigNewStack.setSelected(true);
+
+    clusterDAO.createConfig(clusterConfigNewStack);
+    clusterEntity.getClusterConfigEntities().add(clusterConfigNewStack);
+    clusterEntity = clusterDAO.merge(clusterEntity);
+    Config config = configFactory.createExisting(cluster, clusterConfigNewStack);
+    cluster.addConfig(config);
+
+    // before creating the new service config version, we need to push the
+    // service's desired repository forward
+    service.setDesiredRepositoryVersion(repoVersion220);
+    cluster.createServiceConfigVersion(serviceName, "", "version-2", null);
+
+    // check that only the newest configuration is enabled
+    ClusterConfigEntity clusterConfig = clusterDAO.findEnabledConfigByType(
+        clusterEntity.getClusterId(), configType);
+    Assert.assertTrue(clusterConfig.isSelected());
+    Assert.assertEquals(clusterConfigNewStack.getTag(), clusterConfig.getTag());
+
+    // move back to the original stack
+    cluster.applyLatestConfigurations(stackId, serviceName);
+    clusterEntity = clusterDAO.findByName("c1");
+
+    // now check that latest config from the original stack is enabled
+    clusterConfig = clusterDAO.findEnabledConfigByType(clusterEntity.getClusterId(), configType);
+    Assert.assertTrue(clusterConfig.isSelected());
+    Assert.assertEquals("version-5", clusterConfig.getTag());
   }
 
   /**
@@ -2530,76 +2176,76 @@ public class ClusterTest {
    */
   @Test
   public void testDesiredConfigurationsAfterApplyingLatestForStack() throws Exception {
-    createDefaultCluster();
-    Cluster cluster = clusters.getCluster("c1");
-    StackId stackId = cluster.getCurrentStackVersion();
+    StackId stackId = new StackId("HDP-2.0.6");
     StackId newStackId = new StackId("HDP-2.2.0");
+    createDefaultCluster(Sets.newHashSet("host-1"), stackId);
+
+    Cluster cluster = clusters.getCluster("c1");
+    cluster.setCurrentStackVersion(stackId);
+    cluster.setDesiredStackVersion(stackId);
+
+    RepositoryVersionEntity repoVersion220 = helper.getOrCreateRepositoryVersion(newStackId, "2.2.0-1234");
 
     ConfigHelper configHelper = injector.getInstance(ConfigHelper.class);
 
     // make sure the stacks are different
     Assert.assertFalse(stackId.equals(newStackId));
 
-    Map<String, String> properties = new HashMap<String, String>();
-    Map<String, Map<String, String>> propertiesAttributes = new HashMap<String, Map<String, String>>();
+    // add a service
+    String serviceName = "ZOOKEEPER";
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+    Service service = cluster.addService(serviceName, repositoryVersion);
+    String configType = "zoo.cfg";
 
-    // foo-type for v1 on current stack
+    Map<String, String> properties = new HashMap<>();
+    Map<String, Map<String, String>> propertiesAttributes = new HashMap<>();
+
+    // config for v1 on current stack
     properties.put("foo-property-1", "foo-value-1");
-    Config c1 = new ConfigImpl(cluster, "foo-type", properties, propertiesAttributes, injector);
-    c1.setTag("version-1");
-    c1.setStackId(stackId);
-    c1.setVersion(1L);
-
-    cluster.addConfig(c1);
-    c1.persist();
+    Config c1 = configFactory.createNew(stackId, cluster, configType, "version-1", properties, propertiesAttributes);
 
     // make v1 "current"
     cluster.addDesiredConfig("admin", Sets.newHashSet(c1), "note-1");
 
-    // bump the stack
+    // bump the repo version and the desired stack
+    service.setDesiredRepositoryVersion(repoVersion220);
     cluster.setDesiredStackVersion(newStackId);
 
     // save v2
-    // foo-type for v2 on new stack
+    // config for v2 on new stack
     properties.put("foo-property-2", "foo-value-2");
-    Config c2 = new ConfigImpl(cluster, "foo-type", properties, propertiesAttributes, injector);
-    c2.setTag("version-2");
-    c2.setStackId(newStackId);
-    c2.setVersion(2L);
-    cluster.addConfig(c2);
-    c2.persist();
+    Config c2 = configFactory.createNew(newStackId, cluster, configType, "version-2", properties, propertiesAttributes);
 
     // make v2 "current"
     cluster.addDesiredConfig("admin", Sets.newHashSet(c2), "note-2");
 
     // check desired config
     Map<String, DesiredConfig> desiredConfigs = cluster.getDesiredConfigs();
-    DesiredConfig desiredConfig = desiredConfigs.get("foo-type");
-    desiredConfig = desiredConfigs.get("foo-type");
+    DesiredConfig desiredConfig = desiredConfigs.get(configType);
     assertNotNull(desiredConfig);
     assertEquals(Long.valueOf(2), desiredConfig.getVersion());
     assertEquals("version-2", desiredConfig.getTag());
 
     String hostName = cluster.getHosts().iterator().next().getHostName();
 
-    // {foo-type={tag=version-2}}
+    // {config-type={tag=version-2}}
     Map<String, Map<String, String>> effectiveDesiredTags = configHelper.getEffectiveDesiredTags(
         cluster, hostName);
 
-    assertEquals("version-2", effectiveDesiredTags.get("foo-type").get("tag"));
+    assertEquals("version-2", effectiveDesiredTags.get(configType).get("tag"));
 
-    // move the stack back to the old stack
-    cluster.setDesiredStackVersion(stackId);
+    // move the service back to the old repo version / stack
+    service.setDesiredRepositoryVersion(repositoryVersion);
 
     // apply the configs for the old stack
-    cluster.applyLatestConfigurations(stackId);
+    cluster.applyLatestConfigurations(stackId, serviceName);
 
-    // {foo-type={tag=version-1}}
+    // {config-type={tag=version-1}}
     effectiveDesiredTags = configHelper.getEffectiveDesiredTags(cluster, hostName);
-    assertEquals("version-1", effectiveDesiredTags.get("foo-type").get("tag"));
+    assertEquals("version-1", effectiveDesiredTags.get(configType).get("tag"));
 
     desiredConfigs = cluster.getDesiredConfigs();
-    desiredConfig = desiredConfigs.get("foo-type");
+    desiredConfig = desiredConfigs.get(configType);
     assertNotNull(desiredConfig);
     assertEquals(Long.valueOf(1), desiredConfig.getVersion());
     assertEquals("version-1", desiredConfig.getTag());
@@ -2612,18 +2258,24 @@ public class ClusterTest {
    */
   @Test
   public void testRemoveConfigurations() throws Exception {
-    createDefaultCluster();
+    StackId stackId = new StackId("HDP-2.0.6");
+    StackId newStackId = new StackId("HDP-2.2.0");
+    createDefaultCluster(Sets.newHashSet("host-1"), stackId);
+
     Cluster cluster = clusters.getCluster("c1");
     ClusterEntity clusterEntity = clusterDAO.findByName("c1");
-    StackId stackId = cluster.getCurrentStackVersion();
-    StackId newStackId = new StackId("HDP-2.0.6");
+    RepositoryVersionEntity repoVersion220 = helper.getOrCreateRepositoryVersion(newStackId, "2.2.0-1234");
 
     StackEntity currentStack = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
     StackEntity newStack = stackDAO.find(newStackId.getStackName(), newStackId.getStackVersion());
 
     Assert.assertFalse(stackId.equals(newStackId));
 
-    String configType = "foo-type";
+    // add a service
+    String serviceName = "ZOOKEEPER";
+    RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(c1);
+    Service service = cluster.addService(serviceName, repositoryVersion);
+    String configType = "zoo.cfg";
 
     ClusterConfigEntity clusterConfig = new ClusterConfigEntity();
     clusterConfig.setClusterEntity(clusterEntity);
@@ -2634,10 +2286,20 @@ public class ClusterTest {
     clusterConfig.setType(configType);
     clusterConfig.setTimestamp(1L);
     clusterConfig.setVersion(1L);
+    clusterConfig.setSelected(true);
 
     clusterDAO.createConfig(clusterConfig);
     clusterEntity.getClusterConfigEntities().add(clusterConfig);
     clusterEntity = clusterDAO.merge(clusterEntity);
+    Config config = configFactory.createExisting(cluster, clusterConfig);
+    cluster.addConfig(config);
+
+    // create the service version association
+    cluster.createServiceConfigVersion(serviceName, "", "version-1", null);
+
+    // now un-select it and create a new config
+    clusterConfig.setSelected(false);
+    clusterConfig = clusterDAO.merge(clusterConfig);
 
     ClusterConfigEntity newClusterConfig = new ClusterConfigEntity();
     newClusterConfig.setClusterEntity(clusterEntity);
@@ -2648,34 +2310,20 @@ public class ClusterTest {
     newClusterConfig.setType(configType);
     newClusterConfig.setTimestamp(2L);
     newClusterConfig.setVersion(2L);
+    newClusterConfig.setSelected(true);
 
     clusterDAO.createConfig(newClusterConfig);
     clusterEntity.getClusterConfigEntities().add(newClusterConfig);
     clusterEntity = clusterDAO.merge(clusterEntity);
+    config = configFactory.createExisting(cluster, newClusterConfig);
+    cluster.addConfig(config);
 
-    // config mapping set to 1
-    ClusterConfigMappingEntity configMapping = new ClusterConfigMappingEntity();
-    configMapping.setClusterEntity(clusterEntity);
-    configMapping.setCreateTimestamp(1L);
-    configMapping.setSelected(1);
-    configMapping.setTag("version-1");
-    configMapping.setType(configType);
-    configMapping.setUser("admin");
+    // before creating the new service config version, we need to push the
+    // service's desired repository forward
+    service.setDesiredRepositoryVersion(repoVersion220);
+    cluster.createServiceConfigVersion(serviceName, "", "version-2", null);
 
-    // new config mapping set to 0
-    ClusterConfigMappingEntity newConfigMapping = new ClusterConfigMappingEntity();
-    newConfigMapping.setClusterEntity(clusterEntity);
-    newConfigMapping.setCreateTimestamp(2L);
-    newConfigMapping.setSelected(0);
-    newConfigMapping.setTag("version-2");
-    newConfigMapping.setType(configType);
-    newConfigMapping.setUser("admin");
-
-    clusterDAO.persistConfigMapping(configMapping);
-    clusterDAO.persistConfigMapping(newConfigMapping);
-    clusterEntity.getConfigMappingEntities().add(configMapping);
-    clusterEntity.getConfigMappingEntities().add(newConfigMapping);
-    clusterEntity = clusterDAO.merge(clusterEntity);
+    cluster.applyLatestConfigurations(newStackId, serviceName);
 
     // get back the cluster configs for the new stack
     List<ClusterConfigEntity> clusterConfigs = clusterDAO.getAllConfigurations(
@@ -2684,7 +2332,7 @@ public class ClusterTest {
     Assert.assertEquals(1, clusterConfigs.size());
 
     // remove the configs
-    cluster.removeConfigurations(newStackId);
+    cluster.removeConfigurations(newStackId, serviceName);
 
     clusterConfigs = clusterDAO.getAllConfigurations(cluster.getClusterId(), newStackId);
     Assert.assertEquals(0, clusterConfigs.size());
@@ -2718,28 +2366,5 @@ public class ClusterTest {
     publisher.publish(event);
 
     assertFalse(((ClusterImpl) cluster).isClusterPropertyCached("foo"));
-  }
-
-  /**
-   * Tests that the {@link ClusterVersionEntity} can be created initially with a
-   * state of {@link RepositoryVersionState#INSTALLED}. This state is needed for
-   * {@link UpgradeType#HOST_ORDERED}.
-   *
-   * @throws Exception
-   */
-  @Test
-  public void testClusterVersionCreationWithInstalledState() throws Exception {
-    StackId stackId = new StackId("HDP", "0.1");
-    StackEntity stackEntity = stackDAO.find(stackId.getStackName(), stackId.getStackVersion());
-    org.junit.Assert.assertNotNull(stackEntity);
-
-    String clusterName = "c1";
-    clusters.addCluster(clusterName, stackId);
-    c1 = clusters.getCluster(clusterName);
-
-    helper.getOrCreateRepositoryVersion(stackId, stackId.getStackVersion());
-
-    c1.createClusterVersion(stackId, stackId.getStackVersion(), "admin",
-        RepositoryVersionState.INSTALLED);
   }
 }

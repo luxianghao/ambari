@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,15 +26,17 @@ public class StackServiceRequest extends StackVersionRequest {
   private String credentialStoreEnabled;
 
   public StackServiceRequest(String stackName, String stackVersion,
-      String serviceName) {
+                             String serviceName) {
     this(stackName, stackVersion, serviceName, null, null);
   }
 
   public StackServiceRequest(String stackName, String stackVersion,
-      String serviceName, String credentialStoreSupported, String credentialStoreEnabled) {
+                             String serviceName, String credentialStoreSupported, String credentialStoreEnabled) {
     super(stackName, stackVersion);
 
     this.setServiceName(serviceName);
+    this.setCredentialStoreSupported(credentialStoreSupported);
+    this.setCredentialStoreEnabled(credentialStoreEnabled);
   }
 
   public String getServiceName() {

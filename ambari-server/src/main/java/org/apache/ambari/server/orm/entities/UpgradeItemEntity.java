@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -27,6 +27,8 @@ import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.JoinColumn;
 import javax.persistence.ManyToOne;
+import javax.persistence.NamedQueries;
+import javax.persistence.NamedQuery;
 import javax.persistence.Table;
 import javax.persistence.TableGenerator;
 
@@ -48,6 +50,9 @@ import org.apache.ambari.server.state.UpgradeState;
     pkColumnValue = "upgrade_item_id_seq",
     initialValue = 0,
     allocationSize = 1000)
+@NamedQueries({
+  @NamedQuery(name = "UpgradeItemEntity.findAllStageIds", query = "SELECT upgradeItem.stageId FROM UpgradeItemEntity upgradeItem")
+})
 public class UpgradeItemEntity {
 
   @Id
@@ -71,7 +76,7 @@ public class UpgradeItemEntity {
   private String tasks = null;
 
   @Basic
-  @Column(name = "item_text", length = 1024)
+  @Column(name = "item_text")
   private String itemText = null;
 
   @Basic

@@ -43,14 +43,16 @@ App.AssignMasterComponentsView = Em.View.extend({
    */
   shouldUseInputs: Em.computed.gt('controller.hosts.length', 25),
 
+  isWizardStep: true,
+
   isBackButtonVisible: true,
-
-  isCancelButtonVisible: false,
-
-  acceptButtonText: Em.I18n.t('common.next') + '&rarr;',
 
   didInsertElement: function () {
     this.get('controller').loadStep();
+  },
+
+  willDestroyElement: function () {
+    this.get('controller').clearStepOnExit();
   }
 });
 
@@ -127,10 +129,9 @@ App.InputHostView = Em.TextField.extend(App.SelectHost, {
 
 });
 
-App.SelectHostView = Em.Select.extend(App.SelectHost, {
+App.SelectHostView = App.DropdownView.extend(App.SelectHost, {
 
-  classNames: ['form-control'],
-  attributeBindings: ['disabled'],
+  qaAttr: 'select-host-for-component',
 
   didInsertElement: function () {
     this.initContent();
@@ -173,11 +174,13 @@ App.AddControlView = Em.View.extend({
    */
   componentName: null,
 
-  tagName: "span",
+  tagName: "div",
 
   classNames: ["label", 'extra-component'],
 
   classNameBindings: ['uniqueId'],
+
+  'data-qa': 'add-master',
 
   template: Em.Handlebars.compile('+'),
 
@@ -212,7 +215,9 @@ App.RemoveControlView = Em.View.extend({
    */
   componentName: null,
 
-  tagName: "span",
+  tagName: "div",
+
+  'data-qa': 'remove-master',
 
   classNames: ["label", 'extra-component'],
 

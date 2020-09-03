@@ -19,7 +19,7 @@ import Ember from 'ember';
 import CytoscapeStyles from '../domain/cytoscape-style';
 var CytoscapeRenderer= Ember.Object.extend({
   currentCyNode: null,
-  staticNodes: ['start', 'end', 'join', 'placeholder'],
+  staticNodes: ['start', 'end', 'placeholder'],
   dataNodes: [],
   cyOverflow: {},
   cy: null,
@@ -30,12 +30,13 @@ var CytoscapeRenderer= Ember.Object.extend({
       container: this.get("context").$('#'+this.id),
       elements: [],
       style: CytoscapeStyles.style,
-      layout: this.get("layoutConfigs")
+      layout: this.get("layoutConfigs"),
+      pixelRatio : 1
     });
 
     // the default values of each option are outlined below:
     var defaults = {
-      zoomFactor: 2.0, // zoom factor per zoom tick
+      zoomFactor: 0.01, // zoom factor per zoom tick
       minZoom: 0.1, // min zoom level
       maxZoom: 10, // max zoom level
 
@@ -47,8 +48,6 @@ var CytoscapeRenderer= Ember.Object.extend({
     };
 
     this.cy.panzoom( defaults );
-    //this.cy.center();
-    this.cy.pan({x:200,y:50});
     this._addEvents(this.cy);
     var self = this;
     this.get("context").$('.overlay-transition-content').popover({
@@ -68,56 +67,92 @@ var CytoscapeRenderer= Ember.Object.extend({
   _setCyOverflow() {
     Ember.set(this.get("cyOverflow"), "overflown", this.cy.elements().renderedBoundingBox().y2 > this.cy.height());
   },
+  setGraphCenter() {
+    if (this.cy && !this.centered){
+      Ember.run.later(this, function() {
+        this._setGraphCenterOnStartNode();
+      },50);
+    }
+  },
+  _setGraphCenterOnStartNode() {
+    var startDataNode = this.get("dataNodes").filterBy("data.type", "start");
+    if (startDataNode[0] && startDataNode[0].data.id) {
+      var startNode = this.cy.$("#" + startDataNode[0].data.id);
+      this.cy.center(startNode);
+      this.cy.pan({y:50});
+    }
+  },
   _getShape(nodeType) {
     switch(nodeType) {
       case 'start' :
       case 'end' :
       case 'kill' :
       case 'placeholder' :
-        return 'ellipse';
+      return 'ellipse';
       case 'action' :
-        return 'roundrectangle';
+      return 'roundrectangle';
       case 'fork' :
       case 'join' :
-        return 'rectangle';
+      return 'roundrectangle';
       case 'decision' :
-        return 'diamond';
+      return 'diamond';
       default :
-        return 'star';
+      return 'star';
     }
   },
 
   _getCyDataNodes(workflow){
     this.get('dataNodes').clear();
     var self=this;
+    var errorNodeCounter=1;
     workflow.nodeVisitor.process(workflow.startNode, function(node) {
       if (node.type === 'kill') {
         return;
       }
+
       self.get('dataNodes').pushObject({
         data: {
-          id: node.id, name: node.name, type: node.type,
+          id: node.id, name: node.name,
           shape: self._getShape(node.type),
+          type : node.type,
           node: node
         },
         dataNodeName: Ember.computed.alias('data.node.name')
       });
       if (node.transitions.length > 0) {
+        var counter=0;
         node.transitions.forEach(function(transition){
-          if (transition.isOnError()){
+          if ((transition.isOnError() && transition.getTargetNode().isKillNode())){
             return;
+          }
+          counter++;
+          var targetNodeId=transition.targetNode.id;
+          if (transition.targetNode.isKillNode()){
+            errorNodeCounter++;
+            var errorNode=transition.targetNode;
+            targetNodeId=errorNode.id+errorNodeCounter;
+            self.get('dataNodes').pushObject({
+              data: {
+                id: targetNodeId, name: errorNode.name,
+                shape: self._getShape(errorNode.type),
+                type : errorNode.type,
+                node: errorNode
+              },
+              dataNodeName: Ember.computed.alias('errorNode.node.name')
+            });
           }
           self.get('dataNodes').pushObject(
             {
               data: {
-                id: transition.sourceNodeId + '_to_' + transition.targetNode.id,
+                id: transition.sourceNodeId + '_to_' + targetNodeId+"_"+counter,
                 source:transition.sourceNodeId,
-                target: transition.targetNode.id,
+                target: targetNodeId,
                 transition: transition,
                 transitionCount: node.getOkTransitionCount()
               }
             }
           );
+
         });
       }
     });
@@ -190,15 +225,16 @@ var CytoscapeRenderer= Ember.Object.extend({
       var node = event.cyTarget;
       var nodeObj = cy.$('#' + node.id());
       this._showNodeEditor(node, nodeObj);
-      if (!(node.data().type === 'start' || node.data().type === 'end' || node.data().type === 'placeholder')) {
+      if (!(node.data().type === 'start' || node.data().type === 'end' || node.data().type === 'placeholder' ||  node.data().type === 'kill')) {
         this.get("context").$(".overlay-node-actions, .overlay-trash-icon").show();
       }
       if (node.data().type === 'action' || node.data().type === 'decision') {
         this.get("context").$(".overlay-settings-icon").show();
       }
       if (node.data().type === 'action') {
-        this.get("context").$(".overlay-copy-icon").show();
-        this.get("context").$(".overlay-cut-icon").show();
+        this.get("context").$(".overlay-copy-icon, .overlay-cut-icon").show();
+        this.get("context").$(".overlay-hdfs-asset-import-icon, .overlay-hdfs-asset-export-icon").show();
+        this.get("context").$(".overlay-asset-import-icon, .overlay-asset-export-icon").show();
         if(this.get('context').get('clipboard')){
           this.get("context").$(".overlay-paste-icon").show();
         }
@@ -223,10 +259,17 @@ var CytoscapeRenderer= Ember.Object.extend({
         left: event.originalEvent.offsetX + 15
       });
       if (event.cyTarget.data().transitionCount>1){
-            this.get("context").$(".overlay-trash-transition-icon").show();
+        this.get("context").$(".overlay-trash-transition-icon").show();
       }else{
-          this.get("context").$(".overlay-trash-transition-icon").hide();
+        this.get("context").$(".overlay-trash-transition-icon").hide();
       }
+      let srcNode = event.cyTarget.source().data("node");
+      if(srcNode.type === 'placeholder'){
+        let originalSource = event.cyTarget.source().incomers("node").jsons()[0].data.node;
+        this.get("context").$(".overlay-transition-content").data("originalSource", originalSource);
+      }
+      this.get("context").$(".overlay-transition-content").data("sourceNode", srcNode);
+      this.get("context").$(".overlay-transition-content").data("targetNode",event.cyTarget.target().data("node"));
       this.get("context").$(".overlay-transition-content").data("transition",event.cyTarget.data().transition);
 
       if (event.cyTarget.data().transition && event.cyTarget.data().transition.condition) {
@@ -243,7 +286,12 @@ var CytoscapeRenderer= Ember.Object.extend({
     this.get("context").$('.overlay-plus-icon').on('click',function(){
       this.get("context").$(".overlay-transition-content").popover("show");
       this.get("context").set('popOverElement', this.get("context").$('.overlay-transition-content'));
-      this.get("context").setCurrentTransition(this.get("context").$(".overlay-transition-content").data("transition"));
+      this.get("context").setCurrentTransition({
+        transition : this.get("context").$(".overlay-transition-content").data("transition"),
+        source : this.get("context").$(".overlay-transition-content").data("sourceNode"),
+        originalSource : this.get("context").$(".overlay-transition-content").data("originalSource"),
+        target : this.get("context").$(".overlay-transition-content").data("targetNode")
+      });
       Ember.run.later(this, function() {
         this.get("context").$('.overlay-transition-content').hide();
       }, 1000);
@@ -251,13 +299,15 @@ var CytoscapeRenderer= Ember.Object.extend({
 
     this.get("context").$('.overlay-trash-transition-icon').off('click');
     this.get("context").$('.overlay-trash-transition-icon').on('click',function(){
-      this.get("context").deleteTransition(this.get("context").$(".overlay-transition-content").data("transition"));
+      var tran=this.get("context").$(".overlay-transition-content").data("transition");
+      tran.sourceNode= this.get("context").$(".overlay-transition-content").data("sourceNode");
+      this.get("context").deleteTransition(tran);
       this.get("context").$('.overlay-transition-content').hide();
     }.bind(this));
 
     this.get("context").$('.overlay-trash-icon i').off('click');
     this.get("context").$('.overlay-trash-icon i').on('click',function(){
-      this.get("context").deleteWorkflowNode(this.get("context").$(".overlay-trash-icon").data("node"));
+      this.get("context").deleteWorkflowNode(this.get("context").$(".overlay-trash-icon").data("node"), this.getIncomingTransitions(this.get("currentCyNode")));
       this.get("context").$('.overlay-node-actions').hide();
     }.bind(this));
 
@@ -275,7 +325,7 @@ var CytoscapeRenderer= Ember.Object.extend({
 
     this.get("context").$('.overlay-cut-icon i').off('click');
     this.get("context").$('.overlay-cut-icon i').on('click',function(){
-      this.get("context").cutNode(this.get("context").$(".overlay-cut-icon").data("node"));
+      this.get("context").cutNode(this.get("context").$(".overlay-cut-icon").data("node"), this.getIncomingTransitions(this.get("currentCyNode")));
       this.get("context").$('.overlay-node-actions').hide();
     }.bind(this));
 
@@ -297,26 +347,86 @@ var CytoscapeRenderer= Ember.Object.extend({
 
     this.get("context").$('.overlay-settings-icon i').off('click');
     this.get("context").$('.overlay-settings-icon i').on('click',function(){
-      this.get("context").openWorkflowEditor(this.get("context").$(".overlay-settings-icon").data("node"));
+      let node = this.get("context").$(".overlay-settings-icon").data("node");
+      this.populateOkToandErrorTONodes(node);
+      this.get("context").openWorkflowEditor(node);
       this.get("context").$('.overlay-node-actions').hide();
     }.bind(this));
   },
-
+  getIncomingTransitions(node){
+    var incomingNodes=node.incomers("node").jsons().mapBy("data.node");
+    var transitionList=[];
+    var currentNodeId=this.get("currentCyNode").json().data.id;
+    incomingNodes.forEach(function(incomingNode){
+      incomingNode.transitions.forEach(function(incomingTran){
+        if (incomingTran.targetNode.id===currentNodeId){
+          incomingTran.sourceNode=incomingNode;
+          transitionList=transitionList.concat(incomingTran);
+        }
+      });
+    });
+    return transitionList;
+  },
+  populateOkToandErrorTONodes(node){
+    let alternatePathNodes = this.cy.$('#'+node.id).predecessors("node[name][type='decision']").union(this.cy.$('#'+node.id).predecessors("node[name][type='fork']"));
+    let descendantNodes = [];
+    if(alternatePathNodes.length > 0){
+      alternatePathNodes.forEach(childNode =>{
+        let childNodeData = childNode.data();
+        if(childNodeData.type === 'placeholder'){
+          return;
+        }
+        let successors = this.cy.$(`#${childNodeData.id}`).successors("node[name]").difference(this.cy.$('#'+node.id).incomers("node[name]"));
+        descendantNodes.pushObjects(successors.jsons().mapBy('data.node'));
+      });
+    }else{
+      descendantNodes.pushObjects(this.cy.$(`#${node.id}`).successors("node[name]").jsons().mapBy('data.node'));
+    }
+    let okToNodes = [];
+    let errorToNodes = [];
+    okToNodes = descendantNodes.reject((descendantNode)=>{
+      return descendantNode.get('type') === 'placeholder' || descendantNode.get('type') === 'kill' || descendantNode.id === node.id;
+    }, this);
+    errorToNodes = descendantNodes.reject((descendantNode)=>{
+      return descendantNode.get('type') === 'placeholder' || descendantNode.get('type') === 'kill' || descendantNode.id === node.id;
+    }, this);
+    node.set('validOkToNodes', okToNodes);
+    node.set('validErrorToNodes', errorToNodes);
+  },
+  getGraph(){
+    return this.cy.$('node');
+  },
+  isWorkflowValid(){
+    return this.cy.nodes("node[name][type='start']").successors("node[name]").intersection(this.cy.nodes("node[name][type='end']")).length > 0;
+  },
   renderWorkflow(workflow){
     this._getCyDataNodes(workflow);
+    this.cy.startBatch();
     this.cy.$('node').remove();
     this.cy.add(this.get('dataNodes'));
+    this.cy.endBatch();
     this.cy.layout(this.get("layoutConfigs"));
     this._setCyOverflow();
+    this._setGraphCenterOnStartNode();
   },
 
   initRenderer(callback, settings){
     this.context=settings.context;
     this.dataNodes=settings.dataNodes;
     this.cyOverflow=settings.cyOverflow;
+    this.id=settings.id;
     this._initCY(settings);
     callback();
   },
+
+  fitWorkflow() {
+    this.cy.fit();
+  },
+
+  hideOverlayNodeActions() {
+    this.get("context").$('.overlay-node-actions').hide();
+  },
+
   reset(){
 
   },

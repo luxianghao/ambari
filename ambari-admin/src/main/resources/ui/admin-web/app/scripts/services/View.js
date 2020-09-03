@@ -42,10 +42,10 @@ angular.module('ambariAdminConsole')
         'fields': fields.join(',')
       }
     })
-    .success(function(data) {
-      deferred.resolve(new ViewInstance(data));
+    .then(function(data) {
+      deferred.resolve(new ViewInstance(data.data));
     })
-    .error(function(data) {
+    .catch(function(data) {
       deferred.reject(data);
     });
 
@@ -61,32 +61,6 @@ angular.module('ambariAdminConsole')
     angular.element(this,item);
   }
 
-  ViewUrl.all = function(params) {
-    var deferred = $q.defer();
-
-    $http({
-      method: 'GET',
-      dataType: "json",
-      url: Settings.baseUrl + '/view/urls?'
-      + 'ViewUrlInfo/url_name.matches(.*'+params.searchString+'.*)'
-      + '&ViewUrlInfo/url_suffix.matches(.*'+params.suffixSearch+'.*)'
-      + '&fields=*'
-      + '&from=' + (params.currentPage-1)*params.urlsPerPage
-      + '&page_size=' + params.urlsPerPage
-      + (params.instanceType === '*' ? '' : '&ViewUrlInfo/view_instance_common_name=' + params.instanceType)
-
-    })
-        .success(function(data) {
-          deferred.resolve(new ViewUrl(data));
-        })
-        .error(function(data) {
-          deferred.reject(data);
-        });
-
-    return deferred.promise;
-  };
-
-
   ViewUrl.updateShortUrl = function(payload){
     var deferred = $q.defer();
 
@@ -96,10 +70,10 @@ angular.module('ambariAdminConsole')
       url: Settings.baseUrl + '/view/urls/'+payload.ViewUrlInfo.url_name,
       data:payload
     })
-        .success(function(data) {
-          deferred.resolve(new URLStatus(data));
+        .then(function(data) {
+          deferred.resolve(new URLStatus(data.data));
         })
-        .error(function(data) {
+        .catch(function(data) {
           deferred.reject(data);
         });
 
@@ -114,10 +88,10 @@ angular.module('ambariAdminConsole')
       dataType: "json",
       url: Settings.baseUrl + '/view/urls/'+ urlName,
     })
-        .success(function(data) {
-          deferred.resolve(new URLStatus(data));
+        .then(function(data) {
+          deferred.resolve(new URLStatus(data.data));
         })
-        .error(function(data) {
+        .catch(function(data) {
           deferred.reject(data);
         });
 
@@ -134,10 +108,10 @@ angular.module('ambariAdminConsole')
       url: Settings.baseUrl + '/view/urls/'+payload.ViewUrlInfo.url_name,
       data:payload
     })
-        .success(function(data) {
-          deferred.resolve(new URLStatus(data));
+        .then(function(data) {
+          deferred.resolve(new URLStatus(data.data));
         })
-        .error(function(data) {
+        .catch(function(data) {
           deferred.reject(data);
         });
 
@@ -155,10 +129,10 @@ angular.module('ambariAdminConsole')
       url: Settings.baseUrl + '/view/urls/'+urlName,
 
     })
-        .success(function(data) {
-          deferred.resolve(new ViewUrl(data));
+        .then(function(data) {
+          deferred.resolve(new ViewUrl(data.data));
         })
-        .error(function(data) {
+        .catch(function(data) {
           deferred.reject(data);
         });
 
@@ -176,7 +150,7 @@ angular.module('ambariAdminConsole')
     var versions = {};
     angular.forEach(item.versions, function(version) {
       versions[version.ViewVersionInfo.version] = {count: version.instances.length, status: version.ViewVersionInfo.status};
-      if(version.ViewVersionInfo.status === 'DEPLOYED'){ // if atelast one version is deployed
+      if (version.ViewVersionInfo.status === 'DEPLOYED'){ // if at least one version is deployed
         self.canCreateInstance = true;
       }
 
@@ -201,10 +175,6 @@ angular.module('ambariAdminConsole')
 
   View.getInstance = function(viewName, version, instanceName) {
     return ViewInstance.find(viewName, version, instanceName);
-  };
-
-  View.allUrls =  function(req){
-    return ViewUrl.all(req)
   };
 
   View.getUrlInfo = function(urlName){
@@ -252,8 +222,8 @@ angular.module('ambariAdminConsole')
       params: {
         'fields': fields.join(',')
       }
-    }).success(function(data) {
-      deferred.resolve(data.permissions);
+    }).then(function(data) {
+      deferred.resolve(data.data.permissions);
     })
     .catch(function(data) {
       deferred.reject(data);
@@ -272,8 +242,8 @@ angular.module('ambariAdminConsole')
         fields: 'privileges/PrivilegeInfo'
       }
     })
-    .success(function(data) {
-      deferred.resolve(data.privileges);
+    .then(function(data) {
+      deferred.resolve(data.data.privileges);
     })
     .catch(function(data) {
       deferred.reject(data);
@@ -290,9 +260,9 @@ angular.module('ambariAdminConsole')
     $http({
       method: 'GET',
       url: Settings.baseUrl + '/views/'+viewName + '?versions/ViewVersionInfo/status=DEPLOYED'
-    }).success(function(data) {
+    }).then(function(data) {
       var versions = [];
-      angular.forEach(data.versions, function(version) {
+      angular.forEach(data.data.versions, function(version) {
         versions.push(version.ViewVersionInfo.version);
       });
 
@@ -316,10 +286,10 @@ angular.module('ambariAdminConsole')
         description: instanceInfo.description
       };
 
-    angular.forEach(instanceInfo.properties, function(property) {
-      if(property.clusterConfig) {
+    angular.forEach(instanceInfo.properties, function (property) {
+      if (property.clusterConfig) {
         properties[property.name] = property.value
-      }else {
+      } else {
         settings[property.name] = property.value
       }
     });
@@ -327,7 +297,7 @@ angular.module('ambariAdminConsole')
     data.properties = settings;
     data.cluster_type = instanceInfo.clusterType;
 
-    if(instanceInfo.clusterId != null) {
+    if (instanceInfo.clusterId != null) {
       data.cluster_handle = instanceInfo.clusterId;
     } else {
       angular.extend(data.properties, properties);
@@ -341,10 +311,10 @@ angular.module('ambariAdminConsole')
         'ViewInstanceInfo' : data
       }
     })
-    .success(function(data) {
-      deferred.resolve(data);
+    .then(function(data) {
+      deferred.resolve(data.data);
     })
-    .error(function(data) {
+    .catch(function(data) {
       deferred.reject(data);
     });
 
@@ -450,14 +420,14 @@ angular.module('ambariAdminConsole')
         'fields': fields.join(','),
         'versions/ViewVersionInfo/system' : false
       }
-    }).success(function(data) {
+    }).then(function(data) {
       var views = [];
-      angular.forEach(data.items, function(item) {
+      angular.forEach(data.data.items, function(item) {
         views.push(new View(item));
       });
       deferred.resolve(views);
     })
-    .error(function(data) {
+    .catch(function(data) {
       deferred.reject(data);
     });
 

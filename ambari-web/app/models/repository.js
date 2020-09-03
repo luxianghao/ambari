@@ -23,6 +23,7 @@ var validator = require('utils/validator');
 App.Repository = DS.Model.extend({
   id:  DS.attr('string'), // This is ${osType}-${repoId}.
   repoId: DS.attr('string'),
+  originalRepoId: DS.attr('string'),
   osType: DS.attr('string'),
   baseUrl: DS.attr('string'),
   baseUrlInit: DS.attr('string'),
@@ -32,8 +33,18 @@ App.Repository = DS.Model.extend({
   stackName: DS.attr('string'),
   stackVersion: DS.attr('string'),
   operatingSystem: DS.belongsTo('App.OperatingSystem'),
+  components: DS.attr('string'),
+  distribution: DS.attr('string'),
+  tags: DS.attr('array'),
+  applicable_services: DS.attr('array'),
 
   validation: DS.attr('string', {defaultValue: ''}),
+  validationClassName: Em.computed.getByKey('validationClassNameMap', 'validation', ''),
+  validationClassNameMap: {
+    INVALID: 'glyphicon glyphicon-exclamation-sign',
+    OK: 'glyphicon glyphicon-ok',
+    INPROGRESS: 'glyphicon glyphicon-repeat'
+  },
   errorContent: DS.attr('string', {defaultValue: ''}),
   errorTitle: DS.attr('string', {defaultValue: ''}),
 
@@ -44,11 +55,11 @@ App.Repository = DS.Model.extend({
   }.property('baseUrl'),
 
   isEmpty: function() {
-    return this.get('baseUrl') == '';
+    return this.get('showRepo') && this.get('baseUrl') === '';
   }.property('baseUrl'),
 
   invalidError: function() {
-    return this.get('validation') === App.Repository.validation.INVALID;
+    return this.get('validation') === 'INVALID';
   }.property('validation'),
 
   /**
@@ -57,6 +68,23 @@ App.Repository = DS.Model.extend({
   isUtils: function () {
     return this.get('repoName').contains('UTILS');
   }.property('repoName'),
+
+  /**
+   * @type {boolean}
+   */
+  isGPL: function () {
+    var tags = this.get('tags');
+    return tags && tags.contains('GPL');
+  }.property('tags'),
+
+  /**
+   * Determines whether a repo needs to be displayed in the UI or not
+   * @type {boolean}
+   */
+  showRepo: function () {
+    const isGPLAccepted = App.router.get('clusterController.ambariProperties')['gpl.license.accepted'] === 'true';
+    return isGPLAccepted || !this.get('isGPL');
+  }.property('isGPL'),
 
   undo: Em.computed.notEqualProperties('baseUrl', 'baseUrlInit'),
 
@@ -70,13 +98,6 @@ App.Repository = DS.Model.extend({
   placeholder: Em.computed.ifThenElse('isUtils', '', Em.I18n.t('installer.step1.advancedRepo.localRepo.placeholder')),
 
 });
-
-App.Repository.validation = {
-  PENDING: '',
-  INVALID: 'glyphicon glyphicon-exclamation-sign',
-  OK: 'glyphicon glyphicon-ok',
-  INPROGRESS: 'glyphicon glyphicon-repeat'
-};
 
 
 App.Repository.FIXTURES = [];

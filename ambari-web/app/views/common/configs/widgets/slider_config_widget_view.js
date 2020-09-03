@@ -113,7 +113,8 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
     var configValue = this.get('config.value');
     var defaultGroupAttr = this.get('config.stackConfigProperty.valueAttributes');
     var groupAttr = this.get('configGroup') && defaultGroupAttr[this.get('configGroup.name')];
-    var boundary = (groupAttr && !Em.isNone(groupAttr[attribute])) ? groupAttr[attribute] : defaultGroupAttr[attribute];
+    var usedGroupAttr = (groupAttr && !Em.isNone(groupAttr[attribute])) ? groupAttr : defaultGroupAttr;
+    var boundary = usedGroupAttr[attribute];
 
     if (!this.get('referToSelectedGroup')) {
       if (attribute === 'minimum') {
@@ -124,6 +125,14 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
         if (parseFunction(configValue) > parseFunction(boundary)) {
           return configValue;
         }
+      }
+    }
+    if (isNaN(boundary) && !isNaN(configValue)) {
+      if (attribute === 'minimum') {
+        return isNaN(usedGroupAttr['maximum']) ? configValue : Math.min(usedGroupAttr['maximum'], configValue).toString();
+      }
+      if (attribute === 'maximum') {
+        return isNaN(usedGroupAttr['minimum']) ? configValue : Math.max(usedGroupAttr['minimum'], configValue).toString();
       }
     }
     return boundary;
@@ -251,12 +260,16 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
     }
   },
 
+  mirrorValueObs: function () {
+    Em.run.once(this, 'mirrorValueObsOnce');
+  },
+
   /**
    * Check if <code>mirrorValue</code> was updated by user
    * Validate it. If value is correct, set it to slider and config.value
    * @method mirrorValueObs
    */
-  mirrorValueObs: function () {
+  mirrorValueObsOnce: function () {
     var mirrorValue = this.get('mirrorValue'),
       slider = this.get('slider'),
       min = this.get('minMirrorValue'),
@@ -268,13 +281,13 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
       if (parsed > max) {
         this.set('isMirrorValueValid', false);
         this.get('config').setProperties({
-          warnMessage: Em.I18n.t('config.warnMessage.outOfBoundaries.greater').format(max + this.get('unitLabel')),
+          warnMessage: Em.I18n.t('config.warnMessage.outOfBoundaries.greater').format(this.formatTickLabel(max, ' ')),
           warn: true
         });
       } else if (parsed < min) {
         this.set('isMirrorValueValid', false);
         this.get('config').setProperties({
-          warnMessage: Em.I18n.t('config.warnMessage.outOfBoundaries.less').format(min + this.get('unitLabel')),
+          warnMessage: Em.I18n.t('config.warnMessage.outOfBoundaries.less').format(this.formatTickLabel(min, ' ')),
           warn: true
         });
       } else {
@@ -406,6 +419,13 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
      */
     var correctConfigValue = this.get('config.value');
 
+    // workaround for cases when slider input is hidden in DOM
+    try {
+      $(this.get('element')).find('.ui-slider-wrapper').removeClass('hide');
+    } catch (e) {
+      console.error('Error when trying to show slider input');
+    }
+
     var slider = new Slider(this.$('input.slider-input')[0], {
       value: this.get('mirrorValue'),
       ticks: ticks,
@@ -414,7 +434,7 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
       step: mirrorStep,
       formatter: function (val) {
         var labelValue = Em.isArray(val) ? val[0] : val;
-        return self.formatTickLabel(labelValue);
+        return self.formatTickLabel(labelValue, ' ');
       }
     });
 
@@ -633,7 +653,7 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
         var min = this.get('parseFunction')(this.getValueAttributeByGroup('minimum'));
         if (configValue < min) {
           min = this.widgetValueByConfigAttributes(min);
-          this.updateWarningsForCompatibilityWithWidget(Em.I18n.t('config.warnMessage.outOfBoundaries.less').format(min + this.get('unitLabel')));
+          this.updateWarningsForCompatibilityWithWidget(Em.I18n.t('config.warnMessage.outOfBoundaries.less').format(this.formatTickLabel(min, ' ')));
           return false;
         }
       }
@@ -641,15 +661,12 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
         var max = this.get('parseFunction')(this.getValueAttributeByGroup('maximum'));
         if (configValue > max) {
           max = this.widgetValueByConfigAttributes(max);
-          this.updateWarningsForCompatibilityWithWidget(Em.I18n.t('config.warnMessage.outOfBoundaries.greater').format(max + this.get('unitLabel')));
+          this.updateWarningsForCompatibilityWithWidget(Em.I18n.t('config.warnMessage.outOfBoundaries.greater').format(this.formatTickLabel(max, ' ')));
           return false;
         }
       }
-      if (this.get('config.name') === 'llap_queue_capacity') {
-        this.get('config').validate();
-      } else {
-        this.updateWarningsForCompatibilityWithWidget('');
-      }
+
+      this.updateWarningsForCompatibilityWithWidget('');
       return true;
     }
     return false;
@@ -663,7 +680,6 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
    */
   formatTickLabel: function (tick, separator) {
     var label,
-      separator = separator || '',
       valueLabel = tick,
       units = ['B', 'KB', 'MB', 'GB', 'TB'],
       unitLabel = this.get('unitLabel'),
@@ -676,7 +692,7 @@ App.SliderConfigWidgetView = App.ConfigWidgetView.extend({
       unitLabel = units[unitLabelIndex];
       valueLabel = this._extraRound(tick);
     }
-    label = valueLabel + separator + unitLabel;
+    label = valueLabel + ((separator && unitLabel) ? separator : '') + unitLabel;
     return label;
   }
 

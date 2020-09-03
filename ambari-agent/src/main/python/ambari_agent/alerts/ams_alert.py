@@ -22,16 +22,16 @@ import httplib
 import imp
 import time
 import urllib
-from alerts.base_alert import BaseAlert
-from alerts.metric_alert import MetricAlert
+from alerts.metric_alert import MetricAlert, REALCODE_REGEXP
 import ambari_simplejson as json
 import logging
 import re
 import uuid
 
 from resource_management.libraries.functions.get_port_from_url import get_port_from_url
+from ambari_commons import inet_utils
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 AMS_METRICS_GET_URL = "/ws/v1/timeline/metrics?%s"
 
@@ -64,10 +64,11 @@ class AmsAlert(MetricAlert):
     # use the URI lookup keys to get a final URI value to query
     alert_uri = self._get_uri_from_structure(self.uri_property_keys)
 
-    logger.debug("[Alert][{0}] Calculated metric URI to be {1} (ssl={2})".format(
-      self.get_name(), alert_uri.uri, str(alert_uri.is_ssl_enabled)))
+    if logger.isEnabledFor(logging.DEBUG):
+      logger.debug("[Alert][{0}] Calculated metric URI to be {1} (ssl={2})".format(
+        self.get_name(), alert_uri.uri, str(alert_uri.is_ssl_enabled)))
 
-    host = BaseAlert.get_host_from_url(alert_uri.uri)
+    host = inet_utils.get_host_from_url(alert_uri.uri)
     if host is None:
       host = self.host_name
 
@@ -94,7 +95,8 @@ class AmsAlert(MetricAlert):
 
         collect_result = self._get_result(value_list[0] if compute_result is None else compute_result)
 
-        logger.debug("[Alert][{0}] Computed result = {1}".format(self.get_name(), str(value_list)))
+        if logger.isEnabledFor(logging.DEBUG):
+          logger.debug("[Alert][{0}] Computed result = {1}".format(self.get_name(), str(value_list)))
 
     return (collect_result, value_list)
 
@@ -210,7 +212,7 @@ def f(args):
     self.minimum_value = metric_info['minimum_value']
 
     if 'value' in metric_info:
-      realcode = re.sub('(\{(\d+)\})', 'args[\g<2>][k]', metric_info['value'])
+      realcode = REALCODE_REGEXP.sub('args[\g<2>][k]', metric_info['value'])
 
       self.custom_value_module =  imp.new_module(str(uuid.uuid4()))
       code = self.DYNAMIC_CODE_VALUE_TEMPLATE.format(realcode)

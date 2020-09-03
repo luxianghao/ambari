@@ -18,17 +18,17 @@
 {{#if view.isDataLoaded}}
 
   <div class="btn-toolbar" role="toolbar">
-    <div id="widgets-options-menu" class="dropdown btn-group pull-left">
+    <div id="widgets-options-menu" class="widgets-options-menu dropdown btn-group pull-left">
       <button class="btn btn-default dropdown-toggle" data-toggle="dropdown" href="#">
         <span>{{t dashboard.widgets.actions.title}}</span>
         <span class="caret"></span>
       </button>
       <ul class="dropdown-menu">
-        <li class="add-widgets-text dropdown-submenu">
+        <li class="add-widgets-text dropdown-submenu pull-left">
           <a href="javascript:void(null);"><i class="glyphicon glyphicon-plus"></i> &nbsp; {{t common.add}}</a>
           {{view view.plusButtonFilterView}}
         </li>
-        <li class="dropdown-submenu">
+        <li class="reset-all-widgets dropdown-submenu pull-left">
           <a href="javascript:void(null);"><i class="glyphicon glyphicon-cog"></i> &nbsp; {{t common.edit}}</a>
           <ul class="dropdown-menu">
             <li>
@@ -45,16 +45,79 @@
   </div>
 
   <div class="dashboard-widgets-box">
-    <div id="dashboard-widgets"  class="widgets-container">
+    <div id="dashboard-widgets" class="widgets-container dashboard-widgets">
       <div class="thumbnails" id="sortable">
-        {{#if view.visibleWidgets.length}}
-          {{#each widgetClass in view.visibleWidgets}}
-            <div {{bindAttr class="widgetClass.class"}}>
-              {{view widgetClass }}
-            </div>
-          {{/each}}
-        {{/if}}
+        {{#each widget in view.allWidgets}}
+          {{#if widget.isVisible}}
+            {{view widget.viewClass widgetBinding="widget"}}
+          {{/if}}
+        {{/each}}
       </div>
+      {{#if view.displayedWidgetGroups.length}}
+        {{#each group in view.displayedWidgetGroups}}
+          <div class="dashboard-widget-groups-container">
+            <div class="col-md-12 row">
+              <div class="col-md-6">
+                <h5 class="widgets-group-title">{{group.title}}</h5>
+                {{#if group.subGroups.length}}
+                  <div class="btn-group dropdown">
+                    <button class="btn btn-default dropdown-toggle" data-toggle="dropdown">
+                      <span class="selected-item">
+                        {{#if group.activeSubGroup}}
+                          {{group.activeSubGroup.title}}
+                        {{else}}
+                          {{t common.all}}
+                        {{/if}}
+                      </span>
+                      <span class="caret"></span>
+                    </button>
+                    <ul class="dropdown-menu">
+                      {{#each item in group.subGroups}}
+                        <li>
+                          <a href="#" {{action setActiveSubGroup group.subGroups item.name target="view"}}>
+                            {{item.title}}
+                          </a>
+                        </li>
+                      {{/each}}
+                    </ul>
+                  </div>
+                {{/if}}
+              </div>
+              <div class="widgets-options-menu col-md-6">
+                <div class="add-widgets-text dropdown btn-group pull-right">
+                  <button class="btn btn-default dropdown-toggle" data-toggle="dropdown" href="#">
+                    <span>{{t common.add}}</span>
+                    <span class="caret"></span>
+                  </button>
+                  <ul class="dropdown-menu">
+                    {{#each groupLayout in group.allWidgets}}
+                      <li class="dropdown-submenu pull-left">
+                        <a href="#">{{groupLayout.title}}</a>
+                        {{view view.groupWidgetsFilterView hiddenWidgetsBinding="groupLayout.hiddenWidgets"}}
+                      </li>
+                    {{/each}}
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="thumbnails sortable" {{bindAttr id="group.name"}}>
+              {{#each groupLayout in group.allWidgets}}
+                {{#if groupLayout.isActive}}
+                  {{#each widget in groupLayout.widgets}}
+                    {{#if widget}}
+                      {{#if widget.isVisible}}
+                        {{view widget.viewClass widgetBinding="widget"}}
+                      {{/if}}
+                    {{/if}}
+                  {{/each}}
+                {{/if}}
+              {{/each}}
+            </div>
+          </div>
+        {{/each}}
+      {{/if}}
     </div>
   </div>
+{{else}}
+  {{view App.SpinnerView}}
 {{/if}}

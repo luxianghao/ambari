@@ -10,8 +10,7 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distribut
- * ed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
@@ -19,11 +18,13 @@
 
 package org.apache.ambari.server.topology;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.List;
 import java.util.concurrent.Executor;
+
+import org.apache.ambari.server.actionmanager.HostRoleStatus;
+import org.apache.ambari.server.topology.tasks.TopologyHostTask;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Response to a host offer.
@@ -39,9 +40,9 @@ final class HostOfferResponse {
   private final Answer answer;
   private final String hostGroupName;
   private final long hostRequestId;
-  private final List<TopologyTask> tasks;
+  private final List<TopologyHostTask> tasks;
 
-  static HostOfferResponse createAcceptedResponse(long hostRequestId, String hostGroupName, List<TopologyTask> tasks) {
+  static HostOfferResponse createAcceptedResponse(long hostRequestId, String hostGroupName, List<TopologyHostTask> tasks) {
     return new HostOfferResponse(Answer.ACCEPTED, hostRequestId, hostGroupName, tasks);
   }
 
@@ -49,7 +50,7 @@ final class HostOfferResponse {
     this(answer, -1, null, null);
   }
 
-  private HostOfferResponse(Answer answer, long hostRequestId, String hostGroupName, List<TopologyTask> tasks) {
+  private HostOfferResponse(Answer answer, long hostRequestId, String hostGroupName, List<TopologyHostTask> tasks) {
     this.answer = answer;
     this.hostRequestId = hostRequestId;
     this.hostGroupName = hostGroupName;
@@ -77,13 +78,20 @@ final class HostOfferResponse {
       executor.execute(new Runnable() {
         @Override
         public void run() {
-          for (TopologyTask task : tasks) {
-            LOG.info("Running task for accepted host offer for hostname = {}, task = {}", hostName, task.getType());
-            task.init(topology, ambariContext);
-            task.run();
+          for (TopologyHostTask task : tasks) {
+            try {
+              LOG.info("Running task for accepted host offer for hostname = {}, task = {}", hostName, task.getType());
+              task.run();
+            } catch (Exception e) {
+              HostRequest hostRequest = task.getHostRequest();
+              LOG.error("{} task for host {} failed due to", task.getType(), hostRequest.getHostName(), e);
+              hostRequest.markHostRequestFailed(HostRoleStatus.ABORTED, e, ambariContext.getPersistedTopologyState());
+              break;
+            }
           }
         }
       });
     }
   }
+
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -105,6 +105,7 @@ public class HostConfigMappingImpl implements HostConfigMapping {
       throw new RuntimeException("Version couldn't be null");
     this.version = version;
   }
+  @Override
   public String getServiceName() {
     return serviceName;
   }

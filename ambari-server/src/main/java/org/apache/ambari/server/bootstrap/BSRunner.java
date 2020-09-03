@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,7 +21,11 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.util.*;
+import java.nio.charset.Charset;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -29,15 +33,16 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.ambari.server.bootstrap.BootStrapStatus.BSStat;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * @author ncole
  *
  */
 class BSRunner extends Thread {
-  private static Log LOG = LogFactory.getLog(BSRunner.class);
+  private static final Logger LOG = LoggerFactory.getLogger(BSRunner.class);
 
   private static final String DEFAULT_USER = "root";
   private static final String DEFAULT_SSHPORT = "22";
@@ -104,18 +109,7 @@ class BSRunner extends Thread {
   }
 
   private String createHostString(List<String> list) {
-    StringBuilder ret = new StringBuilder();
-    if (list == null) {
-      return "";
-    }
-
-    int i = 0;
-    for (String host: list) {
-      ret.append(host);
-      if (i++ != list.size()-1)
-        ret.append(",");
-    }
-    return ret.toString();
+    return list != null ? String.join(",", list) : StringUtils.EMPTY;
   }
 
   /** Create request id dir for each bootstrap call **/
@@ -138,11 +132,11 @@ class BSRunner extends Thread {
   }
 
   private void writeSshKeyFile(String data) throws IOException {
-    FileUtils.writeStringToFile(sshKeyFile, data);
+    FileUtils.writeStringToFile(sshKeyFile, data, Charset.defaultCharset());
   }
 
   private void writePasswordFile(String data) throws IOException {
-    FileUtils.writeStringToFile(passwordFile, data);
+    FileUtils.writeStringToFile(passwordFile, data, Charset.defaultCharset());
   }
 
   /**
@@ -156,7 +150,7 @@ class BSRunner extends Thread {
       try {
         process.exitValue();
         return true;
-      } catch (IllegalThreadStateException e) {}
+      } catch (IllegalThreadStateException ignored) {}
       // Check if process has terminated once per second
       Thread.sleep(1000);
     } while (System.currentTimeMillis() - startTime < timeout);
@@ -185,8 +179,7 @@ class BSRunner extends Thread {
     // Startup a scheduled executor service to look through the logs
     ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     BSStatusCollector statusCollector = new BSStatusCollector();
-    ScheduledFuture<?> handle = scheduler.scheduleWithFixedDelay(statusCollector,
-        0, 10, TimeUnit.SECONDS);
+    ScheduledFuture<?> handle = null;
     LOG.info("Kicking off the scheduler for polling on logs in " +
     this.requestIdDir);
     String user = sshHostInfo.getUser();
@@ -205,11 +198,12 @@ class BSRunner extends Thread {
     String scriptlog = "";
     try {
       createRunDir();
+      handle = scheduler.scheduleWithFixedDelay(statusCollector,
+        0, 10, TimeUnit.SECONDS);
       if (LOG.isDebugEnabled()) {
         // FIXME needs to be removed later
         // security hole
-        LOG.debug("Using ssh key=\""
-            + sshHostInfo.getSshKey() + "\"");
+        LOG.debug("Using ssh key=\"{}\"", sshHostInfo.getSshKey());
       }
 
       String password = sshHostInfo.getPassword();
@@ -240,7 +234,7 @@ class BSRunner extends Thread {
       command[11] = userRunAs;
       command[12] = (this.passwordFile==null) ? "null" : this.passwordFile.toString();
 
-      Map<String, String> envVariables = new HashMap<String, String>();
+      Map<String, String> envVariables = new HashMap<>();
 
       if (System.getProperty("os.name").contains("Windows")) {
         String command2[] = new String[command.length + 1];
@@ -297,8 +291,10 @@ class BSRunner extends Thread {
         String outMesg = "";
         String errMesg = "";       
         try {
-          outMesg = FileUtils.readFileToString(new File(bootStrapOutputFilePath));
-          errMesg = FileUtils.readFileToString(new File(bootStrapErrorFilePath));
+          outMesg = FileUtils
+                  .readFileToString(new File(bootStrapOutputFilePath), Charset.defaultCharset());
+          errMesg = FileUtils
+                  .readFileToString(new File(bootStrapErrorFilePath), Charset.defaultCharset());
         } catch(IOException io) {
           LOG.info("Error in reading files ", io);
         }
@@ -334,8 +330,7 @@ class BSRunner extends Thread {
             pendingHosts = true;
           }
           if (LOG.isDebugEnabled()) {
-            LOG.debug("Whether hosts status yet to be updated, pending="
-                + pendingHosts);
+            LOG.debug("Whether hosts status yet to be updated, pending={}", pendingHosts);
           }
           if (!pendingHosts) {
             break;
@@ -354,7 +349,9 @@ class BSRunner extends Thread {
       } catch (InterruptedException e) {
         throw new IOException(e);
       } finally {
-        handle.cancel(true);
+        if (handle != null) {
+          handle.cancel(true);
+        }
         /* schedule a last update */
         scheduler.schedule(new BSStatusCollector(), 0, TimeUnit.SECONDS);
         scheduler.shutdownNow();
@@ -435,7 +432,7 @@ class BSRunner extends Thread {
         }
       }
     } catch (FileNotFoundException ex) {
-      LOG.error(ex);
+      LOG.error(ex.toString());
     } finally {
       if (setupAgentDoneWriter != null) {
         setupAgentDoneWriter.close();

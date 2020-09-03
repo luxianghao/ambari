@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -27,10 +27,15 @@ import org.apache.ambari.server.agent.DiskInfo;
 import org.apache.ambari.server.agent.HostInfo;
 import org.apache.ambari.server.agent.RecoveryReport;
 import org.apache.ambari.server.controller.HostResponse;
+import org.apache.ambari.server.orm.entities.HostEntity;
+import org.apache.ambari.server.orm.entities.HostStateEntity;
 import org.apache.ambari.server.orm.entities.HostVersionEntity;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.state.fsm.InvalidStateTransitionException;
 
 public interface Host extends Comparable {
+
+  HostEntity getHostEntity();
 
   /**
    * @return the hostName
@@ -173,6 +178,15 @@ public interface Host extends Comparable {
   String getOsFamily();
 
   /**
+   * Gets the os family from host attributes
+   * @param hostAttributes host attributes
+   * @return the os family for host
+   */
+  String getOsFamily(Map<String, String> hostAttributes);
+
+  String getOSFamilyFromHostAttributes(Map<String, String> hostAttributes);
+
+  /**
    * @param osType the osType to set
    */
   void setOsType(String osType);
@@ -192,6 +206,13 @@ public interface Host extends Comparable {
    * @return the healthStatus
    */
   HostHealthStatus getHealthStatus();
+
+  /**
+   * Gets the health status from host attributes
+   * @param hostStateEntity host attributes
+   * @return the health status
+   */
+  HostHealthStatus getHealthStatus(HostStateEntity hostStateEntity);
 
   /**
    * Get detailed recovery report for the host
@@ -215,6 +236,13 @@ public interface Host extends Comparable {
    * @return the hostAttributes
    */
   Map<String, String> getHostAttributes();
+
+  /**
+   * Gets host attributes from host entity
+   * @param hostEntity host entity
+   * @return the host attributes
+   */
+  Map<String, String> getHostAttributes(HostEntity hostEntity);
 
   /**
    * @param hostAttributes the hostAttributes to set
@@ -242,6 +270,18 @@ public interface Host extends Comparable {
    * @param lastRegistrationTime the lastRegistrationTime to set
    */
   void setLastRegistrationTime(long lastRegistrationTime);
+
+  /**
+   * Time the Ambari Agent was started.
+   * ( Unix timestamp )
+   * @return the lastOnAgentStartRegistrationTime
+   */
+  long getLastAgentStartTime();
+
+  /**
+   * @param lastAgentStartTime the lastAgentStartTime to set
+   */
+  void setLastAgentStartTime(long lastAgentStartTime);
 
   /**
    * Last time the Ambari Server received a heartbeat from the Host
@@ -272,6 +312,13 @@ public interface Host extends Comparable {
   AgentVersion getAgentVersion();
 
   /**
+   * Gets version of the ambari agent running on the host.
+   * @param hostStateEntity host state entity
+   * @return the agentVersion
+   */
+  AgentVersion getAgentVersion(HostStateEntity hostStateEntity);
+
+  /**
    * @param agentVersion the agentVersion to set
    */
   void setAgentVersion(AgentVersion agentVersion);
@@ -287,6 +334,12 @@ public interface Host extends Comparable {
    * @param state Host State
    */
   void setState(HostState state);
+
+  /**
+   * Set state of host's state machine.
+   * @param state
+   */
+  void setStateMachineState(HostState state);
 
   /**
    * Get the prefix path of all logs
@@ -402,4 +455,22 @@ public interface Host extends Comparable {
    * @see ComponentInfo#isVersionAdvertised()
    */
   boolean hasComponentsAdvertisingVersions(StackId stackId) throws AmbariException;
+
+  void calculateHostStatus(Long clusterId) throws AmbariException;
+
+  /**
+   * Gets whether all host components whose desired repository version matches
+   * the repository version specified have reported the correct version and are
+   * no longer upgrading.
+   *
+   * @param repositoryVersion
+   *          the repository version to check for (not {@code null}).
+   * @return {@code true} if all components on this host have checked in with
+   *         the correct version if their desired repository matches the one
+   *         specified.
+   *
+   * @throws AmbariException
+   */
+  boolean isRepositoryVersionCorrect(RepositoryVersionEntity repositoryVersion)
+      throws AmbariException;
 }

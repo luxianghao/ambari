@@ -41,12 +41,28 @@
   background-color: #999;
 }
 
+.nav-pills {
+  .status-icon {
+    font-size: 8px;
+    line-height: 1.7em;
+    margin-left: -15px;
+    margin-right: 3px;
+  }
+  .stopped {
+    color: @health-status-red;
+  }
+  .started {
+    color: @health-status-green;
+  }
+}
+
 .alert-state-single-host {
   display: inline-block;
   width: 115px;
   text-align: center;
   line-height: 20px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  margin-top: 2px;
 }
 
 .groups-filter {
@@ -87,6 +103,16 @@
     }
   }
 
+  > thead > tr > th,  > thead > tr > td,
+  > tbody > tr > th,  > tbody > tr > td,
+  > tfoot > tr > th,  > tfoot > tr > td {
+    vertical-align: middle;
+  }
+
+  a.ui-icon-circle-close {
+    visibility: hidden;
+  }
+
   .filter-input-width {
     width: ~"calc(100% - 20px)";
   }
@@ -94,14 +120,14 @@
   .col0,
   td:first-child,
   th:first-child {
-    width: 35%;
+    width: 15%;
 
   }
 
   .col1,
   td:first-child + td,
   th:first-child + th {
-    width: 15%;
+    width: 35%;
   }
 
   .col2,
@@ -135,10 +161,17 @@
 }
 
 #alert-instances-table {
+  > thead > tr > th,  > thead > tr > td,
+  > tbody > tr > th,  > tbody > tr > td,
+  > tfoot > tr > th,  > tfoot > tr > td,
+  .timeago {
+    vertical-align: middle;
+  }
+
   .col0,
   td:first-child,
   th:first-child {
-    width: 10%;
+    width: 13%;
   }
 
   .col1,
@@ -150,7 +183,7 @@
   .col2,
   td:first-child + td + td,
   th:first-child + th + th {
-    width: 23%;
+    width: 20%;
   }
 
   .col3,
@@ -166,10 +199,8 @@
   }
 
   .alert-text {
-    overflow: hidden;
+    .ellipsis-overflow-nowrap;
     float: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     width: 100%;
   }
 
@@ -251,9 +282,6 @@
   td:first-child,
   th:first-child {
     width: 15%;
-    .filter-input-width {
-      width: 80%;
-    }
   }
 
   .col1,
@@ -269,9 +297,6 @@
   td:first-child + td + td,
   th:first-child + th + th {
     width: 20%;
-    .filter-input-width {
-      width: inherit;
-    }
   }
   .col3,
   td:first-child + td + td + td,
@@ -280,10 +305,8 @@
   }
 
   .alert-text {
-    overflow: hidden;
+    .ellipsis-overflow-nowrap;
     float: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     width: 100%;
   }
 }
@@ -344,14 +367,21 @@
 }
 
 .service-block .summary-box-header {
-  .alerts-crit-count, .alerts-warn-count, .no-alerts-label {
-    padding: 4px 5px;
-    margin: 4px;
-    font-size: 14px;
+  .glyphicon {
+    color: #999999;
+    cursor: pointer;
+    font-size: 16px;
+    top: 3px;
+    left: 4px;
   }
 }
 
-.alerts-crit-count, .alerts-warn-count, .no-alerts-label {
+.alerts-block {
+  margin-right: 6px;
+}
+
+
+.alerts-crit-count, .alerts-warn-count, .alerts-none-count {
   cursor: pointer;
 }
 
@@ -361,16 +391,40 @@
 .label.alerts-warn-count {
   background: @health-status-orange;
 }
-.label.no-alerts-label {
-  background: @health-status-green;
+.label.alerts-none-count {
+  background: @top-nav-ops-count-bg-color;
 }
 
 #summary-alerts-popup {
   .alert-list-wrap {
-    padding: 10px 5px;
+    padding: 10px 5px 5px;
     .status-icon {
       padding-right: 5px;
       min-width: 20px;
+    }
+    .row {
+      margin-left: 0;
+      margin-right: 0;
+    }
+  }
+}
+
+.service-alerts-popup {
+  .modal {
+    .modal-dialog{
+      width: 800px;
+      .modal-content {
+        height: 500px;
+        .modal-body {
+          padding-left: 0;
+          padding-right: 0;
+          height: 75%;
+          font-size: 14px;
+          .definition-latest-text, .timeago {
+            font-size: 12px;
+          }
+        }
+      }
     }
   }
 }
@@ -409,6 +463,14 @@
   }
 }
 
+.sixty-percent-width-modal {
+  .definition-latest-text {
+    overflow-x: auto;
+    text-overflow: inherit;
+    white-space: normal;
+  }
+}
+
 /*****end styles for manage alerts popup*****/
 
 /*****start styles for alerts popup*****/
@@ -423,19 +485,35 @@
 }
 
 .instance-text {
+  .ellipsis-overflow-nowrap;
   font-size: 0.8em;
   width: 95%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .definition-latest-text {
+  .ellipsis-overflow-nowrap;
   font-size: 0.8em;
   width: 95%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.service-params-popup {
+  .modal {
+    .modal-dialog {
+      width: 55%;
+      .modal-content {
+        height: 60%;
+        .modal-body {
+          padding-left: 0;
+          padding-right: 0;
+          height: 75%;
+          font-size: 14px;
+          .definition-latest-text, .timeago {
+            font-size: 12px;
+          }
+        }
+      }
+    }
+  }
 }
 
 .alerts-popup-wrap {
@@ -446,9 +524,8 @@
       padding: 10px 5px;
     }
     .trim_hostname {
+      .ellipsis-overflow;
       display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
   }
 }
@@ -524,7 +601,7 @@
     .alert-type {
       height: 150px;
       width: 32%;
-      margin: 5px;
+      margin: 0px 5px 10px 5px;
       padding: 10px;
       background: white;
     }
@@ -561,14 +638,11 @@
         font-size: 14px;
         font-weight: bold;
         margin-bottom: 5px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        .ellipsis-overflow-nowrap;
       }
       .description-text {
         font-size: 12px;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        .ellipsis-overflow;
       }
     }
   }

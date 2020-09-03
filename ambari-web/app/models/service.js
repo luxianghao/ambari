@@ -21,8 +21,15 @@ var App = require('app');
 require('utils/config');
 
 App.Service = DS.Model.extend({
-  serviceName: DS.attr('string'),
-  displayName: Em.computed.formatRole('serviceName', true),
+  serviceName: DS.attr('string', {defaultValue: ''}),
+  displayName: function() {
+    const displayName = App.format.role(this.get('serviceName'), true);
+    if (this.get('hasMasterOrSlaveComponent') || displayName.endsWith('Client')) {
+      return displayName;
+    } else {
+      return displayName + ' Client';
+    }
+  }.property('serviceName'),
   passiveState: DS.attr('string', {defaultValue: "OFF"}),
   workStatus: DS.attr('string'),
   rand: DS.attr('string'),
@@ -30,6 +37,7 @@ App.Service = DS.Model.extend({
   quickLinks: DS.hasMany('App.QuickLinks'),  // mapped in app/mappers/service_metrics_mapper.js method - mapQuickLinks
   hostComponents: DS.hasMany('App.HostComponent'),
   serviceConfigsTemplate: App.config.get('preDefinedServiceConfigs'),
+  desiredRepositoryVersionId: DS.attr('number'),
   /**
    * used by services("OOZIE", "ZOOKEEPER", "HIVE", "MAPREDUCE2", "TEZ", "SQOOP", "PIG","FALCON")
    * that have only client components
@@ -39,6 +47,12 @@ App.Service = DS.Model.extend({
   clientComponents: DS.hasMany('App.ClientComponent'),
   slaveComponents: DS.hasMany('App.SlaveComponent'),
   masterComponents: DS.hasMany('App.MasterComponent'),
+
+  masterComponentGroups: DS.attr('array', {
+    defaultValue: []
+  }),
+
+  hasMultipleMasterComponentGroups: Em.computed.gt('masterComponentGroups.length', 1),
 
   /**
    * Check master/slave component state of service
@@ -57,6 +71,21 @@ App.Service = DS.Model.extend({
    * @type {bool}
    */
   isInPassive: Em.computed.equal('passiveState', 'ON'),
+  
+  /**
+   * @type {bool}
+   */
+  hasMasterOrSlaveComponent: function() {
+    if (App.router.get('clusterController.isHostComponentMetricsLoaded')) {
+      return this.get('slaveComponents').toArray()
+      .concat(this.get('masterComponents').toArray())
+      .mapProperty('totalCount')
+      .reduce((a, b) => a + b, 0) > 0;
+    } else {
+      //Assume that service has master or/and slave components until data loaded
+      return true;
+    }
+  }.property('slaveComponents.@each.totalCount', 'masterComponents.@each.totalCount'),
 
   serviceComponents: function() {
     var clientComponents = this.get('clientComponents').mapProperty('componentName');
@@ -95,7 +124,7 @@ App.Service = DS.Model.extend({
   serviceTypes: function() {
     var typeServiceMap = {
       GANGLIA: ['MONITORING'],
-      HDFS: ['HA_MODE'],
+      HDFS: ['HA_MODE', 'FEDERATION'],
       YARN: ['HA_MODE'],
       RANGER: ['HA_MODE'],
       HAWQ: ['HA_MODE']
@@ -108,18 +137,23 @@ App.Service = DS.Model.extend({
    * actual_configs, then a restart is required.
    */
   isRestartRequired: function () {
-    var rhc = this.get('hostComponents').filterProperty('staleConfigs', true);
+    var serviceComponents = this.get('clientComponents').toArray()
+      .concat(this.get('slaveComponents').toArray())
+      .concat(this.get('masterComponents').toArray());
     var hc = {};
 
-    rhc.forEach(function(_rhc) {
-      var hostName = _rhc.get('hostName');
-      if (!hc[hostName]) {
-        hc[hostName] = [];
-      }
-      hc[hostName].push(_rhc.get('displayName'));
+    serviceComponents.forEach(function(component) {
+      var displayName = component.get('displayName');
+      component.get('staleConfigHosts').forEach(function(hostName) {
+        if (!hc[hostName]) {
+          hc[hostName] = [];
+        }
+        hc[hostName].push(displayName);
+      });
     });
+
     this.set('restartRequiredHostsAndComponents', hc);
-    return (rhc.length > 0);
+    return (serviceComponents.filterProperty('staleConfigHosts.length').length > 0);
   }.property('serviceName'),
   
   /**
@@ -156,16 +190,25 @@ App.Service = DS.Model.extend({
   }.property('restartRequiredHostsAndComponents'),
 
   /**
+   * @type {number}
+   */
+  warningCount: 0,
+  /**
+   * @type {number}
+   */
+  criticalCount: 0,
+
+  /**
    * Does service have Critical Alerts
    * @type {boolean}
    */
-  hasCriticalAlerts: false,
+  hasCriticalAlerts: Em.computed.gte('criticalCount', 0),
 
   /**
    * Number of the Critical and Warning alerts for current service
    * @type {number}
    */
-  alertsCount: 0
+  alertsCount: Em.computed.sumProperties('warningCount', 'criticalCount')
 
 });
 
@@ -242,6 +285,7 @@ App.Service.Health = {
  */
 App.Service.extendedModel = {
   'HDFS': 'HDFSService',
+  'ONEFS' : 'ONEFSService',
   'HBASE': 'HBaseService',
   'YARN': 'YARNService',
   'MAPREDUCE2': 'MapReduce2Service',

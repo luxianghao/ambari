@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -36,6 +36,7 @@ import org.apache.ambari.server.controller.predicate.LessPredicate;
 import org.apache.ambari.server.controller.predicate.NotPredicate;
 import org.apache.ambari.server.controller.predicate.OrPredicate;
 import org.apache.ambari.server.controller.spi.Predicate;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -45,7 +46,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_simple() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     //a=b
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR, "="));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "a"));
@@ -54,12 +55,12 @@ public class QueryParserTest {
     QueryParser parser = new QueryParser();
     Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
 
-    assertEquals(new EqualsPredicate<String>("a", "b"), p);
+    assertEquals(new EqualsPredicate<>("a", "b"), p);
   }
 
   @Test
   public void testParse() throws InvalidQueryException {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // foo=bar&(a<1&(b<=2|c>3)&d>=100)|e!=5&!(f=6|g=7)
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR, "="));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "foo"));
@@ -103,14 +104,14 @@ public class QueryParserTest {
     QueryParser parser = new QueryParser();
     Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
 
-    EqualsPredicate<String> fooPred = new EqualsPredicate<String>("foo", "bar");
-    LessPredicate<String> aPred = new LessPredicate<String>("a", "1");
-    LessEqualsPredicate<String> bPred = new LessEqualsPredicate<String>("b", "2");
-    GreaterEqualsPredicate<String> cPred = new GreaterEqualsPredicate<String>("c", "3");
-    GreaterEqualsPredicate<String> dPred = new GreaterEqualsPredicate<String>("d", "100");
-    NotPredicate ePred = new NotPredicate(new EqualsPredicate<String>("e", "5"));
-    EqualsPredicate fPred = new EqualsPredicate<String>("f", "6");
-    EqualsPredicate gPRed = new EqualsPredicate<String>("g", "7");
+    EqualsPredicate<String> fooPred = new EqualsPredicate<>("foo", "bar");
+    LessPredicate<String> aPred = new LessPredicate<>("a", "1");
+    LessEqualsPredicate<String> bPred = new LessEqualsPredicate<>("b", "2");
+    GreaterEqualsPredicate<String> cPred = new GreaterEqualsPredicate<>("c", "3");
+    GreaterEqualsPredicate<String> dPred = new GreaterEqualsPredicate<>("d", "100");
+    NotPredicate ePred = new NotPredicate(new EqualsPredicate<>("e", "5"));
+    EqualsPredicate fPred = new EqualsPredicate<>("f", "6");
+    EqualsPredicate gPRed = new EqualsPredicate<>("g", "7");
     OrPredicate bORcPred = new OrPredicate(bPred, cPred);
     AndPredicate aANDbORcPred = new AndPredicate(aPred, bORcPred);
     AndPredicate aANDbORcANDdPred = new AndPredicate(aANDbORcPred, dPred);
@@ -125,7 +126,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_NotOp__simple() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     //!a=b
     listTokens.add(new Token(Token.TYPE.LOGICAL_UNARY_OPERATOR, "!"));
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR, "="));
@@ -135,12 +136,12 @@ public class QueryParserTest {
     QueryParser parser = new QueryParser();
     Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
 
-    assertEquals(new NotPredicate(new EqualsPredicate<String>("a", "b")), p);
+    assertEquals(new NotPredicate(new EqualsPredicate<>("a", "b")), p);
   }
 
   @Test
   public void testParse_NotOp() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
      //a=1&!b=2
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR, "="));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "a"));
@@ -154,8 +155,8 @@ public class QueryParserTest {
     QueryParser parser = new QueryParser();
     Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
 
-    EqualsPredicate aPred = new EqualsPredicate<String>("a", "1");
-    EqualsPredicate bPred = new EqualsPredicate<String>("b", "2");
+    EqualsPredicate aPred = new EqualsPredicate<>("a", "1");
+    EqualsPredicate bPred = new EqualsPredicate<>("b", "2");
     NotPredicate notPred = new NotPredicate(bPred);
     AndPredicate andPred = new AndPredicate(aPred, notPred);
 
@@ -164,7 +165,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_InOp__simple() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // foo.in(one,two,3)
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".in("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "foo"));
@@ -174,9 +175,9 @@ public class QueryParserTest {
     QueryParser parser = new QueryParser();
     Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
 
-    EqualsPredicate ep1 = new EqualsPredicate("foo", "one");
-    EqualsPredicate ep2 = new EqualsPredicate("foo", "two");
-    EqualsPredicate ep3 = new EqualsPredicate("foo", "3");
+    EqualsPredicate ep1 = new EqualsPredicate<>("foo", "one");
+    EqualsPredicate ep2 = new EqualsPredicate<>("foo", "two");
+    EqualsPredicate ep3 = new EqualsPredicate<>("foo", "3");
 
     OrPredicate orPredicate = new OrPredicate(ep1, ep2, ep3);
 
@@ -185,7 +186,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_InOp__HostName() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // foo.in(one,two,3)
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".in("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "HostRoles/host_name"));
@@ -195,9 +196,9 @@ public class QueryParserTest {
     QueryParser parser = new QueryParser();
     Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
 
-    EqualsPredicate ep1 = new EqualsPredicate("HostRoles/host_name", "host1");
-    EqualsPredicate ep2 = new EqualsPredicate("HostRoles/host_name", "host2");
-    EqualsPredicate ep3 = new EqualsPredicate("HostRoles/host_name", "host3");
+    EqualsPredicate ep1 = new EqualsPredicate<>("HostRoles/host_name", "host1");
+    EqualsPredicate ep2 = new EqualsPredicate<>("HostRoles/host_name", "host2");
+    EqualsPredicate ep3 = new EqualsPredicate<>("HostRoles/host_name", "host3");
 
     OrPredicate orPredicate = new OrPredicate(ep1, ep2, ep3);
 
@@ -205,8 +206,25 @@ public class QueryParserTest {
   }
 
   @Test
+  public void testParse_InOp__HostName_Empty() throws Exception {
+    List<Token> listTokens = new ArrayList<>();
+    // foo.in(one,two,3)
+    listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".in("));
+    listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "Hosts/host_name"));
+    listTokens.add(new Token(Token.TYPE.BRACKET_CLOSE, ")"));
+
+    QueryParser parser = new QueryParser();
+    try {
+      Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
+      Assert.fail();
+    } catch (InvalidQueryException e) {
+      Assert.assertEquals(e.getMessage(), "IN operator is missing a required right operand for property Hosts/host_name");
+    }
+  }
+
+  @Test
   public void testParse_EquOp_HostName() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     //a=1&!b=2
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR, "="));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "HostRoles/host_name"));
@@ -215,7 +233,7 @@ public class QueryParserTest {
 
     QueryParser parser = new QueryParser();
     Predicate p = parser.parse(listTokens.toArray(new Token[listTokens.size()]));
-    EqualsPredicate equalsPred = new EqualsPredicate<String>("HostRoles/host_name", "host1");
+    EqualsPredicate equalsPred = new EqualsPredicate<>("HostRoles/host_name", "host1");
 
 
     assertEquals(equalsPred, p);
@@ -223,7 +241,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_InOp__exception() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // foo.in()
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".in("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "foo"));
@@ -240,7 +258,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_FilterOp() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".matches("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "foo"));
     listTokens.add(new Token(Token.TYPE.VALUE_OPERAND, ".*"));
@@ -256,7 +274,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_FilterOp_exception() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".matches("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "foo"));
     listTokens.add(new Token(Token.TYPE.BRACKET_CLOSE, ")"));
@@ -272,7 +290,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_isEmptyOp__simple() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // category1.isEmpty()
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".isEmpty("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "category1"));
@@ -286,7 +304,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_isEmptyOp__exception() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // category1.isEmpty()
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".isEmpty("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "category1"));
@@ -303,7 +321,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_isEmptyOp__exception2() throws Exception {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // category1.isEmpty()
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR_FUNC, ".isEmpty("));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "category1"));
@@ -326,7 +344,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_mismatchedBrackets() {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     // a=1&(b<=2|c>3
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR, "="));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "a"));
@@ -351,7 +369,7 @@ public class QueryParserTest {
 
   @Test
   public void testParse_outOfOrderTokens() {
-    List<Token> listTokens = new ArrayList<Token>();
+    List<Token> listTokens = new ArrayList<>();
     listTokens.add(new Token(Token.TYPE.RELATIONAL_OPERATOR, "="));
     listTokens.add(new Token(Token.TYPE.PROPERTY_OPERAND, "a"));
     listTokens.add(new Token(Token.TYPE.VALUE_OPERAND, "1"));

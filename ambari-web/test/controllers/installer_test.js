@@ -67,6 +67,24 @@ describe('App.InstallerController', function () {
     });
   });
 
+  describe('#cancelInstall', function() {
+    var mock = {
+      goToAdminView: sinon.spy()
+    };
+    beforeEach(function() {
+      sinon.stub(App.router, 'get').returns(mock);
+    });
+    afterEach(function() {
+      App.router.get.restore();
+    });
+
+    it('goToAdminView should be called', function() {
+      var popup = installerController.cancelInstall();
+      popup.onPrimary();
+      expect(mock.goToAdminView.calledOnce).to.be.true;
+    });
+  });
+
   describe('#checkRepoURL', function() {
     var stacks = Em.A([
       Em.Object.create({
@@ -75,8 +93,8 @@ describe('App.InstallerController', function () {
       Em.Object.create({
         isSelected: true,
         reload: false,
-        id: 'nn-2.5',
-        stackNameVersion: 'nn-2.5',
+        id: 'nn-cc',
+        stackNameVersion: 'nn-cc',
         repositories: Em.A([
           Em.Object.create({
             isSelected: true,
@@ -89,11 +107,11 @@ describe('App.InstallerController', function () {
             isEmpty: false,
             repositories: Em.A([
               Em.Object.create({
-                baseUrl: 'url/2.5',
                 isEmpty: false,
                 errorTitle: '1',
                 errorContent: '1',
-                validation: ''
+                validation: '',
+                showRepo: true
               })
             ])
           })
@@ -101,8 +119,7 @@ describe('App.InstallerController', function () {
       })
     ]);
     var wizard = Em.Object.create({
-      skipValidationChecked: true,
-      inappropriateUrlForStackVersion: App.WizardStep1Controller.create().inappropriateUrlForStackVersion
+      skipValidationChecked: true
     });
     it ('Should reload installed stacks', function() {
 
@@ -116,8 +133,8 @@ describe('App.InstallerController', function () {
         {
           "isSelected": true,
           "reload": true,
-          "id": "nn-2.5",
-          "stackNameVersion": 'nn-2.5',
+          "id": "nn-cc",
+          "stackNameVersion": 'nn-cc',
           "repositories": [
             {
               "isSelected": true,
@@ -130,11 +147,11 @@ describe('App.InstallerController', function () {
               "isEmpty": false,
               "repositories": [
                 {
-                  "baseUrl": "url/2.5",
                   "isEmpty": false,
                   "errorTitle": "",
                   "errorContent": "",
-                  "validation": "glyphicon glyphicon-repeat"
+                  "validation": "INPROGRESS",
+                  "showRepo": true
                 }
               ]
             }
@@ -175,7 +192,8 @@ describe('App.InstallerController', function () {
                 isEmpty: false,
                 errorTitle: '1',
                 errorContent: '1',
-                validation: ''
+                validation: '',
+                showRepo: true
               })
             ])
           })
@@ -192,7 +210,7 @@ describe('App.InstallerController', function () {
         }
       }
     };
-    it ('Should check stacks for sucess', function() {
+    it ('Should check stacks for success', function() {
 
       installerController.set('content.stacks', stacks);
       installerController.checkRepoURLSuccessCallback(null,null,data);
@@ -223,7 +241,8 @@ describe('App.InstallerController', function () {
                   "isEmpty": false,
                   "errorTitle": "1",
                   "errorContent": "1",
-                  "validation": "glyphicon glyphicon-ok"
+                  "validation": "OK",
+                  "showRepo": true
                 }
               ]
             }
@@ -310,7 +329,7 @@ describe('App.InstallerController', function () {
                   "repoId": 11,
                   "errorTitle": "500:error",
                   "errorContent": "",
-                  "validation": "glyphicon glyphicon-exclamation-sign"
+                  "validation": "INVALID"
                 }
               ]
             }
@@ -463,35 +482,54 @@ describe('App.InstallerController', function () {
       var checker = {
         loadStacks: function() {
           return {
-            always: function() {
-              loadStacks = true;
+            done: function(callback) {
+              callback(true);
             }
           };
         }
       };
 
       beforeEach(function () {
+        sinon.spy(checker, 'loadStacks');
         installerController.loadMap['1'][0].callback.call(checker);
       });
 
-      it('stack info is loaded', function () {
-        expect(loadStacks).to.be.true;
+      afterEach(function() {
+        checker.loadStacks.restore();
+      });
+
+      it('should call loadStacks, stack info not loaded', function () {
+        expect(checker.loadStacks.calledOnce).to.be.true;
       });
     });
 
-    describe ('Should load stacks async', function() {
-      var loadStacksVersions = false;
+    describe('Should load stacks async', function() {
       var checker = {
-        loadStacksVersions: function() {
-          loadStacksVersions = true;
-        }
+        loadStacksVersions: Em.K
       };
+
+      beforeEach(function () {
+        sinon.stub(checker, 'loadStacksVersions').returns({
+          done: Em.clb
+        });
+      });
+
+      afterEach(function() {
+        checker.loadStacksVersions.restore();
+      });
 
       it('stack versions are loaded', function () {
         installerController.loadMap['1'][1].callback.call(checker, true).then(function(data){
           expect(data).to.be.true;
         });
-        expect(loadStacksVersions).to.be.false;
+        expect(checker.loadStacksVersions.called).to.be.false;
+      });
+
+      it('should call loadStacksVersions, stack versions not loaded', function () {
+        installerController.loadMap['1'][1].callback.call(checker, false).then(function(data){
+          expect(data).to.be.true;
+        });
+        expect(checker.loadStacksVersions.calledOnce).to.be.true;
       });
     });
 
@@ -739,10 +777,6 @@ describe('App.InstallerController', function () {
     it ('Should return hosts', function() {
       var hosts = {
         'h1': {
-          disk_info: Em.A([{
-            available: 1,
-            size: 10
-          }]),
           hostComponents: Em.A([])
         }
       };
@@ -768,14 +802,6 @@ describe('App.InstallerController', function () {
       var res = JSON.parse(JSON.stringify(installerController.get('allHosts')));
       expect(res).to.eql([
         {
-          "diskInfo": [
-            {
-              "available": 1,
-              "size": 10
-            }
-          ],
-          "diskTotal": 0.0000095367431640625,
-          "diskFree": 9.5367431640625e-7,
           "hostComponents": [
             {
               "componentName": "component",
@@ -785,23 +811,6 @@ describe('App.InstallerController', function () {
           ]
         }
       ]);
-    });
-  });
-
-  describe('#loadServiceConfigProperties', function() {
-    beforeEach(function () {
-      sinon.stub(installerController, 'getPersistentProperty').returns($.Deferred().resolve({
-        value: 2
-      }).promise());
-    });
-    afterEach(function () {
-      installerController.getPersistentProperty.restore();
-    });
-    it ('Should load service config property', function() {
-      installerController.loadServiceConfigProperties();
-      expect(installerController.get('content.serviceConfigProperties')).to.eql({
-        "value": 2
-      });
     });
   });
 
@@ -1270,4 +1279,98 @@ describe('App.InstallerController', function () {
 
   });
 
+  describe('#finish', function() {
+    beforeEach(function() {
+      sinon.stub(installerController, 'setCurrentStep');
+      sinon.stub(installerController, 'clearStorageData');
+      sinon.stub(installerController, 'clearServiceConfigProperties');
+      sinon.stub(App.themesMapper, 'resetModels');
+      installerController.finish();
+    });
+    afterEach(function() {
+      installerController.setCurrentStep.restore();
+      installerController.clearStorageData.restore();
+      installerController.clearServiceConfigProperties.restore();
+      App.themesMapper.resetModels.restore();
+    });
+
+    it('setCurrentStep should be called', function() {
+      expect(installerController.setCurrentStep.calledWith('0')).to.be.true;
+    });
+
+    it('clearStorageData should be called', function() {
+      expect(installerController.clearStorageData.calledOnce).to.be.true;
+    });
+
+    it('clearServiceConfigProperties should be called', function() {
+      expect(installerController.clearServiceConfigProperties.calledOnce).to.be.true;
+    });
+
+    it('App.themesMapper.resetModels should be called', function() {
+      expect(App.themesMapper.resetModels.calledOnce).to.be.true;
+    });
+  });
+
+  describe('#showStackErrorAndSkipStepIfNeeded', function () {
+    afterEach(function () {
+      App.Stack.find.restore();
+      App.showAlertPopup.restore();
+    });
+    it('Should show alert popup and decrement loadStacksRequestsCounter property', function() {
+      sinon.stub(App.Stack, 'find').returns([]);
+      sinon.stub(App, 'showAlertPopup');
+      installerController.set('loadStacksRequestsCounter', 2);
+      installerController.showStackErrorAndSkipStepIfNeeded({
+        Versions: {
+          stack_name: 'HDP',
+          stack_version: '3.0',
+          'stack-errors': ['Error text1', 'Error text2']
+        }
+      });
+      var header = Em.I18n.t('installer.step1.useLocalRepo.getSurpottedOs.stackError.title').format('HDP', '3.0');
+      var body = 'Error text1. Error text2';
+      expect(App.showAlertPopup.calledOnce);
+      expect(App.showAlertPopup.calledWith(header, body));
+      expect(installerController.get('loadStacksRequestsCounter')).to.equal(1);
+    });
+
+    it('Should not return back if we have stacks available and show one popup', function() {
+      var controller = Em.Object.create({hasNotStacksAvailable: false});
+      sinon.stub(App.Stack, 'find').returns([{}]);
+      sinon.stub(App, 'showAlertPopup');
+      sinon.stub(App.router, 'get').returns(controller);
+      installerController.set('loadStacksRequestsCounter', 1);
+      installerController.showStackErrorAndSkipStepIfNeeded({
+        Versions: {
+          stack_name: 'HDP',
+          stack_version: '3.0',
+          'stack-errors': ['Error text1', 'Error text2']
+        }
+      });
+      expect(App.showAlertPopup.calledOnce);
+      expect( controller.get('hasNotStacksAvailable') ).to.equal(false);
+      App.router.get.restore();
+    });
+
+    it('Should return back if we have stacks available and show two popups', function() {
+      var controller = Em.Object.create({hasNotStacksAvailable: false});
+      sinon.stub(App.Stack, 'find').returns([]);
+      sinon.stub(App, 'showAlertPopup');
+      sinon.stub(App.router, 'get').returns(controller);
+      sinon.stub(App.router, 'send');
+      installerController.set('loadStacksRequestsCounter', 1);
+      installerController.showStackErrorAndSkipStepIfNeeded({
+        Versions: {
+          stack_name: 'HDP',
+          stack_version: '3.0',
+          'stack-errors': ['Error text1', 'Error text2']
+        }
+      });
+      expect(App.showAlertPopup.calledTwice);
+      expect(App.router.send.calledWith('gotoStep0')).to.be.true;
+      expect( controller.get('hasNotStacksAvailable') ).to.equal(true);
+      App.router.send.restore();
+      App.router.get.restore();
+    });
+  });
 });

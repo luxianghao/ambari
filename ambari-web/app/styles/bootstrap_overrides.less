@@ -18,28 +18,6 @@
 
 @import 'common.less';
 
-@bootstrap-success: #5cb85c;
-@bootstrap-info: #5bc0de;
-@bootstrap-warning: #f0ad4e;
-@bootstrap-danger: #d9534f;
-@bootstrap-primary: #337ab7;
-
-.@{health-status-red-icon} {
-  color: @health-status-red;
-}
-.@{health-status-green-icon} {
-  color: @health-status-green;
-}
-.@{health-status-yellow-icon} {
-  color: @health-status-yellow;
-}
-.@{health-status-orange-icon} {
-  color: @health-status-orange;
-}
-.@{maintenance-icon} {
-  color: @maintenance-black;
-}
-
 select.form-control {
   display: inline-block;
 }
@@ -49,12 +27,6 @@ select.form-control {
     &.help-inline {
       margin-bottom: 0;
     }
-  }
-}
-
-.popover {
-  small {
-    font-size: 1.3rem;
   }
 }
 
@@ -106,7 +78,7 @@ select.form-control {
 .panel {
   background-color: #fff;
   .panel-heading {
-    background-color: #f0f0f0;
+    background-color: #fff;
     .panel-title {
       line-height: 34px;
     }
@@ -132,6 +104,14 @@ select.form-control {
   }
 }
 
+//vertical alignment for extra high icons
+.glyphicon-repeat,
+.glyphicon-time,
+.glyphicon-refresh,
+.glyphicon-remove {
+  top: 2px;
+}
+
 
 .tooltip {
   z-index: 10000;
@@ -153,10 +133,17 @@ select.form-control {
 }
 
 .popover {
+  word-wrap: break-word;
   z-index: 10000;
   width: 350px;
   .popover-inner {
     word-wrap: break-word;
+  }
+  .popover-content {
+    white-space: pre-line;
+  }
+  small {
+    font-size: 1.3rem;
   }
 }
 
@@ -264,12 +251,12 @@ select.form-control {
 }
 
 .dropdown-submenu.pull-left {
-  float: none;
+  float: none!important;
 }
 
 .dropdown-submenu.pull-left > .dropdown-menu {
   left: -100%;
-  margin-left: 10px;
+  width: 100%;
 }
 
 .dropdown-submenu > a.disabled:after {
@@ -283,6 +270,10 @@ select.form-control {
 .nav-list > li.active > a, .nav-list > li.active > a:hover {
   background-color: #666;
   color: #fff;
+}
+
+.nav-tabs > li.active > a, .nav-tabs > li.active > a:hover, .nav-tabs > li.active > a:focus {
+  background-color: transparent;
 }
 
 @media (max-width: 992px) {
@@ -347,8 +338,21 @@ select.form-control {
     width: 1130px;
   }
 
-  .main-container {
+  .main-container, .container {
     width: 1170px;
+  }
+
+  #top-nav {
+    min-width: 1170px;
+  }
+
+  .contribview  .main-container {
+    width: auto;
+  }
+
+  .contribview .navbar .main-container {
+    width: 1170px;
+    margin: 0 auto;
   }
 
   .thumbnails {
@@ -365,6 +369,96 @@ select.form-control {
   }
 }
 
+
+@media (min-width: 1500px) {
+
+  .row {
+    *zoom: 1;
+  }
+
+  .row:before,
+  .row:after {
+    line-height: 0;
+  }
+
+  .row:after {
+    clear: both;
+  }
+
+  .navbar-fixed-top .container,
+  .navbar-fixed-bottom .container {
+    width: 1300px;
+  }
+
+  .main-container, .container {
+    width: 1340px;
+  }
+
+  #top-nav {
+    min-width: 1340px;
+  }
+
+  .contribview  .main-container {
+    width: auto;
+  }
+
+  .contribview .navbar .main-container {
+    width: 1340px;
+    margin: 0 auto;
+  }
+
+  .thumbnails {
+    margin-left: -30px;
+  }
+
+  .thumbnails > li {
+    margin-left: 30px;
+  }
+
+  .row .thumbnails {
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+
+
 .wizard .wizard-body {
   padding: 0 !important;
+}
+
+.table.table-hover .action {
+  padding-right: 10px;
+}
+
+.btn-group.open .dropdown-menu input[type="checkbox"] + label,
+.dropdown.open .dropdown-menu input[type="checkbox"] + label {
+  line-height: @default-line-height;
+}
+
+.navigation-bar-container.collapsed ul.nav.side-nav-menu li ul.sub-menu,
+.navigation-bar-container.collapsed ul.nav.side-nav-footer li ul.sub-menu {
+  padding: 5px 0;
+  background-color: #323544;
+  max-height: ~"calc(100% - 100px)";
+  overflow-y: scroll;
+}
+
+input[type="checkbox"]:checked + label:after {
+  line-height: 2em;
+}
+
+.checkbox-colored-background input[type="checkbox"] + label:before {
+  border-color: #999;
+}
+
+.radio, .checkbox {
+  margin-bottom: 0;
+  margin-top: 0;
+  label {
+    vertical-align: middle;
+  }
+}
+
+.navigation-bar-container ul.nav.side-nav-menu li.submenu-li > a {
+  padding: 10px 5px 10px 46px;
 }

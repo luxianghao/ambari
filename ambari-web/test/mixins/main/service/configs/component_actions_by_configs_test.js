@@ -37,6 +37,9 @@ describe('App.ComponentActionsByConfigs', function () {
     beforeEach(function() {
       sinon.stub(mixin, 'doComponentDeleteActions');
       sinon.stub(mixin, 'doComponentAddActions');
+      mixin.set('allConfigs', [Em.Object.create({
+        filename: ''
+      })]);
       mixin.set('stepConfigs', [Em.Object.create({
         serviceName: 'S1',
         configs: [{
@@ -124,14 +127,15 @@ describe('App.ComponentActionsByConfigs', function () {
           configActionComponent: {
             action: 'delete',
             componentName: 'C1',
-            hostName: 'host1'
+            hostNames: ['host1'],
+            isClient: false
           }
         }
       ];
       expect(mixin.getComponentsToDelete(configActionComponents)).to.be.eql([{
-        action: 'delete',
         componentName: 'C1',
-        hostName: 'host1'
+        hostName: 'host1',
+        isClient: false
       }]);
     });
   });
@@ -139,23 +143,19 @@ describe('App.ComponentActionsByConfigs', function () {
   describe("#getComponentsToAdd()", function () {
 
     beforeEach(function() {
-      sinon.stub(App.StackServiceComponent, 'find').returns([
-        Em.Object.create({
-          componentName: 'C1',
-          serviceName: 'S1'
-        })
-      ]);
-      sinon.stub(App.Service, 'find').returns([
-        Em.Object.create({
-          serviceName: 'S1',
-          hostComponents: [
-            Em.Object.create({
-              componentName: 'C1',
-              hostName: 'host2'
-            })
-          ]
-        })
-      ]);
+      sinon.stub(App.StackServiceComponent, 'find').returns(Em.Object.create({
+        componentName: 'C1',
+        serviceName: 'S1'
+      }));
+      sinon.stub(App.Service, 'find').returns(Em.Object.create({
+        serviceName: 'S1',
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'C1',
+            hostName: 'host2'
+          })
+        ]
+      }));
     });
 
     afterEach(function() {
@@ -169,14 +169,15 @@ describe('App.ComponentActionsByConfigs', function () {
           configActionComponent: {
             action: 'add',
             componentName: 'C1',
-            hostName: 'host1'
+            hostNames: ['host1'],
+            isClient: false
           }
         }
       ];
       expect(mixin.getComponentsToAdd(configActionComponents)).to.be.eql([{
-        action: 'add',
         componentName: 'C1',
-        hostName: 'host1'
+        hostName: 'host1',
+        isClient: false
       }]);
     });
   });
@@ -218,14 +219,18 @@ describe('App.ComponentActionsByConfigs', function () {
         hostName: 'host1'
       }]);
       mixin.doComponentDeleteActions();
+
       var args = testHelpers.findAjaxRequest('name', 'common.batch.request_schedules');
       expect(args[0]).to.be.eql({
         name: 'common.batch.request_schedules',
-        sender: mixin,
+        sender: {checkIfComponentWasDeleted: mixin.checkIfComponentWasDeleted},
+        success : "checkIfComponentWasDeleted",
         data: {
-          intervalTimeSeconds: 1,
+          intervalTimeSeconds: 60,
           tolerateSize: 0,
-          batches: [{}, {}]
+          batches: [{}, {}],
+          displayName: undefined,
+          hostName: 'host1'
         }
       });
     });
@@ -293,13 +298,19 @@ describe('App.ComponentActionsByConfigs', function () {
   describe("#getDependentComponents()", function () {
 
     beforeEach(function() {
-      sinon.stub(App.StackServiceComponent, 'find').returns(Em.Object.create({
-        dependencies: [{
-          scope: 'host',
-          componentName: 'C2'
-        }],
-        isClient: false
-      }));
+      var mock = sinon.stub(App.StackServiceComponent, 'find');
+      mock.returns([
+        App.StackServiceComponent.createRecord({componentName: 'C1'}),
+        App.StackServiceComponent.createRecord({componentName: 'C2'})
+      ]);
+      mock.withArgs('C1').returns(
+        App.StackServiceComponent.createRecord({
+          componentName: 'C1',
+          dependencies: [{ scope: 'host', componentName: 'C2' }],
+          isClient: false
+        })
+      );
+      mock.withArgs('C2').returns(App.StackServiceComponent.createRecord({componentName: 'C2'}));
       sinon.stub(App.HostComponent, 'find').returns([]);
     });
 
@@ -341,7 +352,7 @@ describe('App.ComponentActionsByConfigs', function () {
     it("App.ajax.send should be called", function() {
       expect(mixin.getCreateHostComponentsRequest('host1', ['C1'])).to.be.eql({
         "type": 'POST',
-        "uri": "/api/v1/clusters/mycluster/hosts",
+        "uri": "/clusters/mycluster/hosts",
         "RequestBodyInfo": {
           "RequestInfo": {
             "query": "Hosts/host_name.in(host1)"
@@ -403,7 +414,7 @@ describe('App.ComponentActionsByConfigs', function () {
     it("should return request object", function() {
       expect(mixin.getUpdateHostComponentsRequest('host1', ['C1', 'C2'], 'INSTALLED', 'context')).to.be.eql({
         "type": 'PUT',
-        "uri": "/api/v1/clusters/mycluster/hosts/host1/host_components",
+        "uri": "/clusters/mycluster/hosts/host1/host_components",
         "RequestBodyInfo": {
           "RequestInfo": {
             "context": 'context',
@@ -429,7 +440,7 @@ describe('App.ComponentActionsByConfigs', function () {
     it("should return request object", function() {
       expect(mixin.getDeleteHostComponentRequest('host1', 'C1')).to.be.eql({
         "type": 'DELETE',
-        "uri": "/api/v1/clusters/mycluster/hosts/host1/host_components/C1"
+        "uri": "/clusters/mycluster/hosts/host1/host_components/C1"
       });
     });
   });
@@ -458,7 +469,7 @@ describe('App.ComponentActionsByConfigs', function () {
       expect(batches).to.be.eql([
         {
           "type": 'POST',
-          "uri": "/api/v1/clusters/mycluster/services/S1/components/C1"
+          "uri": "/clusters/mycluster/services/S1/components/C1"
         }
       ]);
 
@@ -497,7 +508,7 @@ describe('App.ComponentActionsByConfigs', function () {
       mixin.setRefreshYarnQueueRequest(batches);
       expect(batches).to.be.eql([{
         "type": 'POST',
-        "uri": "/api/v1/clusters/mycluster/requests",
+        "uri": "/clusters/mycluster/requests",
         "RequestBodyInfo": {
           "RequestInfo": {
             "context": Em.I18n.t('services.service.actions.run.yarnRefreshQueues.context'),
@@ -514,6 +525,307 @@ describe('App.ComponentActionsByConfigs', function () {
         }
       }]);
     });
+  });
+
+  describe('#showPopup', function () {
+
+    var testCases = [
+      {
+        configActions: [],
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'no config actions'
+      },
+      {
+        configActions: [
+          {
+            actionType: 'none'
+          },
+          {
+            actionType: null
+          },
+          {}
+        ],
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'no popup config actions'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'f0'
+          })
+        ],
+        mixinProperties: {
+          allConfigs: [
+            Em.Object.create({
+              filename: 'f1',
+              value: 0,
+              initialValue: 1
+            })
+          ]
+        },
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'no associated configs'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'f2'
+          })
+        ],
+        mixinProperties: {
+          allConfigs: [
+            Em.Object.create({
+              filename: 'f2',
+              value: 0,
+              initialValue: 0
+            })
+          ]
+        },
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'no changes in associated configs'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'f3'
+          })
+        ],
+        mixinProperties: {
+          allConfigs: [
+            Em.Object.create({
+              filename: 'f3',
+              value: 0,
+              initialValue: 1
+            })
+          ]
+        },
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'no capacity-scheduler actions defined'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'capacity-scheduler.xml'
+          })
+        ],
+        mixinProperties: {
+          allConfigs: [
+            Em.Object.create({
+              filename: 'capacity-scheduler.xml',
+              value: 0,
+              initialValue: 1
+            })
+          ],
+          isYarnQueueRefreshed: true
+        },
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'YARN queue refreshed'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'capacity-scheduler.xml'
+          })
+        ],
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER'
+          }),
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER',
+            isRunning: false
+          }),
+          Em.Object.create({
+            componentName: 'COMPONENT',
+            isRunning: true
+          })
+        ],
+        mixinProperties: {
+          allConfigs: [
+            Em.Object.create({
+              filename: 'capacity-scheduler.xml',
+              value: 0,
+              initialValue: 1
+            })
+          ],
+          isYarnQueueRefreshed: false
+        },
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'no ResourceManagers running'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'capacity-scheduler.xml'
+          })
+        ],
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER'
+          }),
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER',
+            isRunning: false
+          }),
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER',
+            isRunning: true
+          }),
+          Em.Object.create({
+            componentName: 'HIVE_SERVER_INTERACTIVE'
+          })
+        ],
+        mixinProperties: {
+          'allConfigs': [
+            Em.Object.create({
+              filename: 'capacity-scheduler.xml',
+              value: 0,
+              initialValue: 1
+            })
+          ],
+          'isYarnQueueRefreshed': false,
+          'content.serviceName': 'HIVE'
+        },
+        popupPrimaryButtonCallbackCallCount: 1,
+        showHsiRestartPopupCallCount: 1,
+        showConfirmationPopupCallCount: 0,
+        title: 'change from Hive page, Hive Server Interactive present'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'capacity-scheduler.xml'
+          })
+        ],
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER'
+          }),
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER',
+            isRunning: false
+          }),
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER',
+            isRunning: true
+          })
+        ],
+        mixinProperties: {
+          'allConfigs': [
+            Em.Object.create({
+              filename: 'capacity-scheduler.xml',
+              value: 0,
+              initialValue: 1
+            })
+          ],
+          'isYarnQueueRefreshed': false,
+          'content.serviceName': 'HIVE'
+        },
+        popupPrimaryButtonCallbackCallCount: 1,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 0,
+        title: 'change from Hive page, no Hive Server Interactive'
+      },
+      {
+        configActions: [
+          Em.Object.create({
+            actionType: 'showPopup',
+            fileName: 'capacity-scheduler.xml',
+            popupProperties: {
+              primaryButton: {}
+            }
+          })
+        ],
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER'
+          }),
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER',
+            isRunning: false
+          }),
+          Em.Object.create({
+            componentName: 'RESOURCEMANAGER',
+            isRunning: true
+          })
+        ],
+        mixinProperties: {
+          'allConfigs': [
+            Em.Object.create({
+              filename: 'capacity-scheduler.xml',
+              value: 0,
+              initialValue: 1
+            })
+          ],
+          'isYarnQueueRefreshed': false,
+          'content.serviceName': 'YARN'
+        },
+        popupPrimaryButtonCallbackCallCount: 0,
+        showHsiRestartPopupCallCount: 0,
+        showConfirmationPopupCallCount: 1,
+        title: 'change from YARN page'
+      }
+    ];
+
+    testCases.forEach(function (test) {
+
+      describe(test.title, function () {
+
+        beforeEach(function () {
+          sinon.stub(App.ConfigAction, 'find').returns(test.configActions);
+          sinon.stub(App.HostComponent, 'find').returns(test.hostComponents || []);
+          sinon.stub(mixin, 'popupPrimaryButtonCallback', Em.K);
+          sinon.stub(mixin, 'showHsiRestartPopup', Em.K);
+          sinon.stub(App, 'showConfirmationPopup', Em.K);
+          mixin.setProperties(test.mixinProperties);
+          mixin.showPopup();
+        });
+
+        afterEach(function () {
+          App.ConfigAction.find.restore();
+          App.HostComponent.find.restore();
+          mixin.popupPrimaryButtonCallback.restore();
+          mixin.showHsiRestartPopup.restore();
+          App.showConfirmationPopup.restore();
+        });
+
+        it('popup callback', function () {
+          expect(mixin.popupPrimaryButtonCallback.callCount).to.eql(test.popupPrimaryButtonCallbackCallCount);
+        });
+
+        it('HSI restart popup', function () {
+          expect(mixin.showHsiRestartPopup.callCount).to.eql(test.showHsiRestartPopupCallCount);
+        });
+
+        it('confirmation popup', function () {
+          expect(App.showConfirmationPopup.callCount).to.eql(test.showConfirmationPopupCallCount);
+        });
+
+      });
+
+    });
+
   });
 
 });

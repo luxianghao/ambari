@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -41,9 +41,8 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.Role;
-import org.apache.ambari.server.RoleCommand;
 import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.controller.AmbariManagementHelper;
 import org.apache.ambari.server.metadata.ActionMetadata;
 import org.apache.ambari.server.orm.dao.ExtensionDAO;
 import org.apache.ambari.server.orm.dao.ExtensionLinkDAO;
@@ -51,6 +50,8 @@ import org.apache.ambari.server.orm.dao.MetainfoDAO;
 import org.apache.ambari.server.orm.dao.StackDAO;
 import org.apache.ambari.server.orm.entities.ExtensionEntity;
 import org.apache.ambari.server.orm.entities.ExtensionLinkEntity;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradePack;
+import org.apache.ambari.server.stack.upgrade.UpgradePack;
 import org.apache.ambari.server.state.ClientConfigFileDefinition;
 import org.apache.ambari.server.state.CommandScriptDefinition;
 import org.apache.ambari.server.state.ComponentInfo;
@@ -60,7 +61,6 @@ import org.apache.ambari.server.state.ServiceOsSpecific;
 import org.apache.ambari.server.state.StackInfo;
 import org.apache.ambari.server.state.stack.MetricDefinition;
 import org.apache.ambari.server.state.stack.OsFamily;
-import org.apache.ambari.server.state.stack.UpgradePack;
 import org.apache.commons.lang.StringUtils;
 import org.easymock.EasyMock;
 import org.junit.BeforeClass;
@@ -118,9 +118,10 @@ public class StackManagerTest {
     replay(config, metaInfoDao, stackDao, extensionDao, linkDao, actionMetadata);
 
     osFamily = new OsFamily(config);
+    AmbariManagementHelper helper = new AmbariManagementHelper(stackDao, extensionDao, linkDao);
 
     StackManager stackManager = new StackManager(new File(stackRoot), null, null, osFamily, false,
-        metaInfoDao, actionMetadata, stackDao, extensionDao, linkDao);
+        metaInfoDao, actionMetadata, stackDao, extensionDao, linkDao, helper);
 
     verify(config, metaInfoDao, stackDao, actionMetadata);
 
@@ -130,13 +131,13 @@ public class StackManagerTest {
   @Test
   public void testGetsStacks() throws Exception {
     Collection<StackInfo> stacks = stackManager.getStacks();
-    assertEquals(20, stacks.size());
+    assertEquals(21, stacks.size());
   }
 
   @Test
   public void testGetStacksByName() {
     Collection<StackInfo> stacks = stackManager.getStacks("HDP");
-    assertEquals(16, stacks.size());
+    assertEquals(17, stacks.size());
 
     stacks = stackManager.getStacks("OTHER");
     assertEquals(2, stacks.size());
@@ -154,6 +155,42 @@ public class StackManagerTest {
   }
 
   @Test
+  public void testServiceRemoved() {
+    StackInfo stack = stackManager.getStack("HDP", "2.0.8");
+    ServiceInfo service = stack.getService("SPARK");
+    assertNull(service);
+    service = stack.getService("SPARK2");
+    assertNull(service);
+    List<String> removedServices = stack.getRemovedServices();
+    assertEquals(removedServices.size(), 2);
+
+    HashSet<String> expectedServices = new HashSet<>();
+    expectedServices.add("SPARK");
+    expectedServices.add("SPARK2");
+
+    for (String s : removedServices) {
+      assertTrue(expectedServices.remove(s));
+    }
+    assertTrue(expectedServices.isEmpty());
+
+  }
+
+  @Test
+  public void testSerivcesWithNoConfigs(){
+    StackInfo stack = stackManager.getStack("HDP", "2.0.8");
+    List<String> servicesWithNoConfigs = stack.getServicesWithNoConfigs();
+    //Via inheritance, Hive should have config types
+    //Via inheritance, SystemML should still have no config types
+    assertTrue((servicesWithNoConfigs.contains("SYSTEMML")));
+    assertFalse((servicesWithNoConfigs.contains("HIVE")));
+
+    stack = stackManager.getStack("HDP", "2.0.7");
+    //Directly from the stack, SystemML should have no config types
+    servicesWithNoConfigs = stack.getServicesWithNoConfigs();
+    assertTrue((servicesWithNoConfigs.contains("SYSTEMML")));
+  }
+
+  @Test
   public void testGetStack() {
     StackInfo stack = stackManager.getStack("HDP", "0.1");
     assertNotNull(stack);
@@ -164,7 +201,7 @@ public class StackManagerTest {
     Collection<ServiceInfo> services = stack.getServices();
     assertEquals(3, services.size());
 
-    Map<String, ServiceInfo> serviceMap = new HashMap<String, ServiceInfo>();
+    Map<String, ServiceInfo> serviceMap = new HashMap<>();
     for (ServiceInfo service : services) {
       serviceMap.put(service.getName(), service);
     }
@@ -173,7 +210,7 @@ public class StackManagerTest {
     List<ComponentInfo> components = hdfsService.getComponents();
     assertEquals(6, components.size());
     List<PropertyInfo> properties = hdfsService.getProperties();
-    assertEquals(62, properties.size());
+    assertEquals(64, properties.size());
 
     // test a couple of the properties for filename
     boolean hdfsPropFound = false;
@@ -239,9 +276,19 @@ public class StackManagerTest {
     assertEquals("2.1.1", stack.getVersion());
     Collection<ServiceInfo> services = stack.getServices();
 
+    ServiceInfo si = stack.getService("SPARK");
+    assertNull(si);
+
+    si = stack.getService("SPARK2");
+    assertNull(si);
+
+    si = stack.getService("SPARK3");
+    assertNotNull(si);
+
     //should include all stacks in hierarchy
-    assertEquals(16, services.size());
-    HashSet<String> expectedServices = new HashSet<String>();
+    assertEquals(18, services.size());
+
+    HashSet<String> expectedServices = new HashSet<>();
     expectedServices.add("GANGLIA");
     expectedServices.add("HBASE");
     expectedServices.add("HCATALOG");
@@ -258,6 +305,8 @@ public class StackManagerTest {
     expectedServices.add("FAKENAGIOS");
     expectedServices.add("TEZ");
     expectedServices.add("AMBARI_METRICS");
+    expectedServices.add("SPARK3");
+    expectedServices.add("SYSTEMML");
 
     ServiceInfo pigService = null;
     for (ServiceInfo service : services) {
@@ -351,7 +400,7 @@ public class StackManagerTest {
     // compare components
     List<ComponentInfo> stormServiceComponents = stormService.getComponents();
     List<ComponentInfo> baseStormServiceComponents = baseStormService.getComponents();
-    assertEquals(new HashSet<ComponentInfo>(stormServiceComponents), new HashSet<ComponentInfo>(baseStormServiceComponents));
+    assertEquals(new HashSet<>(stormServiceComponents), new HashSet<>(baseStormServiceComponents));
     // values from base service
     assertEquals(baseStormService.isDeleted(), stormService.isDeleted());
     //todo: specify alerts file in stack
@@ -462,7 +511,7 @@ public class StackManagerTest {
   public void testMonitoringServicePropertyInheritance() throws Exception{
     StackInfo stack = stackManager.getStack("HDP", "2.0.8");
     Collection<ServiceInfo> allServices = stack.getServices();
-    assertEquals(13, allServices.size());
+    assertEquals(15, allServices.size());
 
     boolean monitoringServiceFound = false;
 
@@ -483,8 +532,8 @@ public class StackManagerTest {
     StackInfo stack = stackManager.getStack("HDP", "2.0.6");
     Collection<ServiceInfo> allServices = stack.getServices();
 
-    assertEquals(11, allServices.size());
-    HashSet<String> expectedServices = new HashSet<String>();
+    assertEquals(12, allServices.size());
+    HashSet<String> expectedServices = new HashSet<>();
     expectedServices.add("GANGLIA");
     expectedServices.add("HBASE");
     expectedServices.add("HCATALOG");
@@ -493,6 +542,7 @@ public class StackManagerTest {
     expectedServices.add("MAPREDUCE2");
     expectedServices.add("OOZIE");
     expectedServices.add("PIG");
+    expectedServices.add("SPARK");
     expectedServices.add("ZOOKEEPER");
     expectedServices.add("FLUME");
     expectedServices.add("YARN");
@@ -671,16 +721,8 @@ public class StackManagerTest {
 
   }
 
-  @Test
-  public void testInheritKerberosDescriptor() throws Exception {
-    StackInfo stack = stackManager.getStack("HDP", "2.1.1");
-    String stacksFolder = ClassLoader.getSystemClassLoader().getResource("stacks").getPath();
-    assertEquals(new File(stacksFolder, "HDP/2.0.8/kerberos.json").getAbsolutePath(),
-        stack.getKerberosDescriptorFileLocation());
-  }
-
   /**
-   * Tests that {@link UpgradePack} instances are correctly initialized
+   * Tests that {@link UpgradePack} and {@link ConfigUpgradePack} instances are correctly initialized
    * post-unmarshalling.
    *
    * @throws Exception
@@ -697,6 +739,9 @@ public class StackManagerTest {
       // reference equality (make sure it's the same list)
       assertTrue(upgradePack.getTasks() == upgradePack.getTasks());
     }
+    ConfigUpgradePack configUpgradePack = stack.getConfigUpgradePack();
+    assertNotNull(configUpgradePack);
+    assertNotNull(configUpgradePack.services);
   }
 
   @Test
@@ -705,7 +750,7 @@ public class StackManagerTest {
     URL rootDirectoryURL = StackManagerTest.class.getResource("/");
     Assert.notNull(rootDirectoryURL);
 
-    File resourcesDirectory = new File(new File(rootDirectoryURL.getFile()).getParentFile().getParentFile(), "src/main/resources");
+    File resourcesDirectory = new File(new File(rootDirectoryURL.getFile()).getParentFile().getParentFile(), "src/test/resources");
 
     File stackRoot = new File(resourcesDirectory, "stacks");
     File commonServices = new File(resourcesDirectory, "common-services");
@@ -742,9 +787,10 @@ public class StackManagerTest {
     replay(config, metaInfoDao, stackDao, extensionDao, linkDao, actionMetadata);
 
     OsFamily osFamily = new OsFamily(config);
+    AmbariManagementHelper helper = new AmbariManagementHelper(stackDao, extensionDao, linkDao);
 
     StackManager stackManager = new StackManager(stackRoot, commonServices, extensions,
-            osFamily, false, metaInfoDao, actionMetadata, stackDao, extensionDao, linkDao);
+            osFamily, false, metaInfoDao, actionMetadata, stackDao, extensionDao, linkDao, helper);
 
     for (StackInfo stackInfo : stackManager.getStacks()) {
       for (ServiceInfo serviceInfo : stackInfo.getServices()) {
@@ -766,215 +812,14 @@ public class StackManagerTest {
   }
 
   @Test
-  public void testServicesWithRangerPluginRoleCommandOrder() throws AmbariException {
-    URL rootDirectoryURL = StackManagerTest.class.getResource("/");
-    Assert.notNull(rootDirectoryURL);
+  public void testVersionDefinitionStackRepoUpdateLinkExists(){
+    // Get the base sqoop service
+    StackInfo stack = stackManager.getStack("HDP", "2.1.1");
+    String latestUri = stack.getRepositoryXml().getLatestURI();
+    assertTrue(latestUri != null);
 
-    File resourcesDirectory = new File(new File(rootDirectoryURL.getFile()).getParentFile().getParentFile(), "src/main/resources");
-
-    File stackRoot = new File(resourcesDirectory, "stacks");
-    File commonServices = new File(resourcesDirectory, "common-services");
-    File extensions = null;
-
-    try {
-      URL extensionsURL = ClassLoader.getSystemClassLoader().getResource("extensions");
-      if (extensionsURL != null) {
-        extensions = new File(extensionsURL.getPath().replace("test-classes","classes"));
-      }
-    }
-    catch (Exception e) {}
-
-    MetainfoDAO metaInfoDao = createNiceMock(MetainfoDAO.class);
-    StackDAO stackDao = createNiceMock(StackDAO.class);
-    ExtensionDAO extensionDao = createNiceMock(ExtensionDAO.class);
-    ExtensionLinkDAO linkDao = createNiceMock(ExtensionLinkDAO.class);
-    ActionMetadata actionMetadata = createNiceMock(ActionMetadata.class);
-    Configuration config = createNiceMock(Configuration.class);
-    ExtensionEntity extensionEntity = createNiceMock(ExtensionEntity.class);
-
-    expect(config.getSharedResourcesDirPath()).andReturn(
-      ClassLoader.getSystemClassLoader().getResource("").getPath()).anyTimes();
-
-    expect(
-        extensionDao.find(EasyMock.anyObject(String.class),
-            EasyMock.anyObject(String.class))).andReturn(extensionEntity).atLeastOnce();
-
-    List<ExtensionLinkEntity> list = Collections.emptyList();
-    expect(
-        linkDao.findByStack(EasyMock.anyObject(String.class),
-            EasyMock.anyObject(String.class))).andReturn(list).atLeastOnce();
-
-    replay(config, metaInfoDao, stackDao, extensionDao, linkDao, actionMetadata);
-
-    OsFamily osFamily = new OsFamily(config);
-
-    StackManager stackManager = new StackManager(stackRoot, commonServices, extensions, osFamily,
-        false, metaInfoDao, actionMetadata, stackDao, extensionDao, linkDao);
-
-    String rangerUserSyncRoleCommand = Role.RANGER_USERSYNC + "-" + RoleCommand.START;
-    String rangerAdminRoleCommand = Role.RANGER_ADMIN + "-" + RoleCommand.START;
-    String zookeeperServerRoleCommand = Role.ZOOKEEPER_SERVER + "-" + RoleCommand.START;
-    String nodeManagerRoleCommand = Role.NODEMANAGER + "-" + RoleCommand.START;
-    String mySqlServerRoleCommand = Role.MYSQL_SERVER + "-" + RoleCommand.START;
-
-    // When
-    StackInfo hdp = stackManager.getStack("HDP", "2.3");
-    Map<String, Object> rco = hdp.getRoleCommandOrder().getContent();
-
-    // Then
-    // verify that services that have ranger plugin are after ranger admin in the role command order sequence
-    // as these services require ranger admin and ranger user sync to up upfront
-    Map<String, Object> generalDeps = (Map<String, Object>)rco.get("general_deps");
-    Map<String, Object> optionalNoGlusterfs = (Map<String, Object>)rco.get("optional_no_glusterfs");
-
-
-    // HDFS
-    String nameNodeRoleCommand  = Role.NAMENODE +  "-" + RoleCommand.START;
-    ArrayList<String> nameNodeBlockers = (ArrayList<String>)optionalNoGlusterfs.get(nameNodeRoleCommand);
-
-    assertTrue(nameNodeRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, nameNodeBlockers.contains(rangerUserSyncRoleCommand));
-
-    String dataNodeRoleCommand = Role.DATANODE +  "-" + RoleCommand.START;
-    ArrayList<String> dataNodeBlockers = (ArrayList<String>)optionalNoGlusterfs.get(dataNodeRoleCommand);
-
-    assertTrue(dataNodeRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, dataNodeBlockers.contains(rangerUserSyncRoleCommand));
-
-    // YARN
-    String resourceManagerCommandRoleCommand = Role.RESOURCEMANAGER +  "-" + RoleCommand.START;
-    ArrayList<String> resourceManagerBlockers = (ArrayList<String>)generalDeps.get(resourceManagerCommandRoleCommand);
-
-    assertTrue(resourceManagerCommandRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, resourceManagerBlockers.contains(rangerUserSyncRoleCommand));
-
-
-    // HBase
-    String hbaseRoleCommand = Role.HBASE_MASTER +  "-" + RoleCommand.START;
-    ArrayList<String> hbaseBlockers = (ArrayList<String>)generalDeps.get(hbaseRoleCommand);
-
-    assertTrue(hbaseRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, hbaseBlockers.contains(rangerUserSyncRoleCommand));
-    assertTrue(hbaseRoleCommand + " should be dependent of " + zookeeperServerRoleCommand, hbaseBlockers.contains(zookeeperServerRoleCommand));
-
-    // Knox
-    String knoxRoleCommand = Role.KNOX_GATEWAY +  "-" + RoleCommand.START;
-    ArrayList<String> knoxBlockers = (ArrayList<String>)generalDeps.get(knoxRoleCommand);
-
-    assertTrue(knoxRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, knoxBlockers.contains(rangerUserSyncRoleCommand));
-
-    // Kafka
-    String kafkaRoleCommand = Role.KAFKA_BROKER +  "-" + RoleCommand.START;
-    ArrayList<String> kafkaBlockers = (ArrayList<String>)generalDeps.get(kafkaRoleCommand);
-
-    assertTrue(Role.KAFKA_BROKER + "-" + RoleCommand.START + " should be dependent of " + rangerUserSyncRoleCommand, kafkaBlockers.contains(rangerUserSyncRoleCommand));
-
-    // Hive
-    String hiveRoleCommand = Role.HIVE_SERVER +  "-" + RoleCommand.START;
-    ArrayList<String> hiveBlockers = (ArrayList<String>)generalDeps.get(hiveRoleCommand);
-
-    assertTrue(hiveRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, hiveBlockers.contains(rangerUserSyncRoleCommand));
-    assertTrue(hiveRoleCommand + " should be dependent of " + nodeManagerRoleCommand, hiveBlockers.contains(nodeManagerRoleCommand));
-    assertTrue(hiveRoleCommand + " should be dependent of " + mySqlServerRoleCommand, hiveBlockers.contains(mySqlServerRoleCommand));
-
-    // Storm
-    String stormRoleCommand = Role.NIMBUS +  "-" + RoleCommand.START;
-    ArrayList<String> stormBlockers = (ArrayList<String>)generalDeps.get(stormRoleCommand);
-
-    assertTrue(stormRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, stormBlockers.contains(rangerUserSyncRoleCommand));
-    assertTrue(stormRoleCommand + " should be dependent of " + zookeeperServerRoleCommand, stormBlockers.contains(zookeeperServerRoleCommand));
-
-    // Ranger KMS
-    String kmsRoleCommand = Role.RANGER_KMS_SERVER +  "-" + RoleCommand.START;
-    ArrayList<String> rangerKmsBlockers = (ArrayList<String>)generalDeps.get(kmsRoleCommand);
-
-    assertTrue(kmsRoleCommand + " should be dependent of " + rangerAdminRoleCommand, rangerKmsBlockers.contains(rangerAdminRoleCommand));
-
-    // Ranger User Sync
-    ArrayList<String> rangerUserSyncBlockers = (ArrayList<String>)generalDeps.get(rangerUserSyncRoleCommand);
-
-    assertTrue(rangerUserSyncRoleCommand + " should be dependent of " + rangerAdminRoleCommand, rangerUserSyncBlockers.contains(rangerAdminRoleCommand));
-    assertTrue(rangerUserSyncRoleCommand + " should be dependent of " + kmsRoleCommand, rangerUserSyncBlockers.contains(kmsRoleCommand));
-  }
-  //todo: component override assertions
-
-  @Test
-  public void testServicesWithLogsearchRoleCommandOrder() throws AmbariException {
-    URL rootDirectoryURL = StackManagerTest.class.getResource("/");
-    Assert.notNull(rootDirectoryURL);
-
-    File resourcesDirectory = new File(new File(rootDirectoryURL.getFile()).getParentFile().getParentFile(), "src/main/resources");
-
-    File stackRoot = new File(resourcesDirectory, "stacks");
-    File commonServices = new File(resourcesDirectory, "common-services");
-    File extensions = null;
-
-    try {
-         URL extensionsURL = ClassLoader.getSystemClassLoader().getResource("extensions");
-      if (extensionsURL != null) {
-        extensions = new File(extensionsURL.getPath().replace("test-classes","classes"));
-      }
-    }
-    catch (Exception e) {}
-
-    MetainfoDAO metaInfoDao = createNiceMock(MetainfoDAO.class);
-    StackDAO stackDao = createNiceMock(StackDAO.class);
-    ExtensionDAO extensionDao = createNiceMock(ExtensionDAO.class);
-    ExtensionLinkDAO linkDao = createNiceMock(ExtensionLinkDAO.class);
-    ActionMetadata actionMetadata = createNiceMock(ActionMetadata.class);
-    Configuration config = createNiceMock(Configuration.class);
-    ExtensionEntity extensionEntity = createNiceMock(ExtensionEntity.class);
-
-    expect(config.getSharedResourcesDirPath()).andReturn(
-      ClassLoader.getSystemClassLoader().getResource("").getPath()).anyTimes();
-
-    expect(
-        extensionDao.find(EasyMock.anyObject(String.class),
-            EasyMock.anyObject(String.class))).andReturn(extensionEntity).atLeastOnce();
-
-    List<ExtensionLinkEntity> list = Collections.emptyList();
-    expect(
-        linkDao.findByStack(EasyMock.anyObject(String.class),
-            EasyMock.anyObject(String.class))).andReturn(list).atLeastOnce();
-
-    replay(config, metaInfoDao, stackDao, extensionDao, linkDao, actionMetadata);
-
-    OsFamily osFamily = new OsFamily(config);
-
-    StackManager stackManager = new StackManager(stackRoot, commonServices, extensions, osFamily,
-        false, metaInfoDao, actionMetadata, stackDao, extensionDao, linkDao);
-
-    String zookeeperServerRoleCommand = Role.ZOOKEEPER_SERVER + "-" + RoleCommand.START;
-    String logsearchServerRoleCommand = Role.LOGSEARCH_SERVER + "-" + RoleCommand.START;
-    String infraSolrRoleCommand = Role.INFRA_SOLR + "-" + RoleCommand.START;
-    String logsearchLogfeederRoleCommand = Role.LOGSEARCH_LOGFEEDER + "-" + RoleCommand.START;
-
-    StackInfo hdp = stackManager.getStack("HDP", "2.3");
-    Map<String, Object> rco = hdp.getRoleCommandOrder().getContent();
-
-    Map<String, Object> generalDeps = (Map<String, Object>) rco.get("general_deps");
-    Map<String, Object> optionalNoGlusterfs = (Map<String, Object>) rco.get("optional_no_glusterfs");
-
-    // HDFS/YARN - verify that the stack level rco still works as expected
-    String nameNodeRoleCommand = Role.NAMENODE + "-" + RoleCommand.START;
-    String rangerUserSyncRoleCommand = Role.RANGER_USERSYNC + "-" + RoleCommand.START;
-    ArrayList<String> nameNodeBlockers = (ArrayList<String>) optionalNoGlusterfs.get(nameNodeRoleCommand);
-
-    assertTrue(nameNodeRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, nameNodeBlockers.contains(rangerUserSyncRoleCommand));
-
-    String resourceManagerCommandRoleCommand = Role.RESOURCEMANAGER +  "-" + RoleCommand.START;
-    ArrayList<String> resourceManagerBlockers = (ArrayList<String>)generalDeps.get(resourceManagerCommandRoleCommand);
-
-    assertTrue(resourceManagerCommandRoleCommand + " should be dependent of " + rangerUserSyncRoleCommand, resourceManagerBlockers.contains(rangerUserSyncRoleCommand));
-
-    // verify logsearch rco
-    // LogSearch Solr
-    ArrayList<String> logsearchSolrBlockers = (ArrayList<String>) generalDeps.get(infraSolrRoleCommand);
-    assertTrue(infraSolrRoleCommand + " should be dependent of " + zookeeperServerRoleCommand, logsearchSolrBlockers.contains(zookeeperServerRoleCommand));
-
-    // LogSearch Server
-    ArrayList<String> logsearchServerBlockers = (ArrayList<String>) generalDeps.get(logsearchServerRoleCommand);
-    assertTrue(logsearchServerRoleCommand + " should be dependent of " + infraSolrRoleCommand, logsearchServerBlockers.contains(infraSolrRoleCommand));
-
-    // LogSearch LogFeeder
-    ArrayList<String> logsearchLogfeederBlockers = (ArrayList<String>) generalDeps.get(logsearchLogfeederRoleCommand);
-    assertTrue(logsearchLogfeederRoleCommand + " should be dependent of " + infraSolrRoleCommand, logsearchLogfeederBlockers.contains(infraSolrRoleCommand));
-    assertTrue(logsearchLogfeederRoleCommand + " should be dependent of " + logsearchServerRoleCommand, logsearchLogfeederBlockers.contains(logsearchServerRoleCommand));
+    stack = stackManager.getStack("HDP", "2.0.8");
+    latestUri = stack.getRepositoryXml().getLatestURI();
+    assertTrue(latestUri == null);
   }
 }

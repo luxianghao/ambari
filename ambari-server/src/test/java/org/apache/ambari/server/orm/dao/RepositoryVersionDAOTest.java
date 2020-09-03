@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,19 +18,19 @@
 
 package org.apache.ambari.server.orm.dao;
 
+import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.UUID;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
-import org.apache.ambari.server.orm.OrmTestHelper;
-import org.apache.ambari.server.orm.entities.ClusterEntity;
-import org.apache.ambari.server.orm.entities.ClusterVersionEntity;
 import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.orm.entities.StackEntity;
-import org.apache.ambari.server.state.RepositoryVersionState;
 import org.apache.ambari.server.state.StackId;
+import org.apache.ambari.spi.RepositoryType;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -38,7 +38,6 @@ import org.junit.Test;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 
 /**
  * RepositoryVersionDAO unit tests.
@@ -52,20 +51,14 @@ public class RepositoryVersionDAOTest {
   private static final StackId BAD_STACK = new StackId("BADSTACK", "1.0");
 
   private RepositoryVersionDAO repositoryVersionDAO;
-  private ClusterVersionDAO clusterVersionDAO;
 
-  private ClusterDAO clusterDAO;
   private StackDAO stackDAO;
-  private OrmTestHelper helper;
 
   @Before
   public void before() {
     injector = Guice.createInjector(new InMemoryDefaultTestModule());
     repositoryVersionDAO = injector.getInstance(RepositoryVersionDAO.class);
-    clusterVersionDAO = injector.getInstance(ClusterVersionDAO.class);
-    clusterDAO = injector.getInstance(ClusterDAO.class);
     stackDAO = injector.getInstance(StackDAO.class);
-    helper = injector.getInstance(OrmTestHelper.class);
     injector.getInstance(GuiceJpaInitializer.class);
 
     // required to populate stacks into the database
@@ -80,7 +73,7 @@ public class RepositoryVersionDAOTest {
 
     final RepositoryVersionEntity entity = new RepositoryVersionEntity();
     entity.setDisplayName("display name");
-    entity.setOperatingSystems("repositories");
+    entity.addRepoOsEntities(new ArrayList<>());
     entity.setStack(stackEntity);
     entity.setVersion("version");
     repositoryVersionDAO.create(entity);
@@ -100,14 +93,14 @@ public class RepositoryVersionDAOTest {
 
     // Assert the version must be unique
     RepositoryVersionEntity dupVersion = new RepositoryVersionEntity();
-    dupVersion.setDisplayName("display name " + uuid.toString());
-    dupVersion.setOperatingSystems("repositories");
+    dupVersion.setDisplayName("display name " + uuid);
+    dupVersion.addRepoOsEntities(new ArrayList<>());
     dupVersion.setStack(stackEntity);
     dupVersion.setVersion(first.getVersion());
 
     boolean exceptionThrown = false;
     try {
-      repositoryVersionDAO.create(stackEntity, dupVersion.getVersion(), dupVersion.getDisplayName(), dupVersion.getOperatingSystemsJson());
+      repositoryVersionDAO.create(stackEntity, dupVersion.getVersion(), dupVersion.getDisplayName(), dupVersion.getRepoOsEntities());
     } catch (AmbariException e) {
       exceptionThrown = true;
       Assert.assertTrue(e.getMessage().contains("already exists"));
@@ -120,7 +113,7 @@ public class RepositoryVersionDAOTest {
     // The version must belong to the stack
     dupVersion.setVersion("2.3-1234");
     try {
-      repositoryVersionDAO.create(stackEntity, dupVersion.getVersion(), dupVersion.getDisplayName(), dupVersion.getOperatingSystemsJson());
+      repositoryVersionDAO.create(stackEntity, dupVersion.getVersion(), dupVersion.getDisplayName(), dupVersion.getRepoOsEntities());
     } catch (AmbariException e) {
       exceptionThrown = true;
       Assert.assertTrue(e.getMessage().contains("needs to belong to stack"));
@@ -131,7 +124,7 @@ public class RepositoryVersionDAOTest {
     // Success
     dupVersion.setVersion(stackEntity.getStackVersion() + "-1234");
     try {
-      repositoryVersionDAO.create(stackEntity, dupVersion.getVersion(), dupVersion.getDisplayName(), dupVersion.getOperatingSystemsJson());
+      repositoryVersionDAO.create(stackEntity, dupVersion.getVersion(), dupVersion.getDisplayName(), dupVersion.getRepoOsEntities());
     } catch (AmbariException e) {
       Assert.fail("Did not expect a failure creating the Repository Version");
     }
@@ -175,31 +168,6 @@ public class RepositoryVersionDAOTest {
   }
 
   @Test
-  public void testDeleteCascade() throws Exception {
-    long clusterId = helper.createCluster();
-    ClusterEntity cluster = clusterDAO.findById(clusterId);
-    createSingleRecord();
-    final RepositoryVersionEntity entity = repositoryVersionDAO.findByStackAndVersion(
-        HDP_206, "version");
-
-    ClusterVersionEntity cvA = new ClusterVersionEntity(cluster, entity, RepositoryVersionState.INSTALLED, System.currentTimeMillis(), System.currentTimeMillis(), "admin");
-    clusterVersionDAO.create(cvA);
-    long cvAId = cvA.getId();
-    cvA = clusterVersionDAO.findByPK(cvAId);
-    Assert.assertNotNull(cvA.getRepositoryVersion());
-    final RepositoryVersionEntity newEntity = repositoryVersionDAO.findByStackAndVersion(
-        HDP_206, "version");
-    try {
-      repositoryVersionDAO.remove(newEntity);
-    } catch (Exception e) {
-      //Cascade deletion will fail because absent integrity in in-memory DB
-      Assert.assertNotNull(clusterVersionDAO.findByPK(cvAId));
-    }
-    //
-
-  }
-
-  @Test
   public void testRemovePrefixFromVersion() {
 
     StackEntity hdp206StackEntity = stackDAO.find(HDP_206.getStackName(),
@@ -208,7 +176,7 @@ public class RepositoryVersionDAOTest {
 
     final RepositoryVersionEntity hdp206RepoEntity = new RepositoryVersionEntity();
     hdp206RepoEntity.setDisplayName("HDP-2.0.6.0-1234");
-    hdp206RepoEntity.setOperatingSystems("repositories");
+    hdp206RepoEntity.addRepoOsEntities(new ArrayList<>());
     hdp206RepoEntity.setStack(hdp206StackEntity);
     hdp206RepoEntity.setVersion("HDP-2.0.6.0-1234");
     repositoryVersionDAO.create(hdp206RepoEntity);
@@ -223,7 +191,7 @@ public class RepositoryVersionDAOTest {
 
     final RepositoryVersionEntity other10RepoEntity = new RepositoryVersionEntity();
     other10RepoEntity.setDisplayName("OTHER-1.0.1.0-1234");
-    other10RepoEntity.setOperatingSystems("repositories");
+    other10RepoEntity.addRepoOsEntities(new ArrayList<>());
     other10RepoEntity.setStack(other10StackEntity);
     other10RepoEntity.setVersion("OTHER-1.0.1.0-1234");
     repositoryVersionDAO.create(other10RepoEntity);
@@ -233,9 +201,20 @@ public class RepositoryVersionDAOTest {
         "1.0.1.0-1234"));
   }
 
+  @Test
+  public void testFindByStackAndType() {
+    createSingleRecord();
+
+    Assert.assertEquals(1,
+        repositoryVersionDAO.findByStackAndType(HDP_206, RepositoryType.STANDARD).size());
+
+    Assert.assertEquals(0,
+        repositoryVersionDAO.findByStackAndType(HDP_206, RepositoryType.MAINT).size());
+  }
+
   @After
-  public void after() {
-    injector.getInstance(PersistService.class).stop();
+  public void after() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
     injector = null;
   }
 }

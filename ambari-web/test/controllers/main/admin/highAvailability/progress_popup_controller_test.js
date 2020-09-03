@@ -239,13 +239,11 @@ describe('App.HighAvailabilityProgressPopupController', function () {
   describe("#initPopup()", function () {
 
     beforeEach(function() {
-      sinon.stub(App.ModalPopup, 'show');
       sinon.stub(controller, 'getHosts');
       sinon.stub(controller, 'setProperties');
     });
 
     afterEach(function() {
-      App.ModalPopup.show.restore();
       controller.getHosts.restore();
       controller.setProperties.restore();
     });
@@ -360,11 +358,13 @@ describe('App.HighAvailabilityProgressPopupController', function () {
         }
       ];
       controller.setProperties({
+        requestIds: [1],
         popupTitle: 'popupTitle'
       });
       controller.calculateHostsData(data);
       expect(controller.get('services')).to.be.eql([
         {
+          "id": 1,
           "name": "popupTitle",
           "hosts": [
             {

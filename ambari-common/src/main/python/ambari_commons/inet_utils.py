@@ -19,12 +19,22 @@ limitations under the License.
 '''
 
 import os
+import time
 import sys
 import urllib2
 import socket
+import re
+from ambari_commons import OSCheck
 from functools import wraps
 
 from exceptions import FatalException, NonFatalException, TimeoutError
+
+if OSCheck.is_windows_family():
+  from ambari_commons.os_windows import os_run_os_command
+else:
+  # MacOS not supported
+  from ambari_commons.os_linux import os_run_os_command
+  pass
 
 from logging_utils import *
 from os_check import OSCheck
@@ -58,6 +68,30 @@ def download_file(link, destination, chunk_size=16 * 1024, progress_func = None)
   force_download_file(link, destination, chunk_size, progress_func = progress_func)
 
 
+def download_file_anyway(link, destination, chunk_size=16 * 1024, progress_func = None):
+  print_info_msg("Trying to download {0} to {1} with python lib [urllib2].".format(link, destination))
+  if os.path.exists(destination):
+    print_warning_msg("File {0} already exists, assuming it was downloaded before".format(destination))
+    return
+  try:
+    force_download_file(link, destination, chunk_size, progress_func = progress_func)
+  except:
+    print_error_msg("Download {0} with python lib [urllib2] failed with error: {1}".format(link, str(sys.exc_info())))
+
+  if not os.path.exists(destination):
+    print "Trying to download {0} to {1} with [curl] command.".format(link, destination)
+    #print_info_msg("Trying to download {0} to {1} with [curl] command.".format(link, destination))
+    curl_command = "curl --fail -k -o %s %s" % (destination, link)
+    retcode, out, err = os_run_os_command(curl_command)
+    if retcode != 0:
+      print_error_msg("Download file {0} with [curl] command failed with error: {1}".format(link, out + err))
+
+
+  if not os.path.exists(destination):
+    print_error_msg("Unable to download file {0}!".format(link))
+    print "ERROR: unable to donwload file %s!" % (link)
+
+
 def download_progress(file_name, downloaded_size, blockSize, totalSize):
   percent = int(downloaded_size * 100 / totalSize)
   status = "\r" + file_name
@@ -70,6 +104,17 @@ def download_progress(file_name, downloaded_size, blockSize, totalSize):
   sys.stdout.write(status)
   sys.stdout.flush()
 
+def wait_for_port_opened(hostname, port, tries_count, try_sleep):
+  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  sock.settimeout(2)
+
+  for i in range(tries_count):
+    if sock.connect_ex((hostname, port)) == 0:
+      return True
+    time.sleep(try_sleep)
+
+  return False
+
 
 def find_range_components(meta):
   file_size = 0
@@ -80,7 +125,7 @@ def find_range_components(meta):
     if len(range_comp1) > 1:
       range_comp2 = range_comp1[0].split(' ') #split away the "bytes" prefix
       if len(range_comp2) == 0:
-        raise FatalException(12, 'Malformed Content-Range response header: "{0}".' % hdr_range)
+        raise FatalException(12, 'Malformed Content-Range response header: "{0}".'.format(hdr_range))
       range_comp3 = range_comp2[1].split('-')
       seek_pos = int(range_comp3[0])
       if range_comp1[1] != '*': #'*' == unknown length
@@ -101,7 +146,7 @@ def force_download_file(link, destination, chunk_size = 16 * 1024, progress_func
 
   if os.path.exists(destination) and not os.path.isfile(destination):
     #Directory specified as target? Must be a mistake. Bail out, don't assume anything.
-    err = 'Download target {0} is a directory.' % destination
+    err = 'Download target {0} is a directory.'.format(destination)
     raise FatalException(1, err)
 
   (dest_path, file_name) = os.path.split(destination)
@@ -162,7 +207,7 @@ def force_download_file(link, destination, chunk_size = 16 * 1024, progress_func
 
   downloaded_size = os.stat(temp_dest).st_size
   if downloaded_size != file_size:
-    err = 'Size of downloaded file {0} is {1} bytes, it is probably damaged or incomplete' % (destination, downloaded_size)
+    err = 'Size of downloaded file {0} is {1} bytes, it is probably damaged or incomplete'.format(destination, downloaded_size)
     raise FatalException(1, err)
 
   # when download is complete -> mv temp_dest destination
@@ -183,22 +228,71 @@ def resolve_address(address):
       return '127.0.0.1'
   return address
 
-def ensure_ssl_using_tls_v1():
+def ensure_ssl_using_protocol(protocol="PROTOCOL_TLSv1_2", ca_certs=None):
   """
-  Monkey patching ssl module to force it use tls_v1. Do this in common module to avoid problems with
-  PythonReflectiveExecutor.
+  Patching ssl module to use configured protocol and ca certs
+
+  :param protocol: one of ("PROTOCOL_SSLv2", "PROTOCOL_SSLv3", "PROTOCOL_SSLv23", "PROTOCOL_TLSv1", "PROTOCOL_TLSv1_1", "PROTOCOL_TLSv1_2")
+  :param ca_certs: path to ca_certs file
   :return:
   """
   from functools import wraps
   import ssl
-  if hasattr(ssl.wrap_socket, "_ambari_patched"):
-    return # do not create chain of wrappers, patch only once
-  def sslwrap(func):
-    @wraps(func)
-    def bar(*args, **kw):
-      import ssl
-      kw['ssl_version'] = ssl.PROTOCOL_TLSv1
-      return func(*args, **kw)
-    bar._ambari_patched = True
-    return bar
-  ssl.wrap_socket = sslwrap(ssl.wrap_socket)
+
+  if hasattr(ssl, "_create_default_https_context"):
+    if not hasattr(ssl._create_default_https_context, "_ambari_patched"):
+      @wraps(ssl._create_default_https_context)
+      def _create_default_https_context_patched():
+        context = ssl.SSLContext(protocol = getattr(ssl, protocol))
+        if ca_certs:
+          context.load_verify_locations(ca_certs)
+          context.verify_mode = ssl.CERT_REQUIRED
+          context.check_hostname = False
+        return context
+      _create_default_https_context_patched._ambari_patched = True
+      ssl._create_default_https_context = _create_default_https_context_patched
+
+"""
+See RFC3986, Appendix B
+Tested on the following cases:
+  "192.168.54.1"
+  "192.168.54.2:7661
+  "hdfs://192.168.54.3/foo/bar"
+  "ftp://192.168.54.4:7842/foo/bar"
+
+  Returns None if only a port is passed in
+"""
+def get_host_from_url(uri):
+  if uri is None:
+    return None
+
+  # if not a string, return None
+  if not isinstance(uri, basestring):
+    return None
+
+    # RFC3986, Appendix B
+  parts = re.findall('^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?', uri)
+
+  # index of parts
+  # scheme    = 1
+  # authority = 3
+  # path      = 4
+  # query     = 6
+  # fragment  = 8
+
+  host_and_port = uri
+  if 0 == len(parts[0][1]):
+    host_and_port = parts[0][4]
+  elif 0 == len(parts[0][2]):
+    host_and_port = parts[0][1]
+  elif parts[0][2].startswith("//"):
+    host_and_port = parts[0][3]
+
+  if -1 == host_and_port.find(':'):
+    if host_and_port.isdigit():
+      return None
+
+    return host_and_port
+  else:
+    return host_and_port.split(':')[0]
+

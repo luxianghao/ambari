@@ -39,6 +39,14 @@ var props = [
     "serviceName": "HDFS"
   },
   {
+    "name": "hadoop.rpc.protection",
+    "templateName": [],
+    "foreignKey": null,
+    "value": "authentication,privacy",
+    "filename": "core-site.xml",
+    "serviceName": "HDFS"
+  },
+  {
     "name": "hadoop.security.auth_to_local",
     "templateName": ["resourcemanager_primary_name", "kerberos_domain", "yarn_user", "nodemanager_primary_name", "namenode_primary_name", "hdfs_user", "datanode_primary_name", "hbase_master_primary_name", "hbase_user","hbase_regionserver_primary_name","oozie_primary_name","oozie_user","jobhistory_primary_name","mapred_user","journalnode_principal_name","falcon_primary_name","falcon_user"],
     "foreignKey": null,
@@ -166,6 +174,14 @@ var props = [
     "foreignKey": null,
     "value": "0.0.0.0:<templateName[0]>",
     "nonSecureValue": "0.0.0.0:50075",
+    "filename": "hdfs-site.xml",
+    "serviceName": "HDFS"
+  },
+  {
+    "name": "dfs.data.transfer.protection",
+    "templateName": [],
+    "foreignKey": null,
+    "value": "authentication,privacy",
     "filename": "hdfs-site.xml",
     "serviceName": "HDFS"
   },
@@ -854,7 +870,7 @@ var yarn22Mapping = [
     "filename": "yarn-site.xml"
   },
   {
-    "name": 'yarn.timeline-service.http-authentication.proxyusers.*.hosts',
+    "name": 'yarn.timeline-service.http-authentication.proxyuser.*.hosts',
     "value": "",
     "templateName": [],
     "foreignKey": null,
@@ -862,7 +878,7 @@ var yarn22Mapping = [
     "filename": "yarn-site.xml"
   },
   {
-    "name": 'yarn.timeline-service.http-authentication.proxyusers.*.users',
+    "name": 'yarn.timeline-service.http-authentication.proxyuser.*.users',
     "value": "",
     "serviceName": "YARN",
     "templateName": [],
@@ -870,7 +886,7 @@ var yarn22Mapping = [
     "filename": "yarn-site.xml"
   },
   {
-    "name": 'yarn.timeline-service.http-authentication.proxyusers.*.groups',
+    "name": 'yarn.timeline-service.http-authentication.proxyuser.*.groups',
     "value": "",
     "templateName": [],
     "foreignKey": null,
@@ -958,7 +974,7 @@ var yarn22Mapping = [
     "filename": "yarn-site.xml"
   },
   {
-    "name": 'yarn.resourcemanager.proxyusers.*.hosts',
+    "name": 'yarn.resourcemanager.proxyuser.*.hosts',
     "value": "",
     "templateName": [],
     "foreignKey": null,
@@ -966,7 +982,7 @@ var yarn22Mapping = [
     "filename": "yarn-site.xml"
   },
   {
-    "name": 'yarn.resourcemanager.proxyusers.*.users',
+    "name": 'yarn.resourcemanager.proxyuser.*.users',
     "value": "",
     "templateName": [],
     "foreignKey": null,
@@ -974,7 +990,7 @@ var yarn22Mapping = [
     "filename": "yarn-site.xml"
   },
   {
-    "name": 'yarn.resourcemanager.proxyusers.*.groups',
+    "name": 'yarn.resourcemanager.proxyuser.*.groups',
     "value": "",
     "templateName": [],
     "foreignKey": null,

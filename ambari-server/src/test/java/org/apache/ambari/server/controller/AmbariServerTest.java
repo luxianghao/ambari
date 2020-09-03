@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,13 +18,13 @@
 
 package org.apache.ambari.server.controller;
 
-import javax.persistence.EntityManager;
-import javax.servlet.DispatcherType;
-import javax.servlet.SessionCookieConfig;
+import static junit.framework.Assert.assertEquals;
 import static org.easymock.EasyMock.anyObject;
 import static org.easymock.EasyMock.anyString;
 import static org.easymock.EasyMock.createNiceMock;
 import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.isA;
+import static org.easymock.EasyMock.partialMockBuilder;
 import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.verify;
 
@@ -33,24 +33,35 @@ import java.net.InetAddress;
 import java.net.PasswordAuthentication;
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.EnumSet;
 
+import javax.persistence.EntityManager;
+import javax.persistence.TypedQuery;
+import javax.servlet.DispatcherType;
+import javax.servlet.SessionCookieConfig;
+
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.checks.DatabaseConsistencyCheckHelper;
 import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.mpack.MpackManagerFactory;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
 import org.apache.ambari.server.stack.StackManagerFactory;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.stack.OsFamily;
+import org.apache.ambari.server.testutils.PartialNiceMockBinder;
 import org.apache.velocity.app.Velocity;
 import org.easymock.EasyMock;
 import org.easymock.EasyMockSupport;
+import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.SessionManager;
+import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlets.GzipFilter;
@@ -77,7 +88,8 @@ public class AmbariServerTest {
   }
 
   @After
-  public void teardown() throws AmbariException {
+  public void teardown() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
   @Test
@@ -88,15 +100,15 @@ public class AmbariServerTest {
 
   @Test
   public void testConfigureSessionManager() throws Exception {
-    AmbariServer ambariServer = new AmbariServer();
+    SessionHandlerConfigurer sessionHandlerConfigurer = new SessionHandlerConfigurer();
 
     Configuration configuration = createNiceMock(Configuration.class);
-    SessionManager sessionManager = createNiceMock(SessionManager.class);
+    SessionHandler sessionHandler = createNiceMock(SessionHandler.class);
     SessionCookieConfig sessionCookieConfig = createNiceMock(SessionCookieConfig.class);
 
-    ambariServer.configs = configuration;
+    sessionHandlerConfigurer.configuration = configuration;
 
-    expect(sessionManager.getSessionCookieConfig()).andReturn(sessionCookieConfig).anyTimes();
+    expect(sessionHandler.getSessionCookieConfig()).andReturn(sessionCookieConfig).anyTimes();
 
     expect(configuration.getApiSSLAuthentication()).andReturn(false);
     sessionCookieConfig.setHttpOnly(true);
@@ -105,15 +117,15 @@ public class AmbariServerTest {
     sessionCookieConfig.setHttpOnly(true);
     sessionCookieConfig.setSecure(true);
 
-    replay(configuration, sessionManager, sessionCookieConfig);
+    replay(configuration, sessionHandler, sessionCookieConfig);
 
     // getApiSSLAuthentication == false
-    ambariServer.configureSessionManager(sessionManager);
+    sessionHandlerConfigurer.configureSessionHandler(sessionHandler);
 
     // getApiSSLAuthentication == true
-    ambariServer.configureSessionManager(sessionManager);
+    sessionHandlerConfigurer.configureSessionHandler(sessionHandler);
 
-    verify(configuration, sessionManager, sessionCookieConfig);
+    verify(configuration, sessionHandler, sessionCookieConfig);
   }
 
   @Test
@@ -155,6 +167,7 @@ public class AmbariServerTest {
     EasyMock.expectLastCall().once();
     EasyMock.expect(handler.addFilter(GzipFilter.class, "/*",
         EnumSet.of(DispatcherType.REQUEST))).andReturn(filter).once();
+    EasyMock.expect(handler.getMimeTypes()).andReturn(new MimeTypes()).anyTimes();
     replay(handler, filter);
 
     injector.getInstance(AmbariServer.class).configureRootHandler(handler);
@@ -179,6 +192,20 @@ public class AmbariServerTest {
     EasyMock.verify(handler);
   }
 
+  @Test
+  public void testConfigureContentTypes() throws Exception {
+    ServletContextHandler handler = EasyMock.createNiceMock(ServletContextHandler.class);
+    FilterHolder filter = EasyMock.createNiceMock(FilterHolder.class);
+    MimeTypes expectedMimeTypes = new MimeTypes();
+    EasyMock.expect(handler.getMimeTypes()).andReturn(expectedMimeTypes).anyTimes();
+    EasyMock.expect(handler.addFilter(isA(Class.class), anyString(), isA(EnumSet.class))).andReturn(filter).anyTimes();
+    replay(handler, filter);
+    injector.getInstance(AmbariServer.class).configureRootHandler(handler);
+    assertEquals("application/font-woff", expectedMimeTypes.getMimeByExtension("/file.woff").toString());
+    assertEquals("application/font-sfnt", expectedMimeTypes.getMimeByExtension("/file.ttf").toString());
+    EasyMock.verify(handler);
+  }
+
   /**
    * Tests that Jetty pools are configured with the correct number of
    * Acceptor/Selector threads.
@@ -191,15 +218,15 @@ public class AmbariServerTest {
     AmbariServer ambariServer = new AmbariServer();
 
     // 12 acceptors (48 core machine) with a configured pool size of 25
-    ambariServer.configureJettyThreadPool(server, 12, "mock-pool", 25);
+    server = ambariServer.configureJettyThreadPool(12, "mock-pool", 25);
     Assert.assertEquals(44, ((QueuedThreadPool) server.getThreadPool()).getMaxThreads());
 
     // 2 acceptors (8 core machine) with a configured pool size of 25
-    ambariServer.configureJettyThreadPool(server, 2, "mock-pool", 25);
+    server = ambariServer.configureJettyThreadPool(2, "mock-pool", 25);
     Assert.assertEquals(25, ((QueuedThreadPool) server.getThreadPool()).getMaxThreads());
 
     // 16 acceptors (64 core machine) with a configured pool size of 35
-    ambariServer.configureJettyThreadPool(server, 16, "mock-pool", 35);
+    server = ambariServer.configureJettyThreadPool(16, "mock-pool", 35);
     Assert.assertEquals(52, ((QueuedThreadPool) server.getThreadPool()).getMaxThreads());
 
   }
@@ -213,24 +240,24 @@ public class AmbariServerTest {
     final Connection mockConnection = easyMockSupport.createNiceMock(Connection.class);
     final Statement mockStatement = easyMockSupport.createNiceMock(Statement.class);
     final OsFamily mockOSFamily = easyMockSupport.createNiceMock(OsFamily.class);
-    final StackManagerFactory mockStackManagerFactory = easyMockSupport.createNiceMock(StackManagerFactory.class);
     final EntityManager mockEntityManager = easyMockSupport.createNiceMock(EntityManager.class);
     final Clusters mockClusters = easyMockSupport.createNiceMock(Clusters.class);
 
     AmbariServer ambariServer = new AmbariServer();
 
 
-    final Injector mockInjector = Guice.createInjector(new AbstractModule() {
-      @Override
-      protected void configure() {
-        bind(StackManagerFactory.class).toInstance(mockStackManagerFactory);
-        bind(AmbariMetaInfo.class).toInstance(mockAmbariMetainfo);
-        bind(DBAccessor.class).toInstance(mockDBDbAccessor);
-        bind(OsFamily.class).toInstance(mockOSFamily);
-        bind(EntityManager.class).toInstance(mockEntityManager);
-        bind(Clusters.class).toInstance(mockClusters);
-      }
-    });
+    final Configuration mockConfiguration = partialMockBuilder(Configuration.class).withConstructor()
+        .addMockedMethod("getDatabaseType").createMock();
+    final TypedQuery mockQuery = easyMockSupport.createNiceMock(TypedQuery.class);
+
+    expect(mockConfiguration.getDatabaseType()).andReturn(null).anyTimes();
+    expect(mockEntityManager.createNamedQuery(anyString(),anyObject(Class.class))).andReturn(mockQuery);
+    expect(mockQuery.getResultList()).andReturn(new ArrayList());
+
+    replay(mockConfiguration);
+
+    final Injector mockInjector = createMockInjector(mockAmbariMetainfo,
+        mockDBDbAccessor, mockOSFamily, mockEntityManager, mockClusters, mockConfiguration);
 
     expect(mockDBDbAccessor.getConnection()).andReturn(mockConnection).atLeastOnce();
     expect(mockConnection.createStatement(ResultSet.TYPE_SCROLL_SENSITIVE, ResultSet.CONCUR_UPDATABLE)).andReturn(mockStatement).atLeastOnce();
@@ -274,24 +301,24 @@ public class AmbariServerTest {
     final AmbariMetaInfo mockAmbariMetainfo = easyMockSupport.createNiceMock(AmbariMetaInfo.class);
     final DBAccessor mockDBDbAccessor = easyMockSupport.createNiceMock(DBAccessor.class);
     final OsFamily mockOSFamily = easyMockSupport.createNiceMock(OsFamily.class);
-    final StackManagerFactory mockStackManagerFactory = easyMockSupport.createNiceMock(StackManagerFactory.class);
     final EntityManager mockEntityManager = easyMockSupport.createNiceMock(EntityManager.class);
     final Clusters mockClusters = easyMockSupport.createNiceMock(Clusters.class);
 
     AmbariServer ambariServer = new AmbariServer();
 
 
-    final Injector mockInjector = Guice.createInjector(new AbstractModule() {
-      @Override
-      protected void configure() {
-        bind(StackManagerFactory.class).toInstance(mockStackManagerFactory);
-        bind(AmbariMetaInfo.class).toInstance(mockAmbariMetainfo);
-        bind(DBAccessor.class).toInstance(mockDBDbAccessor);
-        bind(OsFamily.class).toInstance(mockOSFamily);
-        bind(EntityManager.class).toInstance(mockEntityManager);
-        bind(Clusters.class).toInstance(mockClusters);
-      }
-    });
+    final Configuration mockConfiguration = partialMockBuilder(Configuration.class).withConstructor()
+        .addMockedMethod("getDatabaseType").createMock();
+    final TypedQuery mockQuery = easyMockSupport.createNiceMock(TypedQuery.class);
+
+    expect(mockConfiguration.getDatabaseType()).andReturn(null).anyTimes();
+    expect(mockEntityManager.createNamedQuery(anyString(),anyObject(Class.class))).andReturn(mockQuery);
+    expect(mockQuery.getResultList()).andReturn(new ArrayList());
+
+    replay(mockConfiguration);
+
+    final Injector mockInjector = createMockInjector(mockAmbariMetainfo,
+        mockDBDbAccessor, mockOSFamily, mockEntityManager, mockClusters, mockConfiguration);
 
     expect(mockDBDbAccessor.getConnection()).andReturn(null);
 
@@ -312,6 +339,29 @@ public class AmbariServerTest {
     junit.framework.Assert.assertTrue(errorOccurred);
 
     easyMockSupport.verifyAll();
+  }
+
+  private Injector createMockInjector(final AmbariMetaInfo mockAmbariMetainfo,
+                                      final DBAccessor mockDBDbAccessor,
+                                      final OsFamily mockOSFamily,
+                                      final EntityManager mockEntityManager,
+                                      final Clusters mockClusters,
+                                      final Configuration mockConfiguration) {
+    return Guice.createInjector(new AbstractModule() {
+      @Override
+      protected void configure() {
+        PartialNiceMockBinder.newBuilder().addClustersBinding().addLdapBindings().build().configure(binder());
+
+        bind(StackManagerFactory.class).toInstance(createNiceMock(StackManagerFactory.class));
+        bind(MpackManagerFactory.class).toInstance(createNiceMock(MpackManagerFactory.class));
+        bind(AmbariMetaInfo.class).toInstance(mockAmbariMetainfo);
+        bind(DBAccessor.class).toInstance(mockDBDbAccessor);
+        bind(OsFamily.class).toInstance(mockOSFamily);
+        bind(EntityManager.class).toInstance(mockEntityManager);
+        bind(Clusters.class).toInstance(mockClusters);
+        bind(Configuration.class).toInstance(mockConfiguration);
+      }
+    });
   }
 
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -32,7 +32,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import javax.persistence.EntityManager;
+
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.controller.AlertNoticeRequest;
 import org.apache.ambari.server.controller.internal.AlertNoticeResourceProvider;
 import org.apache.ambari.server.controller.internal.PageRequestImpl;
@@ -68,7 +71,6 @@ import org.junit.Test;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 import com.google.inject.persist.UnitOfWork;
 
 /**
@@ -85,8 +87,6 @@ public class AlertDispatchDAOTest {
   private AlertDefinitionDAO m_definitionDao;
   private AlertsDAO m_alertsDao;
   private OrmTestHelper m_helper;
-  private HostComponentDesiredStateDAO hostComponentDesiredStateDAO;
-  private HostComponentStateDAO hostComponentStateDAO;
 
   private ServiceFactory m_serviceFactory;
   private ServiceComponentFactory m_componentFactory;
@@ -127,11 +127,11 @@ public class AlertDispatchDAOTest {
   @After
   public void teardown() throws Exception {
     m_injector.getInstance(UnitOfWork.class).end();
-    m_injector.getInstance(PersistService.class).stop();
+    H2DatabaseCleaner.clearDatabase(m_injector.getProvider(EntityManager.class).get());
   }
 
   private void initTestData() throws Exception {
-    Set<AlertTargetEntity> targets = createTargets();
+    Set<AlertTargetEntity> targets = createTargets(1);
 
     for (int i = 0; i < 2; i++) {
       AlertGroupEntity group = new AlertGroupEntity();
@@ -158,7 +158,7 @@ public class AlertDispatchDAOTest {
     assertEquals(1, targets.size());
 
     // find by ids
-    List<Long> ids = new ArrayList<Long>();
+    List<Long> ids = new ArrayList<>();
     ids.add(targets.get(0).getTargetId());
     ids.add(99999L);
 
@@ -213,7 +213,7 @@ public class AlertDispatchDAOTest {
     assertEquals(group, actual);
 
     //find by id
-    List<Long> ids = new ArrayList<Long>();
+    List<Long> ids = new ArrayList<>();
     ids.add(groups.get(0).getGroupId());
     ids.add(groups.get(1).getGroupId());
     ids.add(99999L);
@@ -243,7 +243,7 @@ public class AlertDispatchDAOTest {
   public void testCreateUpdateRemoveGroup() throws Exception {
     // create group
     AlertTargetEntity target = m_helper.createAlertTarget();
-    Set<AlertTargetEntity> targets = new HashSet<AlertTargetEntity>();
+    Set<AlertTargetEntity> targets = new HashSet<>();
     targets.add(target);
 
     AlertGroupEntity group = m_helper.createAlertGroup(
@@ -299,7 +299,7 @@ public class AlertDispatchDAOTest {
     int targetCount = m_dao.findAllTargets().size();
 
     AlertTargetEntity target = m_helper.createAlertTarget();
-    Set<AlertTargetEntity> targets = new HashSet<AlertTargetEntity>();
+    Set<AlertTargetEntity> targets = new HashSet<>();
     targets.add(target);
 
     AlertGroupEntity group = m_helper.createAlertGroup(
@@ -430,7 +430,7 @@ public class AlertDispatchDAOTest {
   @Test
   public void testDeleteAssociatedTarget() throws Exception {
     AlertTargetEntity target = m_helper.createAlertTarget();
-    Set<AlertTargetEntity> targets = new HashSet<AlertTargetEntity>();
+    Set<AlertTargetEntity> targets = new HashSet<>();
     targets.add(target);
 
     AlertGroupEntity group = m_helper.createAlertGroup(
@@ -473,7 +473,7 @@ public class AlertDispatchDAOTest {
 
     m_dao.merge(group);
 
-    group = m_dao.findGroupByName(group.getGroupName());
+    group = m_dao.findGroupByName(m_cluster.getClusterId(), group.getGroupName());
     assertEquals(definitions.size(), group.getAlertDefinitions().size());
 
     // assert that the definition is now part of 2 groups (the default group
@@ -690,7 +690,7 @@ public class AlertDispatchDAOTest {
 
     m_alertHelper.populateData(m_cluster);
 
-    List<SortRequestProperty> sortProperties = new ArrayList<SortRequestProperty>();
+    List<SortRequestProperty> sortProperties = new ArrayList<>();
     SortRequest sortRequest = new SortRequestImpl(sortProperties);
 
     AlertNoticeRequest request = new AlertNoticeRequest();
@@ -849,9 +849,9 @@ public class AlertDispatchDAOTest {
    * @return
    * @throws Exception
    */
-  private Set<AlertTargetEntity> createTargets() throws Exception {
-    Set<AlertTargetEntity> targets = new HashSet<AlertTargetEntity>();
-    for (int i = 0; i < 1; i++) {
+  private Set<AlertTargetEntity> createTargets(int numberOfTargets) throws Exception {
+    Set<AlertTargetEntity> targets = new HashSet<>();
+    for (int i = 0; i < numberOfTargets; i++) {
       AlertTargetEntity target = new AlertTargetEntity();
       target.setDescription("Target Description " + i);
       target.setNotificationType("EMAIL");
@@ -883,7 +883,7 @@ public class AlertDispatchDAOTest {
 
     m_dao.merge(group);
 
-    group = m_dao.findGroupByName(group.getGroupName());
+    group = m_dao.findGroupByName(m_cluster.getClusterId(), group.getGroupName());
     assertEquals(definitions.size(), group.getAlertDefinitions().size());
 
     for (AlertDefinitionEntity definition : definitions) {
@@ -894,11 +894,54 @@ public class AlertDispatchDAOTest {
     m_definitionDao.remove(definitions.get(0));
     definitions.remove(0);
 
-    group = m_dao.findGroupByName(group.getGroupName());
+    group = m_dao.findGroupByName(m_cluster.getClusterId(), group.getGroupName());
     assertEquals(definitions.size(), group.getAlertDefinitions().size());
 
     for (AlertDefinitionEntity definition : definitions) {
       assertTrue(group.getAlertDefinitions().contains(definition));
+    }
+  }
+
+  /**
+   * Tests that updating JPA associations concurrently doesn't lead to Concu
+   *
+   * @throws Exception
+   */
+  @Test
+  public void testConcurrentGroupModification() throws Exception {
+    createDefinitions();
+
+    AlertGroupEntity group = m_helper.createAlertGroup(m_cluster.getClusterId(), null);
+    final Set<AlertTargetEntity> targets = createTargets(100);
+
+    group.setAlertTargets(targets);
+    group = m_dao.merge(group);
+
+    final class AlertGroupWriterThread extends Thread {
+      private AlertGroupEntity group;
+
+      /**
+       * {@inheritDoc}
+       */
+      @Override
+      public void run() {
+        for (int i = 0; i < 1000; i++) {
+          group.setAlertTargets(new HashSet<>(targets));
+        }
+      }
+    }
+
+    List<Thread> threads = new ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      AlertGroupWriterThread thread = new AlertGroupWriterThread();
+      threads.add(thread);
+
+      thread.group = group;
+      thread.start();
+    }
+
+    for (Thread thread : threads) {
+      thread.join();
     }
   }
 }

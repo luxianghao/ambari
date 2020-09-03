@@ -18,17 +18,17 @@
 
 package org.apache.ambari.server.state.kerberos;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.TreeMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * KerberosDescriptorUpdateHelper provides routines for upgrading the user-specified Kerberos descriptor
@@ -99,7 +99,7 @@ public class KerberosDescriptorUpdateHelper {
       return userServices;
     }
 
-    Map<String, KerberosServiceDescriptor> updatedServices = new TreeMap<String, KerberosServiceDescriptor>();
+    Map<String, KerberosServiceDescriptor> updatedServices = new TreeMap<>();
 
     if (previousStackServices == null) {
       previousStackServices = Collections.emptyMap();
@@ -257,7 +257,7 @@ public class KerberosDescriptorUpdateHelper {
       return null;
     }
 
-    TreeSet<String> updatedAuthToLocalProperties = new TreeSet<String>(userAuthToLocalProperties);
+    TreeSet<String> updatedAuthToLocalProperties = new TreeSet<>(userAuthToLocalProperties);
 
     // Remove old configuration specifications, leaving the user-specified ones.
     if (previousStackAuthToLocalProperties != null) {
@@ -294,7 +294,7 @@ public class KerberosDescriptorUpdateHelper {
     Map<String, KerberosIdentityDescriptor> newStackIdentityMap = toMap(newStackIdentities);
     Map<String, KerberosIdentityDescriptor> userStackIdentityMap = toMap(userIdentities);
 
-    Map<String, KerberosIdentityDescriptor> updatedIdentities = new TreeMap<String, KerberosIdentityDescriptor>();
+    Map<String, KerberosIdentityDescriptor> updatedIdentities = new TreeMap<>();
 
     if (previousStackIdentityMap == null) {
       previousStackIdentityMap = Collections.emptyMap();
@@ -333,13 +333,18 @@ public class KerberosDescriptorUpdateHelper {
     // Note: there is no need to add identity definitions that do not exist since they will get
     // added dynamically when merged with the stack default value.
 
-    return new ArrayList<KerberosIdentityDescriptor>(updatedIdentities.values());
+    return new ArrayList<>(updatedIdentities.values());
   }
 
 
   /**
    * Processes a {@link KerberosIdentityDescriptor} to change the user-supplied data based on the changes
    * observed between the previous stack version's data and the new stack version's data.
+   * <p>
+   * It is expected that <code>newStackIdentities</code> and <code>userIdentities</code> are not null.
+   * However, <code>previousStackIdentities</code> may be null in the event the user added a Kerberos
+   * identity that was then added in the new Kerberos descriptor.  In this case, the user's values
+   * for the principal name and keytab file are kept while adding any other changes from tne new stack.
    *
    * @param previousStackIdentity a {@link KerberosIdentityDescriptor} from the previous stack version's Kerberos descriptor
    * @param newStackIdentity      a {@link KerberosIdentityDescriptor} from the new stack version's Kerberos descriptor
@@ -357,7 +362,7 @@ public class KerberosDescriptorUpdateHelper {
     // If the new identity definition is a reference and no longer has a principal definition,
     // Ignore any user changes to the old principal definition.
     if (updatedValuePrincipal != null) {
-      KerberosPrincipalDescriptor oldValuePrincipal = previousStackIdentity.getPrincipalDescriptor();
+      KerberosPrincipalDescriptor oldValuePrincipal = (previousStackIdentity == null) ? null : previousStackIdentity.getPrincipalDescriptor();
       String previousValuePrincipalValue = null;
       KerberosPrincipalDescriptor userValuePrincipal = userIdentity.getPrincipalDescriptor();
       String userValuePrincipalValue = null;
@@ -380,7 +385,7 @@ public class KerberosDescriptorUpdateHelper {
     // If the new identity definition is a reference and no longer has a keytab definition,
     // Ignore any user changes to the old keytab definition.
     if (updatedValueKeytab != null) {
-      KerberosKeytabDescriptor oldValueKeytab = previousStackIdentity.getKeytabDescriptor();
+      KerberosKeytabDescriptor oldValueKeytab = (previousStackIdentity == null) ? null : previousStackIdentity.getKeytabDescriptor();
       String previousValueKeytabFile = null;
       KerberosKeytabDescriptor userValueKeytab = userIdentity.getKeytabDescriptor();
       String userValueKeytabFile = null;
@@ -423,7 +428,7 @@ public class KerberosDescriptorUpdateHelper {
       return userConfigurations;
     }
 
-    Map<String, KerberosConfigurationDescriptor> updatedConfigurations = new TreeMap<String, KerberosConfigurationDescriptor>();
+    Map<String, KerberosConfigurationDescriptor> updatedConfigurations = new TreeMap<>();
 
     if (previousStackConfigurations == null) {
       previousStackConfigurations = Collections.emptyMap();
@@ -509,7 +514,7 @@ public class KerberosDescriptorUpdateHelper {
     if ((previousStackProperties == null) && (newStackProperties == null)) {
       return userProperties;
     } else {
-      Map<String, String> updatedProperties = new TreeMap<String, String>();
+      Map<String, String> updatedProperties = new TreeMap<>();
       if (userProperties != null) {
         updatedProperties.putAll(userProperties);
       }
@@ -573,7 +578,7 @@ public class KerberosDescriptorUpdateHelper {
     if (identities == null) {
       return null;
     } else {
-      Map<String, KerberosIdentityDescriptor> map = new TreeMap<String, KerberosIdentityDescriptor>();
+      Map<String, KerberosIdentityDescriptor> map = new TreeMap<>();
 
       for (KerberosIdentityDescriptor identity : identities) {
         map.put(identity.getName(), identity);

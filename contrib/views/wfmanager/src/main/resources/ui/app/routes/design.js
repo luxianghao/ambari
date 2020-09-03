@@ -16,12 +16,78 @@
 */
 
 import Ember from 'ember';
+import SchemaVersions from '../domain/schema-versions';
 
-export default Ember.Route.extend({
-
+export default Ember.Route.extend(Ember.Evented, {
+  currentDraft: null,
   beforeModel: function(transition){
     this.set("xmlAppPath", transition.queryParams.appPath);
     this.controllerFor('design').set("xmlAppPath", transition.queryParams.appPath);
+  },
+  model(){
+    if(!this.get('failedSchemaVersions')){
+      return this.importAdminConfigs();
+    }else{
+      return [];
+    }
+  },
+  afterModel(model){
+    if(!this.get('failedSchemaVersions')){
+      SchemaVersions.reopen({
+        adminConfig : JSON.parse(model)
+      });
+    }
+  },
+  importAdminConfigs(){
+    return new Ember.RSVP.Promise((resolve, reject) => {
+      var url = Ember.ENV.API_URL + "/v1/admin/configuration";
+      var deferred = Ember.$.ajax({
+        url: url,
+        method: "GET",
+        dataType: "text",
+        contentType: "text/plain;charset=utf-8",
+        beforeSend: function(request) {
+          request.setRequestHeader("X-Requested-By", "workflow-designer");
+        },
+        success : function(response){
+          try {
+            resolve(JSON.parse(response));
+          } catch (e) {
+            console.error(e);
+            reject(response);
+          }
+        },
+        error : function(response){
+          reject(response);
+        }
+      });
+    });
+  },
+  actions : {
+    error(error, transition){
+      SchemaVersions.reopen({
+        useDefaultSettings : true
+      });
+      this.set('failedSchemaVersions', true);
+      transition.retry();
+    },
+    editWorkflow(path, type, isImportedFromDesigner, configuration){
+      this.trigger('openNewTab', path, type, isImportedFromDesigner, configuration);
+    },
+    showDashboard(){
+      this.controller.set('dashboardShown', true);
+      this.transitionTo('design.dashboardtab');
+    },
+    getAllRecentWorks(deferred){
+      this.store.findAll("wfproject", { reload: true }).then((data)=>{
+        deferred.resolve(data);
+      }).catch((e)=>{
+        deferred.reject(e);
+      });
+    },
+    hideDashboard(){
+      this.controller.set('dashboardShown', false);
+      this.transitionTo('design');
+    }
   }
-
 });

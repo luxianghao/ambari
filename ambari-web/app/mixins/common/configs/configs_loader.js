@@ -78,9 +78,7 @@ App.ConfigsLoader = Em.Mixin.create(App.GroupsMappingMixin, {
    * @method loadPreSelectedConfigVersion
    */
   loadPreSelectedConfigVersion: function() {
-    var preSelectedId = App.serviceConfigVersionsMapper.makeId(this.get('preSelectedConfigVersion.serviceName'), this.get('preSelectedConfigVersion.version'));
-    var defaultConfigVersion = App.ServiceConfigVersion.find(App.serviceConfigVersionsMapper.makeId(this.get('content.serviceName'), this.get('currentDefaultVersion')));
-    var preSelectedVersion = App.ServiceConfigVersion.find().someProperty('id', preSelectedId) ? this.get('preSelectedConfigVersion') : defaultConfigVersion;
+    var preSelectedVersion = this.get('preSelectedConfigVersion');
 
     this.set('selectedVersion', this.get('preSelectedConfigVersion.version'));
     /** handling redirecting from config history page **/
@@ -104,10 +102,11 @@ App.ConfigsLoader = Em.Mixin.create(App.GroupsMappingMixin, {
    */
   loadCurrentVersions: function() {
     this.set('isCompareMode', false);
+    this.set('compareServiceVersion', null);
     this.set('versionLoaded', false);
     this.set('selectedVersion', this.get('currentDefaultVersion'));
     this.set('preSelectedConfigVersion', null);
-    this.trackRequest(App.ajax.send({
+    this.trackRequestChain(App.ajax.send({
       name: 'service.serviceConfigVersions.get.current',
       sender: this,
       data: {
@@ -144,22 +143,27 @@ App.ConfigsLoader = Em.Mixin.create(App.GroupsMappingMixin, {
    * loads selected versions of current service
    * @method loadSelectedVersion
    */
-  loadSelectedVersion: function (version, switchToGroup) {
-    this.set('isCompareMode', false);
+  loadSelectedVersion: function (version, switchToGroup, stayInCompare) {
+    if (!stayInCompare) {
+      this.set('isCompareMode', false);
+      this.set('compareServiceVersion', null);
+    }
     this.set('versionLoaded', false);
     version = version || this.get('currentDefaultVersion');
     this.clearRecommendationsInfo();
     if (version === this.get('currentDefaultVersion') && (!switchToGroup || switchToGroup.get('isDefault'))) {
+      // current version with default group
       this.set('selectedVersion', this.get('currentDefaultVersion'));
       this.loadCurrentVersions();
     } else {
-      //version of non-default group require properties from current version of default group to correctly display page
+      // - version with DEFAULT config group but not CURRENT
+      // - ANY version with NON_DEFAULT config group
       this.loadDefaultGroupVersion(version, switchToGroup);
     }
   },
 
   /**
-   *
+   * version with NON_DEFAULT group require properties from CURRENT version of DEFAULT group to correctly display page
    * @param {string} version
    * @param {?Em.Object} switchToGroup
    */
@@ -175,7 +179,7 @@ App.ConfigsLoader = Em.Mixin.create(App.GroupsMappingMixin, {
       data: {
         serviceName: this.get('content.serviceName'),
         serviceConfigVersions: versions,
-        additionalParams: this.get('dependentServiceNames.length') ? '|service_name.in(' + this.get('dependentServiceNames') + ')&is_current=true' : ''
+        additionalParams: this.get('dependentServiceNames.length') ? '|(service_name.in(' + this.get('dependentServiceNames') + ')%26is_current=true)' : ''
       },
       success: 'loadSelectedVersionsSuccess'
     }));

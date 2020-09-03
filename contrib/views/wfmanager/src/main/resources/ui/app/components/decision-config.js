@@ -31,5 +31,15 @@ const Validations = buildValidations({
 export default Ember.Component.extend(Validations,{
   initialize : function(){
     this.sendAction('register','decision',this);
-  }.on('init')
+    this.set('targetNodes', Ember.A([]));
+    this.get('targetNodes').pushObjects(this.get('currentNode.validOkToNodes'));
+    this.get('targetNodes').pushObjects(this.get('killNodes'));
+  }.on('init'),
+  actions : {
+    onTargetNodeChange(index){
+      var node = this.get('targetNodes').findBy('id', this.$(`#target-node-select-${index}`).find(":selected").val());
+      var config = this.get('actionModel').objectAt(index);
+      Ember.set(config, 'node', node);
+    }
+  }
 });

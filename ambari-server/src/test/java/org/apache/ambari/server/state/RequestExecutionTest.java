@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.controller.RequestScheduleResponse;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
@@ -41,7 +42,6 @@ import org.junit.Test;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 import com.google.inject.persist.Transactional;
 
 import junit.framework.Assert;
@@ -78,7 +78,7 @@ public class RequestExecutionTest {
 
   @After
   public void teardown() throws Exception {
-    injector.getInstance(PersistService.class).stop();
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
   @Transactional
@@ -88,9 +88,10 @@ public class RequestExecutionTest {
 
     BatchSettings batchSettings = new BatchSettings();
     batchSettings.setTaskFailureToleranceLimit(10);
+    batchSettings.setTaskFailureToleranceLimitPerBatch(2);
     batches.setBatchSettings(batchSettings);
 
-    List<BatchRequest> batchRequests = new ArrayList<BatchRequest>();
+    List<BatchRequest> batchRequests = new ArrayList<>();
     BatchRequest batchRequest1 = new BatchRequest();
     batchRequest1.setOrderId(10L);
     batchRequest1.setType(BatchRequest.Type.DELETE);
@@ -132,6 +133,8 @@ public class RequestExecutionTest {
     Assert.assertNotNull(scheduleEntity);
     Assert.assertEquals(requestExecution.getBatch().getBatchSettings()
       .getTaskFailureToleranceLimit(), scheduleEntity.getBatchTolerationLimit());
+    Assert.assertEquals(requestExecution.getBatch().getBatchSettings()
+      .getTaskFailureToleranceLimitPerBatch(), scheduleEntity.getBatchTolerationLimitPerBatch());
     Assert.assertEquals(scheduleEntity.getRequestScheduleBatchRequestEntities().size(), 2);
     Collection<RequestScheduleBatchRequestEntity> batchRequestEntities =
       scheduleEntity.getRequestScheduleBatchRequestEntities();
@@ -172,7 +175,7 @@ public class RequestExecutionTest {
     // Remove host and add host
     Batch batches = new Batch();
 
-    List<BatchRequest> batchRequests = new ArrayList<BatchRequest>();
+    List<BatchRequest> batchRequests = new ArrayList<>();
     BatchRequest batchRequest1 = new BatchRequest();
     batchRequest1.setOrderId(10L);
     batchRequest1.setType(BatchRequest.Type.PUT);
@@ -236,6 +239,8 @@ public class RequestExecutionTest {
     Assert.assertNotNull(scheduleEntity);
     Assert.assertEquals(requestExecution.getBatch().getBatchSettings()
       .getTaskFailureToleranceLimit(), scheduleEntity.getBatchTolerationLimit());
+    Assert.assertEquals(requestExecution.getBatch().getBatchSettings()
+      .getTaskFailureToleranceLimitPerBatch(), scheduleEntity.getBatchTolerationLimitPerBatch());
     Assert.assertEquals(scheduleEntity.getRequestScheduleBatchRequestEntities().size(), 2);
     Collection<RequestScheduleBatchRequestEntity> batchRequestEntities =
       scheduleEntity.getRequestScheduleBatchRequestEntities();
@@ -299,7 +304,8 @@ public class RequestExecutionTest {
     }
     Assert.assertNotNull(postBatchRequest);
     // Not read by default
-    Assert.assertNull(postBatchRequest.getBody());
+    Assert.assertNotNull(postBatchRequest.getBody());
+    Assert.assertEquals("testBody", postBatchRequest.getBody());
 
     RequestScheduleResponse requestScheduleResponse = requestExecution
       .convertToResponseWithBody();

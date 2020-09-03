@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,11 +29,16 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorRequest;
 import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorRunner;
 import org.apache.ambari.server.api.services.stackadvisor.recommendations.RecommendationResponse;
+import org.apache.ambari.server.state.ServiceInfo;
 import org.junit.Test;
 
 public class ConfigurationRecommendationCommandTest {
@@ -43,16 +48,19 @@ public class ConfigurationRecommendationCommandTest {
     StackAdvisorRunner saRunner = mock(StackAdvisorRunner.class);
     File file = mock(File.class);
     AmbariMetaInfo metaInfo = mock(AmbariMetaInfo.class);
-    ConfigurationRecommendationCommand command = new ConfigurationRecommendationCommand(file, "1w", "script", 1, saRunner, metaInfo);
+    ConfigurationRecommendationCommand command =
+        new ConfigurationRecommendationCommand(StackAdvisorCommandType.RECOMMEND_CONFIGURATIONS, file,
+            "1w", ServiceInfo.ServiceAdvisorType.PYTHON, 1, saRunner, metaInfo,
+            null, null);
 
     StackAdvisorRequest request = mock(StackAdvisorRequest.class);
-    Map<String, Set<String>> componentHostGroupMap = new HashMap<String, Set<String>>();
-    Set<String> components1 = new HashSet<String>();
+    SortedMap<String, SortedSet<String>> componentHostGroupMap = new TreeMap<>();
+    SortedSet<String> components1 = new TreeSet<>();
     components1.add("component1");
     components1.add("component4");
     components1.add("component5");
     componentHostGroupMap.put("group1", components1);
-    Set<String> components2 = new HashSet<String>();
+    SortedSet<String> components2 = new TreeSet<>();
     components2.add("component2");
     components2.add("component3");
     componentHostGroupMap.put("group2", components2);
@@ -62,7 +70,7 @@ public class ConfigurationRecommendationCommandTest {
     assertNotNull(hostGroups);
     assertEquals(2, hostGroups.size());
     Map<String, RecommendationResponse.HostGroup> hostGroupMap =
-        new HashMap<String, RecommendationResponse.HostGroup>();
+      new HashMap<>();
     for (RecommendationResponse.HostGroup hostGroup : hostGroups) {
       hostGroupMap.put(hostGroup.getName(), hostGroup);
     }
@@ -71,7 +79,7 @@ public class ConfigurationRecommendationCommandTest {
     Set<Map<String, String>> host1Components = hostGroup1.getComponents();
     assertNotNull(host1Components);
     assertEquals(3, host1Components.size());
-    Set<String> componentNames1 = new HashSet<String>();
+    Set<String> componentNames1 = new HashSet<>();
     for (Map<String, String> host1Component : host1Components) {
       assertNotNull(host1Component);
       assertEquals(1, host1Component.size());
@@ -88,7 +96,7 @@ public class ConfigurationRecommendationCommandTest {
     Set<Map<String, String>> host2Components = hostGroup2.getComponents();
     assertNotNull(host2Components);
     assertEquals(2, host2Components.size());
-    Set<String> componentNames2 = new HashSet<String>();
+    Set<String> componentNames2 = new HashSet<>();
     for (Map<String, String> host2Component : host2Components) {
       assertNotNull(host2Component);
       assertEquals(1, host2Component.size());

@@ -264,7 +264,7 @@ describe('App.WizardController', function () {
   });
 
   describe('#showLaunchBootstrapPopup', function () {
-    afterEach(function(){
+    beforeEach(function(){
       App.ModalPopup.show.restore();
     });
 
@@ -583,12 +583,10 @@ describe('App.WizardController', function () {
 
   describe('#gotoStep', function () {
     beforeEach(function(){
-      sinon.stub(App.ModalPopup,'show', Em.K);
-      sinon.stub(App.clusterStatus,'setClusterStatus', Em.K);  
+      sinon.stub(App.clusterStatus,'setClusterStatus', Em.K);
       sinon.stub(App.router,'send', Em.K);  
     });
     afterEach(function(){
-      App.ModalPopup.show.restore();
       App.clusterStatus.setClusterStatus.restore();
       App.router.send.restore();
     });
@@ -857,14 +855,14 @@ describe('App.WizardController', function () {
 
   describe('#loadConfirmedHosts', function () {
     beforeEach(function(){
-      sinon.stub(App.db, 'getHosts').returns(Em.A([
+      sinon.stub(wizardController, 'getDBProperty').returns(Em.A([
         Em.Object.create({
           name: 'h1'
         })
       ]));
     });
     afterEach(function(){
-      App.db.getHosts.restore();
+      wizardController.getDBProperty.restore();
     });
     it('should load hosts from db', function () {
       wizardController.loadConfirmedHosts();
@@ -1055,7 +1053,6 @@ describe('App.WizardController', function () {
       sinon.stub(c, 'setDBProperty', Em.K);
       sinon.stub(c, 'setDBProperties', Em.K);
       sinon.stub(c, 'getDBProperty').withArgs('fileNamesToUpdate').returns([]);
-      sinon.stub(c, 'setPersistentProperty', Em.K);
       sinon.stub(App.config, 'shouldSupportFinal').returns(true);
     });
 
@@ -1063,7 +1060,6 @@ describe('App.WizardController', function () {
       c.setDBProperty.restore();
       c.setDBProperties.restore();
       c.getDBProperty.restore();
-      c.setPersistentProperty.restore();
       App.config.shouldSupportFinal.restore();
     });
 
@@ -1259,8 +1255,8 @@ describe('App.WizardController', function () {
 
     it('should return all hosts', function () {
       var hosts = {
-        'h1': {hostComponents: ['c1', 'c2'], disk_info: [{size: 2, available: 1}]},
-        'h2': {hostComponents: ['c3', 'c4'], disk_info: [{size: 2, available: 1}]}
+        'h1': {hostComponents: ['c1', 'c2']},
+        'h2': {hostComponents: ['c3', 'c4']}
       };
 
       var content = Em.Object.create({
@@ -1273,19 +1269,6 @@ describe('App.WizardController', function () {
         {
           "id": "h1",
           "hostName": "h1",
-          "publicHostName": "h1",
-          "diskInfo": [
-            {
-              "size": 2,
-              "available": 1
-            }
-          ],
-          "diskTotal": 0.0000019073486328125,
-          "diskFree": 9.5367431640625e-7,
-          "disksMounted": 1,
-          "osType": 0,
-          "osArch": 0,
-          "ip": 0,
           "hostComponents": [
             {
               "componentName": "c1",
@@ -1300,19 +1283,6 @@ describe('App.WizardController', function () {
         {
           "id": "h2",
           "hostName": "h2",
-          "publicHostName": "h2",
-          "diskInfo": [
-            {
-              "size": 2,
-              "available": 1
-            }
-          ],
-          "diskTotal": 0.0000019073486328125,
-          "diskFree": 9.5367431640625e-7,
-          "disksMounted": 1,
-          "osType": 0,
-          "osArch": 0,
-          "ip": 0,
           "hostComponents": [
             {
               "componentName": "c3",
@@ -1722,10 +1692,6 @@ describe('App.WizardController', function () {
       expect(ctrl.finish.calledOnce).to.be.true;
     });
 
-    it("isWorking should be true", function () {
-      expect(mock.get('isWorking')).to.be.true;
-    });
-
     it("App.clusterStatus.setClusterStatus should be called", function () {
       expect(App.clusterStatus.setClusterStatus.calledOnce).to.be.true;
     });
@@ -1740,6 +1706,87 @@ describe('App.WizardController', function () {
 
     it("Em.run.next should be called", function () {
       expect(Em.run.next.calledOnce).to.be.true;
+    });
+  });
+
+  describe('#applyStoredConfigs', function() {
+
+    it('should return null when storedConfigs null', function() {
+      expect(c.applyStoredConfigs([], null)).to.be.null;
+    });
+
+    it('should merged configs when storedConfigs has items', function() {
+      var storedConfigs = [
+        {
+          id: 1,
+          value: 'foo',
+          isFinal: false
+        },
+        {
+          id: 2,
+          value: 'foo2',
+          isFinal: true,
+          isUserProperty: true
+        }
+      ];
+      var configs = [
+        {
+          id: 1,
+          value: '',
+          isFinal: true
+        }
+      ];
+      expect(c.applyStoredConfigs(configs, storedConfigs)).to.be.eql([
+        {
+          id: 1,
+          value: 'foo',
+          isFinal: false,
+          savedValue: null
+        },
+        {
+          id: 2,
+          value: 'foo2',
+          isFinal: true,
+          isUserProperty: true
+        }
+      ]);
+    });
+  });
+  
+  describe('#setStackServiceSelectedByDefault', function() {
+   
+    it('regular service should be selected', function() {
+      var service = {
+        StackServices: {
+          selection: null,
+          service_name: 'S1'
+        }
+      };
+      c.setStackServiceSelectedByDefault(service);
+      expect(service.StackServices.is_selected).to.be.true;
+    });
+  
+    it('TECH_PREVIEW service should not be selected', function() {
+      var service = {
+        StackServices: {
+          selection: "TECH_PREVIEW",
+          service_name: 'S1'
+        }
+      };
+      c.setStackServiceSelectedByDefault(service);
+      expect(service.StackServices.is_selected).to.be.false;
+    });
+  
+    it('service_type service should not be selected', function() {
+      var service = {
+        StackServices: {
+          selection: null,
+          service_name: 'S1',
+          service_type: 'HCFS'
+        }
+      };
+      c.setStackServiceSelectedByDefault(service);
+      expect(service.StackServices.is_selected).to.be.false;
     });
   });
 

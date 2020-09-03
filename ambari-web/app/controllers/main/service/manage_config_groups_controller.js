@@ -289,15 +289,13 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
    */
   loadHosts: function() {
     this.set('isLoaded', false);
-    if (this.get('isInstaller')) {
-      var allHosts = this.get('isAddService') ? App.router.get('addServiceController').get('allHosts') : App.router.get('installerController').get('allHosts');
-      this.set('clusterHosts', allHosts);
-      this.loadConfigGroups(this.get('serviceName'));
-    }
-    else {
+    if (this.get('isInstaller') && !this.get('isAddService')) {
+      var hostNames = App.router.get('installerController').get('allHosts').mapProperty('hostName').join();
+      this.loadInstallerHostsFromServer(hostNames);
+    } else {
       this.loadHostsFromServer();
-      this.loadConfigGroups(this.get('serviceName'));
     }
+    this.loadConfigGroups(this.get('serviceName'));
   },
 
   /**
@@ -323,15 +321,16 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
    * @private
    */
   _loadHostsFromServerSuccessCallback: function (data) {
-    var wrappedHosts = [];
+    var wrappedHosts = [],
+        newlyAddedHostComponentsMap = this.getNewlyAddedHostComponentsMap();
 
     data.items.forEach(function (host) {
       var hostComponents = [];
-      var diskInfo = host.Hosts.disk_info.filter(function(item) {
+      var diskInfo = host.Hosts.disk_info.filter(function (item) {
         return /^ext|^ntfs|^fat|^xfs/i.test(item.type);
       });
       if (diskInfo.length) {
-        diskInfo = diskInfo.reduce(function(a, b) {
+        diskInfo = diskInfo.reduce(function (a, b) {
           return {
             available: parseInt(a.available) + parseInt(b.available),
             size: parseInt(a.size) + parseInt(b.size)
@@ -344,6 +343,9 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
           displayName: App.format.role(hostComponent.HostRoles.component_name, false)
         }));
       }, this);
+      if (this.get('isAddService') && newlyAddedHostComponentsMap[host.Hosts.host_name]) {
+        hostComponents.pushObjects(newlyAddedHostComponentsMap[host.Hosts.host_name]);
+      }
       wrappedHosts.pushObject(Em.Object.create({
           id: host.Hosts.host_name,
           ip: host.Hosts.ip,
@@ -371,6 +373,55 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
    */
   _loadHostsFromServerErrorCallback: function () {
     this.set('clusterHosts', []);
+  },
+
+  /**
+   *
+   * @returns {{}}
+   */
+  getNewlyAddedHostComponentsMap: function () {
+    var newlyAddedHostComponentsMap = {};
+    var masters = App.router.get('addServiceController.content.masterComponentHosts') || [];
+    var slaves = App.router.get('addServiceController.content.slaveComponentHosts') || [];
+    var clients = (App.router.get('addServiceController.content.clients') || []);
+
+    clients = clients.filterProperty('isInstalled', false).map(function (component) {
+      return Em.Object.create({
+        componentName: component.component_name,
+        displayName: component.display_name
+      });
+    });
+
+    masters.forEach(function (component) {
+      if (!component.isInstalled) {
+        if (!newlyAddedHostComponentsMap[component.hostName]) {
+          newlyAddedHostComponentsMap[component.hostName] = [];
+        }
+        newlyAddedHostComponentsMap[component.hostName].push(Em.Object.create({
+          componentName: component.component,
+          displayName: component.display_name
+        }));
+      }
+    });
+
+    slaves.forEach(function (component) {
+      component.hosts.forEach(function (host) {
+        if (!host.isInstalled) {
+          if (!newlyAddedHostComponentsMap[host.hostName]) {
+            newlyAddedHostComponentsMap[host.hostName] = [];
+          }
+          if (component.componentName === 'CLIENT') {
+            newlyAddedHostComponentsMap[host.hostName].pushObjects(clients);
+          } else {
+            newlyAddedHostComponentsMap[host.hostName].push(Em.Object.create({
+              componentName: component.componentName,
+              displayName: component.displayName
+            }));
+          }
+        }
+      });
+    });
+    return newlyAddedHostComponentsMap;
   },
 
   /**
@@ -560,12 +611,15 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
    */
   addHostsCallback: function (selectedHosts) {
     if (selectedHosts) {
+      var sortedHosts;
       var group = this.get('selectedConfigGroup');
       var parentGroupHosts = group.get('parentConfigGroup.hosts');
       var newHostsForParentGroup = parentGroupHosts.filter(function(hostName) {
         return !selectedHosts.contains(hostName);
       });
       group.get('hosts').pushObjects(selectedHosts);
+      sortedHosts = group.get('hosts').sort();
+      group.set('hosts', sortedHosts);
       group.set('parentConfigGroup.hosts', newHostsForParentGroup);
     }
   },
@@ -580,13 +634,15 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
     }
     var hosts = this.get('selectedHosts').slice();
     var newHosts = [];
-    this.get('selectedConfigGroup.parentConfigGroup.hosts').pushObjects(hosts);
-    this.get('selectedConfigGroup.hosts').forEach(function(host) {
+    var selectedGroup = this.get('selectedConfigGroup');
+    var parentGroup = this.get('selectedConfigGroup.parentConfigGroup');
+    selectedGroup.get('hosts').forEach(function(host) {
       if (!hosts.contains(host)) {
         newHosts.pushObject(host);
       }
     });
-    this.set('selectedConfigGroup.hosts', newHosts);
+    selectedGroup.set('hosts', newHosts);
+    parentGroup.set('hosts', parentGroup.get('hosts').pushObjects(hosts).slice().sort());
     this.set('selectedHosts', []);
   },
 
@@ -677,7 +733,7 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
           name: this.get('configGroupName'),
           description: this.get('configGroupDesc')
         });
-        App.store.commit();
+        App.store.fastCommit();
         this.hide();
       }
     });
@@ -743,7 +799,7 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
           });
         }
 
-        App.store.load(App.ServiceConfigGroup, {
+        App.store.safeLoad(App.ServiceConfigGroup, {
           id: newGroupId,
           name: groupName,
           description: this.get('configGroupDesc'),
@@ -756,11 +812,11 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
           properties: duplicated ? properties : [],
           is_temporary: true
         });
-        App.store.commit();
+        App.store.fastCommit();
         var childConfigGroups = defaultConfigGroup.get('childConfigGroups').mapProperty('id');
         childConfigGroups.push(newGroupId);
-        App.store.load(App.ServiceConfigGroup, App.configGroupsMapper.generateDefaultGroup(self.get('serviceName'), defaultConfigGroup.get('hosts'), childConfigGroups));
-        App.store.commit();
+        App.store.safeLoad(App.ServiceConfigGroup, App.configGroupsMapper.generateDefaultGroup(self.get('serviceName'), defaultConfigGroup.get('hosts'), childConfigGroups));
+        App.store.fastCommit();
         self.get('configGroups').pushObject(App.ServiceConfigGroup.find(newGroupId));
         this.hide();
       }
@@ -851,9 +907,7 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
       resetGroupChanges: function (originalGroups) {
         if (this.get('subViewController.isHostsModified')) {
           App.ServiceConfigGroup.find().clear();
-          App.store.commit();
-          App.store.loadMany(App.ServiceConfigGroup, originalGroups);
-          App.store.commit();
+          App.store.safeLoadMany(App.ServiceConfigGroup, originalGroups);
         }
       },
 
@@ -955,8 +1009,8 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
               if (errors.length > 0) {
                 self.get('subViewController').set('errorMessage', errors.join(". "));
               } else {
-                if (!self.get('isAddService') && !self.get('isInstaller') && !modifiedConfigGroups.toCreate.everyProperty('properties.length', 0)) {
-                  //update service config versions only if it is service configs page and at least one newly created group had properties
+                if (!self.get('isAddService') && !self.get('isInstaller')) {
+                  //update service config versions only if it is service configs page
                   App.router.get('mainServiceInfoConfigsController').loadServiceConfigVersions().done(function () {
                     self.updateConfigGroupOnServicePage();
                     self.hide();
@@ -997,6 +1051,65 @@ App.ManageConfigGroupsController = Em.Controller.extend(App.ConfigOverridable, {
         this.set('disablePrimary', !modified);
       }.observes('subViewController.isHostsModified')
     });
+  },
+
+  loadInstallerHostsFromServer: function (hostNames) {
+    return App.ajax.send({
+      name: 'hosts.info.install',
+      sender: this,
+      data: {
+        hostNames: hostNames
+      },
+      success: 'loadInstallerHostsSuccessCallback'
+    });
+  },
+
+  loadInstallerHostsSuccessCallback: function (data) {
+    const allHosts = App.router.get('installerController.allHosts').toMapByProperty('hostName'),
+      slaveComponents = App.router.get('installerController.content.slaveComponentHosts'),
+      clientComponents = App.router.get('installerController.content.clients'),
+      clients = clientComponents.map(client => ({
+        componentName: client.component_name,
+        displayName: client.display_name
+      }));
+    let hosts = [];
+
+    slaveComponents.forEach(component => {
+      component.hosts.forEach(rawHost => {
+        let host = allHosts[rawHost.hostName];
+        if (!host.hostComponents) {
+          host.hostComponents = [];
+        }
+        if (component.componentName === 'CLIENT') {
+          host.hostComponents.pushObjects(clients);
+        }
+      });
+    });
+
+    data.items.forEach(host => {
+      let disksOverallCapacity = 0,
+        diskFree = 0;
+      host.Hosts.disk_info.forEach(disk => {
+        disksOverallCapacity += parseFloat(disk.size);
+        diskFree += parseFloat(disk.available);
+      });
+      hosts.pushObject(Em.Object.create({
+        id: host.Hosts.host_name,
+        ip: host.Hosts.ip,
+        osType: host.Hosts.os_type,
+        osArch: host.Hosts.os_arch,
+        hostName: host.Hosts.host_name,
+        publicHostName: host.Hosts.public_host_name,
+        cpu: host.Hosts.cpu_count,
+        memory: host.Hosts.total_mem.toFixed(2),
+        diskInfo: host.Hosts.disk_info,
+        diskTotal: disksOverallCapacity / (1024 * 1024),
+        diskFree: diskFree / (1024 * 1024),
+        hostComponents: (allHosts[host.Hosts.host_name] && allHosts[host.Hosts.host_name].hostComponents) || []
+      }));
+    });
+
+    this.set('clusterHosts', hosts);
   }
 
 });

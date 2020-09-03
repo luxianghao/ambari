@@ -68,6 +68,7 @@
         <component>ZOOKEEPER_CLIENT</component>
       </service>
     </group>
+    
     <group name="CORE_MASTER" title="Core Masters">
       <service name="HDFS">
         <component>JOURNALNODE</component>
@@ -108,9 +109,16 @@
     
     <group name="SERVICE_CHECK_2" title="Post-Slave Service Checks" xsi:type="service-check">
       <priority>
+        <service>ZOOKEEPER</service>
         <service>HDFS</service>
         <service>YARN</service>
       </priority>
+    </group>
+    
+    <group name="OOZIE" title="Oozie">
+      <service name="OOZIE">
+        <component>OOZIE_SERVER</component>
+      </service>
     </group>
     
     
@@ -145,12 +153,14 @@
             <message>This is a manual task with a placeholder of {{foo/bar}}</message>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
         <post-upgrade>
           <task xsi:type="configure" id="hdp_2_1_1_zk_post_upgrade"/>
         </post-upgrade>
+        <post-downgrade copy-upgrade="true" />
       </component>
     </service>
     <service name="HDFS">
@@ -165,6 +175,7 @@
             <message>Update your database</message>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -174,6 +185,7 @@
             <function>list</function>
           </task>
         </post-upgrade>
+        <post-downgrade copy-upgrade="true" />
       </component>
       <component name="DATANODE">
         <pre-downgrade />
@@ -195,6 +207,7 @@
             <function>list</function>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade />
       </component>
       <component name="NODEMANAGER">
@@ -204,8 +217,16 @@
             <function>list</function>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade />
       </component>
     </service>
+    <service name="OOZIE">
+      <component name="OOZIE_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task" />
+        </upgrade>
+      </component>
+	</service>
   </processing>
 </upgrade>

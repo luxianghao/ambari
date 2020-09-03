@@ -18,6 +18,7 @@
 
 var stringUtils = require('utils/string_utils');
 var numberUtils = require('utils/number_utils');
+var blueprintUtils = require('utils/blueprint');
 
 App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App.AssignMasterComponents, {
 
@@ -61,21 +62,92 @@ App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App
     this.set('configWidgetContext', context);
     this.set('content', context.get('controller.content'));
     this.set('configActionComponent', hostComponent);
-    var missingDependentServices = this.getAllMissingDependentServices();
-    var isNonWizardPage = !this.get('content.controllerName');
+    
     switch (action) {
       case 'ADD':
-        if (missingDependentServices.length && isNonWizardPage) {
-          this.showInstallServicesPopup(missingDependentServices);
+        this.clearRecommendations();
+        if (hostComponent.componentName === "HIVE_SERVER_INTERACTIVE") {
+          this.getPendingBatchRequests(hostComponent);  
         } else {
-          this.set('mastersToCreate', [hostComponent.componentName]);
-          this.showAssignComponentPopup();
+          this.showPopup(hostComponent);
         }
         break;
       case 'DELETE':
         this.set('mastersToCreate', [hostComponent.componentName]);
         this.removeMasterComponent();
         break;
+    }
+  },
+
+  getPendingBatchRequests: function(hostComponent) {
+    var self = this;
+    // Send Ajax request to get status of pending batch requests
+    App.ajax.send({
+      name : 'request_schedule.get.pending',
+      sender: self,
+      error : 'pendingBatchRequestsAjaxError',
+      success: 'pendingBatchRequestsAjaxSuccess',
+      data: {
+        hostComponent: hostComponent
+      }
+    });
+  },
+
+  pendingBatchRequestsAjaxError: function(data) {
+    var error = Em.I18n.t('services.service.actions.run.yarnRefreshQueues.error');
+    if (data && data.responseText) {
+      try {
+        var json = JSON.parse(data.responseText);
+        error += json.message;
+      } catch (err) {}
+    }
+    App.showAlertPopup(Em.I18n.t('services.service.actions.run.yarnRefreshQueues.error'), error, null);
+  },
+
+  pendingBatchRequestsAjaxSuccess : function(data, opt, params) {
+    var self = this;
+    if (this.shouldShowAlertOnBatchRequest(data)) {
+      App.showAlertPopup(Em.I18n.t('services.service.actions.hsi.alertPopup.header'),
+        Em.I18n.t('services.service.actions.hsi.alertPopup.body'), function() {
+        var configWidgetContext = self.get('configWidgetContext');
+        var config = configWidgetContext.get('config');
+        configWidgetContext.toggleProperty('controller.forceUpdateBoundaries');
+        var value = config.get('initialValue');
+        config.set('value', value);
+        configWidgetContext.setValue(value);
+        configWidgetContext.sendRequestRorDependentConfigs(config);
+        this.hide();
+      });
+    } else {
+      this.showPopup(params.hostComponent);
+    }
+  },
+
+  shouldShowAlertOnBatchRequest: function(data) {
+    var showAlert = false;
+    if (data.hasOwnProperty('items') && data.items.length > 0) {
+      data.items.forEach( function(_item) {
+        if (_item && _item.RequestSchedule && _item.RequestSchedule.batch && _item.RequestSchedule.batch.batch_requests) {
+          _item.RequestSchedule.batch.batch_requests.forEach(function (batchRequest) {
+            // Check if a DELETE request on HIVE_SERVER_INTERACTIVE is in progress
+            if (batchRequest.request_type === "DELETE" && batchRequest.request_uri.indexOf("HIVE_SERVER_INTERACTIVE") > -1) {
+              showAlert = true;
+            }
+          });
+        }
+      });
+    }
+    return showAlert;
+  },
+
+  showPopup: function(hostComponent) {
+    var missingDependentServices = this.getAllMissingDependentServices();
+    var isNonWizardPage = !this.get('content.controllerName');
+    if (missingDependentServices.length && isNonWizardPage) {
+      this.showInstallServicesPopup(missingDependentServices);
+    } else {
+      this.set('mastersToCreate', [hostComponent.componentName]);
+      this.showAssignComponentPopup();
     }
   },
 
@@ -117,8 +189,13 @@ App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App
       bodyClass: App.AssignMasterOnStep7View.extend({
         controller: self
       }),
-      primary: Em.I18n.t('form.cancel'),
-      showFooter: false,
+      primary: Em.I18n.t('common.select'),
+      onPrimary: function () {
+        self.submit();
+      },
+      onSecondary: function() {
+        this.showWarningPopup();
+      },
       onClose: function () {
         this.showWarningPopup();
       },
@@ -216,30 +293,32 @@ App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App
   },
 
   /**
-   * Load active host list to <code>hosts</code> variable
+   * Success callback after loading active host list
    * @override
-   * @method renderHostInfo
+   * @method loadWizardHostsSuccessCallback
    */
-  renderHostInfo: function () {
+   loadWizardHostsSuccessCallback: function (data) {
     var parentController = this.get('content.controllerName');
     if (parentController) {
-      this._super();
+      this._super(data);
     } else {
-      var hosts = App.Host.find().toArray();
       var result = [];
-      for (var p = 0; p < hosts.length; p++) {
+      data.items.forEach(function (host) {
+        var hostName = host.Hosts.host_name,
+          cpu = host.Hosts.cpu_count,
+          memory = host.Hosts.total_mem.toFixed(2);
         result.push(Em.Object.create({
-          host_name: hosts[p].get('hostName'),
-          cpu: hosts[p].get('cpu'),
-          memory: hosts[p].get('memory'),
-          maintenance_state: hosts[p].get('maintenance_state'),
-          disk_info: hosts[p].get('diskInfo'),
-          host_info: Em.I18n.t('installer.step5.hostInfo').fmt(hosts[p].get('hostName'), numberUtils.bytesToSize(hosts[p].get('memory'), 1, 'parseFloat', 1024), hosts[p].get('cpu'))
+          host_name: hostName,
+          cpu: cpu,
+          memory: memory,
+          disk_info: host.Hosts.disk_info,
+          maintenance_state: host.Hosts.maintenance_state,
+          host_info: Em.I18n.t('installer.step5.hostInfo').fmt(hostName, numberUtils.bytesToSize(memory, 1, 'parseFloat', 1024), cpu)
         }));
-      }
-
-      this.set("hosts", result);
-      this.sortHosts(result);
+      }, this);
+      this.set('hosts', result);
+      this.sortHosts(this.get('hosts'));
+      this.set('isHostsLoaded', true);
     }
   },
 
@@ -275,12 +354,14 @@ App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App
   getAllMissingDependentServices: function () {
     var configActionComponentName = this.get('configActionComponent').componentName;
     var componentStackService = App.StackServiceComponent.find(configActionComponentName).get('stackService');
-    var dependentServices = componentStackService.get('requiredServices');
+    var missing = [];
+    componentStackService.collectMissingDependencies(this.installedStackServices(), App.StackService.find(), missing);
+    return missing.mapProperty('displayName');
+  },
 
-    return dependentServices.filter(function (item) {
-      return !App.Service.find().findProperty('serviceName', item);
-    }).map(function (item) {
-      return App.StackService.find(item).get('displayName');
+  installedStackServices: function() {
+    return App.Service.find().map(function(each) {
+      return App.StackService.find(each.get('serviceName'));
     });
   },
 
@@ -307,7 +388,7 @@ App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App
     var recommendationsHostGroups = this.get('content.recommendationsHostGroups');
     var mastersToCreate = this.get('mastersToCreate');
     mastersToCreate.forEach(function(componentName) {
-      var hostName = this.getSelectedHostName(componentName);
+      var hostName = this.getSelectedHostNames(componentName)[0];
       if (hostName && recommendationsHostGroups) {
         var hostGroups = recommendationsHostGroups.blueprint_cluster_binding.host_groups;
         var isHostPresent = false;
@@ -332,25 +413,25 @@ App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App
   },
 
   /**
-   * Get the fqdn hostname as selected by the user for the component.
+   * Get the fqdn hostnames as selected by the user for the component.
    * @param componentName
-   * @return {String}
+   * @return {String[]}
    */
-  getSelectedHostName: function(componentName) {
+  getSelectedHostNames: function(componentName) {
     var selectedServicesMasters = this.get('selectedServicesMasters');
-    return selectedServicesMasters.findProperty('component_name', componentName).selectedHost;
+    return selectedServicesMasters.filterProperty('component_name', componentName).mapProperty('selectedHost');
   },
 
   /**
    * set App.componentToBeAdded to use it on subsequent validation call while saving configuration
    * @param componentName {String}
-   * @param hostName {String}
+   * @param hostNames {String[]}
    * @method {setGlobalComponentToBeAdded}
    */
-  setGlobalComponentToBeAdded: function(componentName, hostName) {
+  setGlobalComponentToBeAdded: function(componentName, hostNames) {
     var componentToBeAdded = Em.Object.create({
        componentName: componentName,
-       hostNames: [hostName]
+       hostNames: hostNames
     });
     App.set('componentToBeAdded', componentToBeAdded);
   },
@@ -390,35 +471,134 @@ App.AssignMasterOnStep7Controller = Em.Controller.extend(App.BlueprintMixin, App
       var context = self.get('configWidgetContext');
       context.toggleProperty('controller.forceUpdateBoundaries');
       var configActionComponent = self.get('configActionComponent');
-      var componentHostName = self.getSelectedHostName(configActionComponent.componentName);
+      var componentHostNames = self.getSelectedHostNames(configActionComponent.componentName);
+      var config = self.get('configWidgetContext.config');
+
+      // TODO remove after stack advisor is able to handle this case
+      // workaround for hadoop.proxyuser.{{hiveUser}}.hosts after adding Hive Server Interactive from Install Wizard
+      var serviceConfigs = context.get('controller.stepConfigs').findProperty('serviceName', context.get('controller.selectedService.serviceName')).get('configs');
+      var dependencies = context.get('config.configAction.dependencies');
+
       if (self.get('content.controllerName')) {
         self.saveMasterComponentHosts();
         self.saveRecommendationsHostGroups();
+
+        // TODO remove after stack advisor is able to handle this case
+        // workaround for hadoop.proxyuser.{{hiveUser}}.hosts after adding Hive Server Interactive from Install Wizard
+        var miscConfigs = context.get('controller.stepConfigs').findProperty('serviceName', 'MISC').get('configs');
+        serviceConfigs = serviceConfigs.concat(miscConfigs);
       } else {
-        self.setGlobalComponentToBeAdded(configActionComponent.componentName, componentHostName);
+        self.setGlobalComponentToBeAdded(configActionComponent.componentName, componentHostNames);
         self.clearComponentsToBeDeleted(configActionComponent.componentName);
       }
 
-      var hostComponentConfig = context.get('config.configAction.hostComponentConfig');
-      var serviceConfigs = context.get('controller.stepConfigs').findProperty('serviceName', context.get('config.serviceName')).get('configs');
-      var config = serviceConfigs.filterProperty('filename', hostComponentConfig.fileName).findProperty('name', hostComponentConfig.configName);
-      var oldValue = config.get('value');
-      config.set('value', componentHostName);
-      config.set('recommendedValue', componentHostName);
-      configActionComponent.hostName = componentHostName;
-      self.get('configWidgetContext.config').set('configActionComponent', configActionComponent);
-      context.get('controller').loadConfigRecommendations([{
-        "type": App.config.getConfigTagFromFileName(config.get('filename')),
-        "name": config.get('name'),
-        "old_value": oldValue
-      }])
+      configActionComponent.hostNames = componentHostNames;
+      config.set('configActionComponent', configActionComponent);
+
+       var oldValueKey = context.get('controller.wizardController.name') === 'installerController' ? 'initialValue' : 'savedValue';
+       context.get('controller').loadConfigRecommendations([{
+        type: App.config.getConfigTagFromFileName(config.get('fileName')),
+        name: config.get('name'),
+        old_value: config.get(oldValueKey)
+      }]);
     });
   },
 
   /**
-   * function called for onclcik event on cancel button for the popup
+   *
+   * @param {Em.Object} context
+   * @param {object} blueprintObject
    */
-  onCancel: function() {
-    this.get('popup').showWarningPopup();
-  }
+  saveRecommendations: function(context, blueprintObject) {
+    var oldValueKey = context.get('controller.wizardController.name') === 'installerController' ? 'initialValue' : 'savedValue';
+    var config = this.get('configWidgetContext.config');
+
+    context.get('controller').loadRecommendationsSuccess({
+      resources: [
+        {
+          recommendations: {
+            blueprint: {
+              configurations: blueprintObject
+            }
+          }
+        }
+      ]
+    }, null, {
+      dataToSend: {
+        changed_configurations: [{
+          type: App.config.getConfigTagFromFileName(config.get('fileName')),
+          name: config.get('name'),
+          old_value: config.get(oldValueKey)
+        }]
+      }
+    });
+  },
+
+  /**
+   *
+   * @param dependencies
+   * @param serviceConfigs
+   * @returns {{}}
+   */
+  getDependenciesForeignKeys: function(dependencies, serviceConfigs) {
+    var foreignKeys = {};
+    if (dependencies.foreignKeys) {
+      dependencies.foreignKeys.forEach(function (dependency) {
+        var matchingProperty = serviceConfigs.find(function (property) {
+          return property.get('filename') === App.config.getOriginalFileName(dependency.fileName) && property.get('name') === dependency.propertyName;
+        });
+        if (matchingProperty) {
+          foreignKeys[dependency.key] = matchingProperty.get('value');
+        }
+      });
+    }
+    return foreignKeys;
+  },
+
+  /**
+   *
+   * @param dependencies
+   * @param context
+   * @returns {Array}
+   */
+  getMasterComponents: function(dependencies, context) {
+    var masterComponents = [];
+    if (this.get('content.controllerName')) {
+      var savedMasterComponents = context.get('controller.content.masterComponentHosts').filter(function (componentObject) {
+        return dependencies.initializer.componentNames.contains(componentObject.component);
+      });
+      masterComponents = savedMasterComponents.map(function (componentObject) {
+        var masterComponent = Em.getProperties(componentObject, ['component', 'hostName']);
+        masterComponent.isInstalled = true;
+        return masterComponent;
+      });
+    } else {
+      var hostsMap = blueprintUtils.getComponentForHosts();
+      Em.keys(hostsMap).forEach(function (hostName) {
+        hostsMap[hostName].forEach(function (componentName) {
+          if (dependencies.initializer.componentNames.contains(componentName)) {
+            masterComponents.push({
+              component: componentName,
+              hostName: hostName,
+              isInstalled: true
+            });
+          }
+        });
+      });
+    }
+    return masterComponents;
+  },
+
+  getHosts: function () {
+    var result,
+      parentController = this.get('content.controllerName');
+    if (parentController) {
+      result = this._super();
+    } else {
+      result = this.get('hosts').mapProperty('host_name');
+    }
+    return result;
+  },
+
+  clearStepOnExit: Em.K
 });

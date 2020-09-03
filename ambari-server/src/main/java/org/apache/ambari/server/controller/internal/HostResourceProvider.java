@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,6 +28,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.ClusterNotFoundException;
@@ -35,11 +36,16 @@ import org.apache.ambari.server.DuplicateResourceException;
 import org.apache.ambari.server.HostNotFoundException;
 import org.apache.ambari.server.ObjectNotFoundException;
 import org.apache.ambari.server.ParentObjectNotFoundException;
+import org.apache.ambari.server.agent.RecoveryConfigHelper;
+import org.apache.ambari.server.agent.stomp.HostLevelParamsHolder;
+import org.apache.ambari.server.agent.stomp.TopologyHolder;
+import org.apache.ambari.server.agent.stomp.dto.HostLevelParamsCluster;
+import org.apache.ambari.server.agent.stomp.dto.TopologyCluster;
+import org.apache.ambari.server.agent.stomp.dto.TopologyHost;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.ConfigurationRequest;
 import org.apache.ambari.server.controller.HostRequest;
 import org.apache.ambari.server.controller.HostResponse;
-import org.apache.ambari.server.controller.MaintenanceStateHelper;
 import org.apache.ambari.server.controller.RequestStatusResponse;
 import org.apache.ambari.server.controller.ServiceComponentHostRequest;
 import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
@@ -52,6 +58,9 @@ import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.events.HostLevelParamsUpdateEvent;
+import org.apache.ambari.server.events.TopologyUpdateEvent;
+import org.apache.ambari.server.events.UpdateEventType;
 import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.security.authorization.AuthorizationHelper;
 import org.apache.ambari.server.security.authorization.ResourceType;
@@ -62,21 +71,19 @@ import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.DesiredConfig;
 import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.MaintenanceState;
-import org.apache.ambari.server.state.Service;
-import org.apache.ambari.server.state.ServiceComponent;
 import org.apache.ambari.server.state.ServiceComponentHost;
-import org.apache.ambari.server.state.State;
 import org.apache.ambari.server.state.stack.OsFamily;
 import org.apache.ambari.server.topology.ClusterTopology;
 import org.apache.ambari.server.topology.InvalidTopologyException;
 import org.apache.ambari.server.topology.InvalidTopologyTemplateException;
 import org.apache.ambari.server.topology.LogicalRequest;
 import org.apache.ambari.server.topology.TopologyManager;
-import org.apache.ambari.server.update.HostUpdateHelper;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
 import com.google.inject.assistedinject.Assisted;
 import com.google.inject.assistedinject.AssistedInject;
@@ -88,81 +95,104 @@ import com.google.inject.persist.Transactional;
  */
 public class HostResourceProvider extends AbstractControllerResourceProvider {
 
+  private static final Logger LOG = LoggerFactory.getLogger(HostResourceProvider.class);
+
   // ----- Property ID constants ---------------------------------------------
 
   // Hosts
-  public static final String HOST_CLUSTER_NAME_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "cluster_name");
-  public static final String HOST_NAME_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "host_name");
-  public static final String HOST_PUBLIC_NAME_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "public_host_name");
-  public static final String HOST_IP_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "ip");
-  public static final String HOST_TOTAL_MEM_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "total_mem");
-  public static final String HOST_CPU_COUNT_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "cpu_count");
-  public static final String HOST_PHYSICAL_CPU_COUNT_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "ph_cpu_count");
-  public static final String HOST_OS_ARCH_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "os_arch");
-  public static final String HOST_OS_TYPE_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "os_type");
-  public static final String HOST_OS_FAMILY_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "os_family");
-  public static final String HOST_RACK_INFO_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "rack_info");
-  public static final String HOST_LAST_HEARTBEAT_TIME_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "last_heartbeat_time");
-  public static final String HOST_LAST_REGISTRATION_TIME_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "last_registration_time");
-  public static final String HOST_DISK_INFO_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "disk_info");
+  public static final String RESPONSE_KEY = "Hosts";
+  public static final String ALL_PROPERTIES = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + "*";
 
+  public static final String CLUSTER_NAME_PROPERTY_ID = "cluster_name";
+  public static final String CPU_COUNT_PROPERTY_ID = "cpu_count";
+  public static final String DESIRED_CONFIGS_PROPERTY_ID = "desired_configs";
+  public static final String DISK_INFO_PROPERTY_ID = "disk_info";
+  public static final String HOST_HEALTH_REPORT_PROPERTY_ID = "host_health_report";
+  public static final String HOST_NAME_PROPERTY_ID = "host_name";
+  public static final String HOST_STATUS_PROPERTY_ID = "host_status";
+  public static final String IP_PROPERTY_ID = "ip";
+  public static final String LAST_AGENT_ENV_PROPERTY_ID = "last_agent_env";
+  public static final String LAST_HEARTBEAT_TIME_PROPERTY_ID = "last_heartbeat_time";
+  public static final String LAST_REGISTRATION_TIME_PROPERTY_ID = "last_registration_time";
+  public static final String MAINTENANCE_STATE_PROPERTY_ID = "maintenance_state";
+  public static final String OS_ARCH_PROPERTY_ID = "os_arch";
+  public static final String OS_FAMILY_PROPERTY_ID = "os_family";
+  public static final String OS_TYPE_PROPERTY_ID = "os_type";
+  public static final String PHYSICAL_CPU_COUNT_PROPERTY_ID = "ph_cpu_count";
+  public static final String PUBLIC_NAME_PROPERTY_ID = "public_host_name";
+  public static final String RACK_INFO_PROPERTY_ID = "rack_info";
+  public static final String RECOVERY_REPORT_PROPERTY_ID = "recovery_report";
+  public static final String RECOVERY_SUMMARY_PROPERTY_ID = "recovery_summary";
+  public static final String STATE_PROPERTY_ID = "host_state";
+  public static final String TOTAL_MEM_PROPERTY_ID = "total_mem";
+  public static final String ATTRIBUTES_PROPERTY_ID = "attributes";
 
-  public static final String HOST_HOST_STATUS_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "host_status");
-  public static final String HOST_MAINTENANCE_STATE_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "maintenance_state");
+  public static final String HOST_CLUSTER_NAME_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + CLUSTER_NAME_PROPERTY_ID;
+  public static final String HOST_CPU_COUNT_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + CPU_COUNT_PROPERTY_ID;
+  public static final String HOST_DESIRED_CONFIGS_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + DESIRED_CONFIGS_PROPERTY_ID;
+  public static final String HOST_DISK_INFO_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + DISK_INFO_PROPERTY_ID;
+  public static final String HOST_HOST_HEALTH_REPORT_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + HOST_HEALTH_REPORT_PROPERTY_ID;
+  public static final String HOST_HOST_STATUS_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + HOST_STATUS_PROPERTY_ID;
+  public static final String HOST_IP_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + IP_PROPERTY_ID;
+  public static final String HOST_LAST_AGENT_ENV_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + LAST_AGENT_ENV_PROPERTY_ID;
+  public static final String HOST_LAST_HEARTBEAT_TIME_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + LAST_HEARTBEAT_TIME_PROPERTY_ID;
+  public static final String HOST_LAST_REGISTRATION_TIME_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + LAST_REGISTRATION_TIME_PROPERTY_ID;
+  public static final String HOST_MAINTENANCE_STATE_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + MAINTENANCE_STATE_PROPERTY_ID;
+  public static final String HOST_HOST_NAME_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + HOST_NAME_PROPERTY_ID;
+  public static final String HOST_OS_ARCH_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + OS_ARCH_PROPERTY_ID;
+  public static final String HOST_OS_FAMILY_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + OS_FAMILY_PROPERTY_ID;
+  public static final String HOST_OS_TYPE_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + OS_TYPE_PROPERTY_ID;
+  public static final String HOST_PHYSICAL_CPU_COUNT_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + PHYSICAL_CPU_COUNT_PROPERTY_ID;
+  public static final String HOST_PUBLIC_NAME_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + PUBLIC_NAME_PROPERTY_ID;
+  public static final String HOST_RACK_INFO_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + RACK_INFO_PROPERTY_ID;
+  public static final String HOST_RECOVERY_REPORT_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + RECOVERY_REPORT_PROPERTY_ID;
+  public static final String HOST_RECOVERY_SUMMARY_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + RECOVERY_SUMMARY_PROPERTY_ID;
+  public static final String HOST_STATE_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + STATE_PROPERTY_ID;
+  public static final String HOST_TOTAL_MEM_PROPERTY_ID = RESPONSE_KEY + PropertyHelper.EXTERNAL_PATH_SEP + TOTAL_MEM_PROPERTY_ID;
+  public static final String HOST_ATTRIBUTES_PROPERTY_ID = PropertyHelper.getPropertyId(RESPONSE_KEY,ATTRIBUTES_PROPERTY_ID);
 
-  public static final String HOST_HOST_HEALTH_REPORT_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "host_health_report");
-  public static final String HOST_RECOVERY_REPORT_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "recovery_report");
-  public static final String HOST_RECOVERY_SUMMARY_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "recovery_summary");
-  public static final String HOST_STATE_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "host_state");
-  public static final String HOST_LAST_AGENT_ENV_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "last_agent_env");
-  public static final String HOST_DESIRED_CONFIGS_PROPERTY_ID =
-      PropertyHelper.getPropertyId("Hosts", "desired_configs");
-
-  public static final String BLUEPRINT_PROPERTY_ID =
-      PropertyHelper.getPropertyId(null, "blueprint");
-  public static final String HOSTGROUP_PROPERTY_ID =
-      PropertyHelper.getPropertyId(null, "host_group");
-  public static final String HOST_NAME_NO_CATEGORY_PROPERTY_ID =
-      PropertyHelper.getPropertyId(null, "host_name");
-  public static final String HOST_COUNT_PROPERTY_ID =
-      PropertyHelper.getPropertyId(null, "host_count");
-  public static final String HOST_PREDICATE_PROPERTY_ID =
-      PropertyHelper.getPropertyId(null, "host_predicate");
+  public static final String BLUEPRINT_PROPERTY_ID = "blueprint";
+  public static final String HOST_GROUP_PROPERTY_ID = "host_group";
+  public static final String HOST_COUNT_PROPERTY_ID = "host_count";
+  public static final String HOST_PREDICATE_PROPERTY_ID = "host_predicate";
 
   //todo use the same json structure for cluster host addition (cluster template and upscale)
-  public static final String HOST_RACK_INFO_NO_CATEGORY_PROPERTY_ID =
-      PropertyHelper.getPropertyId(null, "rack_info");
 
-  protected static final String FORCE_DELETE_COMPONENTS = "force_delete_components";
+  /**
+   * The key property ids for a Host resource.
+   */
+  public static final Map<Resource.Type, String> keyPropertyIds = ImmutableMap.<Resource.Type, String>builder()
+      .put(Resource.Type.Host, HOST_HOST_NAME_PROPERTY_ID)
+      .put(Resource.Type.Cluster, HOST_CLUSTER_NAME_PROPERTY_ID)
+      .build();
 
-
-  private static Set<String> pkPropertyIds =
-      new HashSet<String>(Arrays.asList(new String[]{
-          HOST_NAME_PROPERTY_ID}));
-
-  @Inject
-  private MaintenanceStateHelper maintenanceStateHelper;
+  /**
+   * The property ids for a Host resource.
+   */
+  public static final Set<String> propertyIds = ImmutableSet.of(
+      HOST_CLUSTER_NAME_PROPERTY_ID,
+      HOST_CPU_COUNT_PROPERTY_ID,
+      HOST_DESIRED_CONFIGS_PROPERTY_ID,
+      HOST_DISK_INFO_PROPERTY_ID,
+      HOST_HOST_HEALTH_REPORT_PROPERTY_ID,
+      HOST_HOST_STATUS_PROPERTY_ID,
+      HOST_IP_PROPERTY_ID,
+      HOST_LAST_AGENT_ENV_PROPERTY_ID,
+      HOST_LAST_HEARTBEAT_TIME_PROPERTY_ID,
+      HOST_LAST_REGISTRATION_TIME_PROPERTY_ID,
+      HOST_MAINTENANCE_STATE_PROPERTY_ID,
+      HOST_HOST_NAME_PROPERTY_ID,
+      HOST_OS_ARCH_PROPERTY_ID,
+      HOST_OS_FAMILY_PROPERTY_ID,
+      HOST_OS_TYPE_PROPERTY_ID,
+      HOST_PHYSICAL_CPU_COUNT_PROPERTY_ID,
+      HOST_PUBLIC_NAME_PROPERTY_ID,
+      HOST_RACK_INFO_PROPERTY_ID,
+      HOST_RECOVERY_REPORT_PROPERTY_ID,
+      HOST_RECOVERY_SUMMARY_PROPERTY_ID,
+      HOST_STATE_PROPERTY_ID,
+      HOST_TOTAL_MEM_PROPERTY_ID,
+      HOST_ATTRIBUTES_PROPERTY_ID);
 
   @Inject
   private OsFamily osFamily;
@@ -170,20 +200,26 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
   @Inject
   private static TopologyManager topologyManager;
 
+  @Inject
+  private TopologyHolder topologyHolder;
+
+  @Inject
+  private HostLevelParamsHolder hostLevelParamsHolder;
+
+  @Inject
+  private RecoveryConfigHelper recoveryConfigHelper;
+
+
   // ----- Constructors ----------------------------------------------------
 
   /**
    * Create a  new resource provider for the given management controller.
    *
-   * @param propertyIds           the property ids
-   * @param keyPropertyIds        the key property ids
    * @param managementController  the management controller
    */
   @AssistedInject
-  HostResourceProvider(@Assisted Set<String> propertyIds,
-                       @Assisted Map<Resource.Type, String> keyPropertyIds,
-                       @Assisted AmbariManagementController managementController) {
-    super(propertyIds, keyPropertyIds, managementController);
+  HostResourceProvider(@Assisted AmbariManagementController managementController) {
+    super(Resource.Type.Host, propertyIds, keyPropertyIds, managementController);
 
     Set<RoleAuthorization> authorizationsAddDelete = EnumSet.of(RoleAuthorization.HOST_ADD_DELETE_HOSTS);
 
@@ -206,12 +242,9 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     if (isHostGroupRequest(request)) {
       createResponse = submitHostRequests(request);
     } else {
-      createResources(new Command<Void>() {
-        @Override
-        public Void invoke() throws AmbariException {
-          createHosts(request);
-          return null;
-        }
+      createResources((Command<Void>) () -> {
+        createHosts(request);
+        return null;
       });
     }
     notifyCreate(Resource.Type.Host, request);
@@ -221,9 +254,9 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
 
   @Override
   protected Set<Resource> getResourcesAuthorized(Request request, Predicate predicate)
-      throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
+      throws SystemException, NoSuchResourceException, NoSuchParentResourceException {
 
-    final Set<HostRequest> requests = new HashSet<HostRequest>();
+    final Set<HostRequest> requests = new HashSet<>();
 
     if (predicate == null) {
       requests.add(getRequest(null));
@@ -234,15 +267,10 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       }
     }
 
-    Set<HostResponse> responses = getResources(new Command<Set<HostResponse>>() {
-      @Override
-      public Set<HostResponse> invoke() throws AmbariException {
-        return getHosts(requests);
-      }
-    });
+    Set<HostResponse> responses = getResources(() -> getHosts(requests));
 
     Set<String>   requestedIds = getRequestPropertyIds(request, predicate);
-    Set<Resource> resources    = new HashSet<Resource>();
+    Set<Resource> resources    = new HashSet<>();
 
     for (HostResponse response : responses) {
       Resource resource = new ResourceImpl(Resource.Type.Host);
@@ -253,7 +281,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
         setResourceProperty(resource, HOST_CLUSTER_NAME_PROPERTY_ID,
             response.getClusterName(), requestedIds);
       }
-      setResourceProperty(resource, HOST_NAME_PROPERTY_ID,
+      setResourceProperty(resource, HOST_HOST_NAME_PROPERTY_ID,
           response.getHostname(), requestedIds);
       setResourceProperty(resource, HOST_PUBLIC_NAME_PROPERTY_ID,
           response.getPublicHostName(), requestedIds);
@@ -262,22 +290,15 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       setResourceProperty(resource, HOST_TOTAL_MEM_PROPERTY_ID,
           response.getTotalMemBytes(), requestedIds);
       setResourceProperty(resource, HOST_CPU_COUNT_PROPERTY_ID,
-          (long) response.getCpuCount(), requestedIds);
+          response.getCpuCount(), requestedIds);
       setResourceProperty(resource, HOST_PHYSICAL_CPU_COUNT_PROPERTY_ID,
-          (long) response.getPhCpuCount(), requestedIds);
+          response.getPhCpuCount(), requestedIds);
       setResourceProperty(resource, HOST_OS_ARCH_PROPERTY_ID,
           response.getOsArch(), requestedIds);
       setResourceProperty(resource, HOST_OS_TYPE_PROPERTY_ID,
           response.getOsType(), requestedIds);
-
-      String hostOsFamily = osFamily.find(response.getOsType());
-      if (hostOsFamily == null) {
-        LOG.error("Can not find host OS family. For OS type = '{}' and host name = '{}'",
-            response.getOsType(), response.getHostname());
-      }
       setResourceProperty(resource, HOST_OS_FAMILY_PROPERTY_ID,
-          hostOsFamily, requestedIds);
-
+          response.getOsFamily(), requestedIds);
       setResourceProperty(resource, HOST_RACK_INFO_PROPERTY_ID,
           response.getRackInfo(), requestedIds);
       setResourceProperty(resource, HOST_LAST_HEARTBEAT_TIME_PROPERTY_ID,
@@ -289,7 +310,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       setResourceProperty(resource, HOST_HOST_STATUS_PROPERTY_ID,
           response.getStatus(),requestedIds);
       setResourceProperty(resource, HOST_HOST_HEALTH_REPORT_PROPERTY_ID,
-          response.getHealthStatus().getHealthReport(), requestedIds);
+          response.getHealthReport(), requestedIds);
       setResourceProperty(resource, HOST_RECOVERY_REPORT_PROPERTY_ID,
           response.getRecoveryReport(), requestedIds);
       setResourceProperty(resource, HOST_RECOVERY_SUMMARY_PROPERTY_ID,
@@ -316,17 +337,14 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
   protected RequestStatus updateResourcesAuthorized(final Request request, Predicate predicate)
       throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
 
-    final Set<HostRequest> requests = new HashSet<HostRequest>();
+    final Set<HostRequest> requests = new HashSet<>();
     for (Map<String, Object> propertyMap : getPropertyMaps(request.getProperties().iterator().next(), predicate)) {
       requests.add(getRequest(propertyMap));
     }
 
-    modifyResources(new Command<Void>() {
-      @Override
-      public Void invoke() throws AmbariException, AuthorizationException {
-        updateHosts(requests);
-        return null;
-      }
+    modifyResources((Command<Void>) () -> {
+      updateHosts(requests);
+      return null;
     });
 
     notifyUpdate(Resource.Type.Host, request, predicate);
@@ -339,22 +357,14 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
 
     final Set<HostRequest> requests = new HashSet<>();
-    Map<String, String> requestInfoProperties = request.getRequestInfoProperties();
-    final boolean forceDelete = requestInfoProperties.containsKey(FORCE_DELETE_COMPONENTS) &&
-                  requestInfoProperties.get(FORCE_DELETE_COMPONENTS).equals("true");
 
     for (Map<String, Object> propertyMap : getPropertyMaps(predicate)) {
       requests.add(getRequest(propertyMap));
     }
 
-    DeleteStatusMetaData deleteStatusMetaData = modifyResources(new Command<DeleteStatusMetaData>() {
-      @Override
-      public DeleteStatusMetaData invoke() throws AmbariException {
-        return deleteHosts(requests, request.isDryRunRequest(), forceDelete);
-      }
-    });
+    DeleteStatusMetaData deleteStatusMetaData = modifyResources(() -> deleteHosts(requests, request.isDryRunRequest()));
 
-    if(!request.isDryRunRequest()) {
+    if (!request.isDryRunRequest()) {
       notifyDelete(Resource.Type.Host, predicate);
     }
 
@@ -366,12 +376,11 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     Set<String> baseUnsupported = super.checkPropertyIds(propertyIds);
 
     baseUnsupported.remove(BLUEPRINT_PROPERTY_ID);
-    baseUnsupported.remove(HOSTGROUP_PROPERTY_ID);
-    baseUnsupported.remove(HOST_NAME_NO_CATEGORY_PROPERTY_ID);
-    //todo: constants
+    baseUnsupported.remove(HOST_GROUP_PROPERTY_ID);
+    baseUnsupported.remove(HOST_NAME_PROPERTY_ID);
     baseUnsupported.remove(HOST_COUNT_PROPERTY_ID);
     baseUnsupported.remove(HOST_PREDICATE_PROPERTY_ID);
-    baseUnsupported.remove(HOST_RACK_INFO_NO_CATEGORY_PROPERTY_ID);
+    baseUnsupported.remove(RACK_INFO_PROPERTY_ID);
 
     return checkConfigPropertyIds(baseUnsupported, "Hosts");
   }
@@ -381,7 +390,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
 
   @Override
   protected Set<String> getPKPropertyIds() {
-    return pkPropertyIds;
+    return new HashSet<>(keyPropertyIds.values());
   }
 
 
@@ -400,7 +409,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     Set<Map<String, Object>> properties = request.getProperties();
     if (properties != null && ! properties.isEmpty()) {
       //todo: for now, either all or none of the hosts need to specify a hg.  Unable to mix.
-      String hgName = (String) properties.iterator().next().get(HOSTGROUP_PROPERTY_ID);
+      String hgName = (String) properties.iterator().next().get(HOST_GROUP_PROPERTY_ID);
       isHostGroupRequest = hgName != null && ! hgName.isEmpty();
     }
     return isHostGroupRequest;
@@ -416,21 +425,21 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
   private HostRequest getRequest(Map<String, Object> properties) {
 
     if (properties == null) {
-      return  new HostRequest(null, null, null);
+      return new HostRequest(null, null);
     }
 
     HostRequest hostRequest = new HostRequest(
         getHostNameFromProperties(properties),
-        (String) properties.get(HOST_CLUSTER_NAME_PROPERTY_ID),
-        null);
+        (String) properties.get(HOST_CLUSTER_NAME_PROPERTY_ID)
+    );
     hostRequest.setPublicHostName((String) properties.get(HOST_PUBLIC_NAME_PROPERTY_ID));
 
     String rackInfo = (String) ((null != properties.get(HOST_RACK_INFO_PROPERTY_ID))? properties.get(HOST_RACK_INFO_PROPERTY_ID):
-            properties.get(HOST_RACK_INFO_NO_CATEGORY_PROPERTY_ID));
+            properties.get(RACK_INFO_PROPERTY_ID));
 
     hostRequest.setRackInfo(rackInfo);
     hostRequest.setBlueprintName((String) properties.get(BLUEPRINT_PROPERTY_ID));
-    hostRequest.setHostGroupName((String) properties.get(HOSTGROUP_PROPERTY_ID));
+    hostRequest.setHostGroupName((String) properties.get(HOST_GROUP_PROPERTY_ID));
 
     Object o = properties.get(HOST_MAINTENANCE_STATE_PROPERTY_ID);
     if (null != o) {
@@ -449,10 +458,9 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
    * Accepts a request with registered hosts and if the request contains a cluster name then will map all of the
    * hosts onto that cluster.
    * @param request Request that must contain registered hosts, and optionally a cluster.
-   * @throws AmbariException
    */
   public synchronized void createHosts(Request request)
-      throws AmbariException {
+      throws AmbariException, AuthorizationException {
 
     Set<Map<String, Object>> propertySet = request.getProperties();
     if (propertySet == null || propertySet.isEmpty()) {
@@ -463,74 +471,141 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     AmbariManagementController controller = getManagementController();
     Clusters                   clusters   = controller.getClusters();
 
-    Set<String> duplicates = new HashSet<String>();
-    Set<String> unknowns = new HashSet<String>();
-    Set<String> allHosts = new HashSet<String>();
+    Set<String> duplicates = new HashSet<>();
+    Set<String> unknowns = new HashSet<>();
+    Set<String> allHosts = new HashSet<>();
 
 
-    Set<HostRequest> hostRequests = new HashSet<HostRequest>();
+    Set<HostRequest> hostRequests = new HashSet<>();
     for (Map<String, Object> propertyMap : propertySet) {
       HostRequest hostRequest = getRequest(propertyMap);
       hostRequests.add(hostRequest);
-      if (! propertyMap.containsKey(HOSTGROUP_PROPERTY_ID)) {
+      if (! propertyMap.containsKey(HOST_GROUP_PROPERTY_ID)) {
         createHostResource(clusters, duplicates, unknowns, allHosts, hostRequest);
       }
     }
 
     if (!duplicates.isEmpty()) {
-      StringBuilder names = new StringBuilder();
-      boolean first = true;
-      for (String hName : duplicates) {
-        if (!first) {
-          names.append(",");
-        }
-        first = false;
-        names.append(hName);
-      }
-      throw new IllegalArgumentException("Invalid request contains"
-          + " duplicate hostnames"
-          + ", hostnames=" + names.toString());
+      throw new IllegalArgumentException("Invalid request contains duplicate hostnames"
+              + ", hostnames=" + String.join(",", duplicates));
     }
 
     if (!unknowns.isEmpty()) {
-      StringBuilder names = new StringBuilder();
-      boolean first = true;
-      for (String hName : unknowns) {
-        if (!first) {
-          names.append(",");
-        }
-        first = false;
-        names.append(hName);
-      }
-
       throw new IllegalArgumentException("Attempted to add unknown hosts to a cluster.  " +
-          "These hosts have not been registered with the server: " + names.toString());
+              "These hosts have not been registered with the server: " +
+              String.join(",", unknowns));
     }
 
-    Map<String, Set<String>> hostClustersMap = new HashMap<String, Set<String>>();
-    Map<String, Map<String, String>> hostAttributes = new HashMap<String, Map<String, String>>();
-    Set<String> allClusterSet = new HashSet<String>();
+    Map<String, Set<String>> hostClustersMap = new HashMap<>();
+    Map<String, Map<String, String>> hostAttributes = new HashMap<>();
+    Set<String> allClusterSet = new HashSet<>();
 
+    TreeMap<String, TopologyCluster> addedTopologies = new TreeMap<>();
+    List<HostLevelParamsUpdateEvent> hostLevelParamsUpdateEvents = new ArrayList<>();
     for (HostRequest hostRequest : hostRequests) {
       if (hostRequest.getHostname() != null &&
           !hostRequest.getHostname().isEmpty() &&
           hostRequest.getClusterName() != null &&
           !hostRequest.getClusterName().isEmpty()){
 
-        Set<String> clusterSet = new HashSet<String>();
+        Set<String> clusterSet = new HashSet<>();
         clusterSet.add(hostRequest.getClusterName());
         allClusterSet.add(hostRequest.getClusterName());
         hostClustersMap.put(hostRequest.getHostname(), clusterSet);
-        if (hostRequest.getHostAttributes() != null) {
-          hostAttributes.put(hostRequest.getHostname(), hostRequest.getHostAttributes());
+        Cluster cl = clusters.getCluster(hostRequest.getClusterName());
+        String clusterId = Long.toString(cl.getClusterId());
+        if (!addedTopologies.containsKey(clusterId)) {
+          addedTopologies.put(clusterId, new TopologyCluster());
         }
+        Host addedHost = clusters.getHost(hostRequest.getHostname());
+        addedTopologies.get(clusterId).addTopologyHost(new TopologyHost(addedHost.getHostId(), addedHost.getHostName(),
+            addedHost.getRackInfo(), addedHost.getIPv4()));
+        HostLevelParamsUpdateEvent hostLevelParamsUpdateEvent = new HostLevelParamsUpdateEvent(addedHost.getHostId(),
+            clusterId,
+            new HostLevelParamsCluster( recoveryConfigHelper.getRecoveryConfig(cl.getClusterName(), addedHost.getHostName()),
+            getManagementController().getBlueprintProvisioningStates(cl.getClusterId(), addedHost.getHostId())
+        ));
+        hostLevelParamsUpdateEvents.add(hostLevelParamsUpdateEvent);
       }
     }
     clusters.updateHostWithClusterAndAttributes(hostClustersMap, hostAttributes);
 
-    for (String clusterName : allClusterSet) {
-      clusters.getCluster(clusterName).recalculateAllClusterVersionStates();
+    // TODO add rack change to topology update
+    updateHostRackInfoIfChanged(clusters, hostRequests);
+
+    for (HostLevelParamsUpdateEvent hostLevelParamsUpdateEvent : hostLevelParamsUpdateEvents) {
+      hostLevelParamsHolder.updateData(hostLevelParamsUpdateEvent);
     }
+    TopologyUpdateEvent topologyUpdateEvent =
+        new TopologyUpdateEvent(addedTopologies, UpdateEventType.UPDATE);
+    topologyHolder.updateData(topologyUpdateEvent);
+  }
+
+  /**
+   * Iterates through the provided host request and checks if there is rack info provided.
+   * If the rack info differs from the rack info of the host than updates it with the value from
+   * the host request.
+   * @param clusters
+   * @param hostRequests
+   * @throws AmbariException
+   * @throws AuthorizationException
+   */
+  private void updateHostRackInfoIfChanged(Clusters clusters, Set<HostRequest> hostRequests)
+    throws AmbariException, AuthorizationException {
+
+    HashSet<String> rackChangeAffectedClusters = new HashSet<>();
+
+    for (HostRequest hostRequest : hostRequests) {
+      String clusterName = hostRequest.getClusterName();
+
+      if (StringUtils.isNotBlank(clusterName)) {
+        Cluster cluster = clusters.getCluster(clusterName);
+        Host host = clusters.getHost(hostRequest.getHostname());
+
+        if (updateHostRackInfoIfChanged(cluster, host, hostRequest))
+          rackChangeAffectedClusters.add(clusterName);
+      }
+    }
+    // TODO rack change topology update
+    for (String clusterName: rackChangeAffectedClusters) {
+      getManagementController().registerRackChange(clusterName);
+    }
+  }
+
+
+
+  /**
+   * If the rack info provided in the request differs from the rack info of the host
+   * update the rack info of the host with the value from the host request
+   *
+   * @param cluster The cluster to check user privileges against. User is required
+   *                to have {@link RoleAuthorization#HOST_ADD_DELETE_HOSTS} rights on the cluster.
+   * @param host The host of which rack information is to be updated
+   * @param hostRequest
+   * @return true is host was updated otherwise false
+   * @throws AmbariException
+   * @throws AuthorizationException
+   */
+  private boolean updateHostRackInfoIfChanged(Cluster cluster, Host host, HostRequest hostRequest)
+    throws AmbariException, AuthorizationException {
+
+    Long resourceId = cluster.getResourceId();
+
+    String hostRackInfo = host.getRackInfo();
+    String requestRackInfo = hostRequest.getRackInfo();
+
+    boolean rackChange = requestRackInfo != null && !requestRackInfo.equals(hostRackInfo);
+
+    if (rackChange) {
+      if(!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, resourceId, RoleAuthorization.HOST_ADD_DELETE_HOSTS)) {
+        throw new AuthorizationException("The authenticated user is not authorized to update host rack information");
+      }
+      //TODO topology update
+
+      host.setRackInfo(requestRackInfo);
+    }
+
+    return rackChange;
   }
 
   private void createHostResource(Clusters clusters, Set<String> duplicates,
@@ -546,9 +621,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     }
 
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Received a createHost request"
-          + ", hostname=" + request.getHostname()
-          + ", request=" + request);
+      LOG.debug("Received a createHost request, hostname={}, request={}", request.getHostname(), request);
     }
 
     if (allHosts.contains(request.getHostname())) {
@@ -578,20 +651,21 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     }
   }
 
-  public RequestStatusResponse install(final String cluster, final String hostname, Collection<String> skipInstallForComponents, Collection<String> dontSkipInstallForComponents, final boolean skipFailure)
-      throws ResourceAlreadyExistsException,
-      SystemException,
+  public RequestStatusResponse install(final String cluster, final String hostname,
+                                       Collection<String> skipInstallForComponents,
+                                       Collection<String> dontSkipInstallForComponents, final boolean skipFailure,
+                                       boolean useClusterHostInfo)
+      throws SystemException,
       NoSuchParentResourceException,
       UnsupportedPropertyException {
 
 
     return ((HostComponentResourceProvider) getResourceProvider(Resource.Type.HostComponent)).
-        install(cluster, hostname, skipInstallForComponents, dontSkipInstallForComponents, skipFailure);
+        install(cluster, hostname, skipInstallForComponents, dontSkipInstallForComponents, skipFailure, useClusterHostInfo);
   }
 
   public RequestStatusResponse start(final String cluster, final String hostname)
-      throws ResourceAlreadyExistsException,
-      SystemException,
+      throws SystemException,
       NoSuchParentResourceException,
       UnsupportedPropertyException {
 
@@ -600,13 +674,13 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
   }
 
   protected Set<HostResponse> getHosts(Set<HostRequest> requests) throws AmbariException {
-    Set<HostResponse> response = new HashSet<HostResponse>();
+    Set<HostResponse> response = new HashSet<>();
 
     AmbariManagementController controller = getManagementController();
 
     for (HostRequest request : requests) {
       try {
-        response.addAll(getHosts(controller, request));
+        response.addAll(getHosts(controller, request, osFamily));
       } catch (HostNotFoundException e) {
         if (requests.size() == 1) {
           // only throw exception if 1 request.
@@ -618,14 +692,17 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     return response;
   }
 
-  protected static Set<HostResponse> getHosts(AmbariManagementController controller, HostRequest request)
+  /**
+   * @param osFamily provides OS to OS family lookup; may be null if OS family is ignored anyway (eg. for liveness check)
+   */
+  protected static Set<HostResponse> getHosts(AmbariManagementController controller, HostRequest request, OsFamily osFamily)
       throws AmbariException {
 
     //TODO/FIXME host can only belong to a single cluster so get host directly from Cluster
     //TODO/FIXME what is the requirement for filtering on host attributes?
 
     List<Host> hosts;
-    Set<HostResponse> response = new HashSet<HostResponse>();
+    Set<HostResponse> response = new HashSet<>();
     Cluster           cluster  = null;
 
     Clusters                   clusters   = controller.getClusters();
@@ -645,7 +722,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     if (hostName == null) {
       hosts = clusters.getHosts();
     } else {
-      hosts = new ArrayList<Host>();
+      hosts = new ArrayList<>();
       try {
         hosts.add(clusters.getHost(request.getHostname()));
       } catch (HostNotFoundException e) {
@@ -657,7 +734,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
     // retrieve the cluster desired configs once instead of per host
     Map<String, DesiredConfig> desiredConfigs = null;
     if (null != cluster) {
-      cluster.getDesiredConfigs();
+      desiredConfigs = cluster.getDesiredConfigs();
     }
 
     for (Host h : hosts) {
@@ -668,6 +745,13 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
           r.setClusterName(clusterName);
           r.setDesiredHostConfigs(h.getDesiredHostConfigs(cluster, desiredConfigs));
           r.setMaintenanceState(h.getMaintenanceState(cluster.getClusterId()));
+          if (osFamily != null) {
+            String hostOsFamily = osFamily.find(r.getOsType());
+            if (hostOsFamily == null) {
+              LOG.error("Can not find host OS family. For OS type = '{}' and host name = '{}'", r.getOsType(), r.getHostname());
+            }
+            r.setOsFamily(hostOsFamily);
+          }
 
           response.add(r);
         } else if (hostName != null) {
@@ -681,7 +765,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
         if (clustersForHost != null && clustersForHost.size() != 0) {
           Cluster clusterForHost = clustersForHost.iterator().next();
           r.setClusterName(clusterForHost.getClusterName());
-          r.setDesiredHostConfigs(h.getDesiredHostConfigs(clusterForHost, desiredConfigs));
+          r.setDesiredHostConfigs(h.getDesiredHostConfigs(clusterForHost, null));
           r.setMaintenanceState(h.getMaintenanceState(clusterForHost.getClusterId()));
         }
 
@@ -707,11 +791,10 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       }
     }
 
+    TreeMap<String, TopologyCluster> topologyUpdates = new TreeMap<>();
     for (HostRequest request : requests) {
       if (LOG.isDebugEnabled()) {
-        LOG.debug("Received an updateHost request"
-            + ", hostname=" + request.getHostname()
-            + ", request=" + request);
+        LOG.debug("Received an updateHost request, hostname={}, request={}", request.getHostname(), request);
       }
 
       Host host = clusters.getHost(request.getHostname());
@@ -720,31 +803,20 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       Cluster cluster = clusters.getCluster(clusterName);
       Long clusterId = cluster.getClusterId();
       Long resourceId = cluster.getResourceId();
+      TopologyHost topologyHost = new TopologyHost(host.getHostId(), host.getHostName());
 
       try {
         // The below method call throws an exception when trying to create a duplicate mapping in the clusterhostmapping
         // table. This is done to detect duplicates during host create. In order to be robust, handle these gracefully.
-        clusters.mapHostToCluster(request.getHostname(), clusterName);
+        clusters.mapAndPublishHostsToCluster(new HashSet<>(Arrays.asList(request.getHostname())), clusterName);
       } catch (DuplicateResourceException e) {
         // do nothing
       }
 
-      if (null != request.getHostAttributes()) {
-        if(!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, resourceId, RoleAuthorization.HOST_ADD_DELETE_HOSTS)) {
-          throw new AuthorizationException("The authenticated user is not authorized to update host attributes");
-        }
-        host.setHostAttributes(request.getHostAttributes());
-      }
-
-      String  rackInfo        = host.getRackInfo();
-      String  requestRackInfo = request.getRackInfo();
-      boolean rackChange      = requestRackInfo != null && !requestRackInfo.equals(rackInfo);
+      boolean rackChange = updateHostRackInfoIfChanged(cluster, host, request);
 
       if (rackChange) {
-        if(!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, resourceId, RoleAuthorization.HOST_ADD_DELETE_HOSTS)) {
-          throw new AuthorizationException("The authenticated user is not authorized to update host rack information");
-        }
-        host.setRackInfo(requestRackInfo);
+        topologyHost.setRackName(host.getRackInfo());
       }
 
       if (null != request.getPublicHostName()) {
@@ -752,6 +824,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
           throw new AuthorizationException("The authenticated user is not authorized to update host attributes");
         }
         host.setPublicHostName(request.getPublicHostName());
+        topologyHost.setHostName(request.getPublicHostName());
       }
 
       if (null != clusterName && null != request.getMaintenanceState()) {
@@ -776,30 +849,6 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
         if (clusters.getHostsForCluster(clusterName).containsKey(host.getHostName())) {
 
           for (ConfigurationRequest cr : request.getDesiredConfigs()) {
-            String configType = cr.getType();
-
-            // If the config type is for a service, then allow a user with SERVICE_MODIFY_CONFIGS to
-            // update, else ensure the user has CLUSTER_MODIFY_CONFIGS
-            String service = null;
-
-            try {
-              service = cluster.getServiceForConfigTypes(Collections.singleton(configType));
-            } catch (IllegalArgumentException e) {
-              // Ignore this since we may have hit a config type that spans multiple services. This may
-              // happen in unit test cases but should not happen with later versions of stacks.
-            }
-
-            if(StringUtils.isEmpty(service)) {
-              if (!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, cluster.getResourceId(), EnumSet.of(RoleAuthorization.CLUSTER_MODIFY_CONFIGS))) {
-                throw new AuthorizationException("The authenticated user does not have authorization to modify cluster configurations");
-              }
-            }
-            else {
-              if (!AuthorizationHelper.isAuthorized(ResourceType.CLUSTER, cluster.getResourceId(), EnumSet.of(RoleAuthorization.SERVICE_MODIFY_CONFIGS))) {
-                throw new AuthorizationException("The authenticated user does not have authorization to modify service configurations");
-              }
-            }
-
             if (null != cr.getProperties() && cr.getProperties().size() > 0) {
               LOG.info(MessageFormat.format("Applying configuration with tag ''{0}'' to host ''{1}'' in cluster ''{2}''",
                   cr.getVersionTag(),
@@ -817,7 +866,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
 
               if (host.addDesiredConfig(clusterId, cr.isSelected(), authName,  baseConfig)) {
                 Logger logger = LoggerFactory.getLogger("configchange");
-                logger.info("cluster '" + cluster.getClusterName() + "', "
+                logger.info("(configchange) cluster '" + cluster.getClusterName() + "', "
                     + "host '" + host.getHostName() + "' "
                     + "changed by: '" + authName + "'; "
                     + "type='" + baseConfig.getType() + "' "
@@ -830,21 +879,25 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
         }
       }
 
-      if (clusterName != null && !clusterName.isEmpty()) {
-        clusters.getCluster(clusterName).recalculateAllClusterVersionStates();
-        if (rackChange) {
-          // Authorization check for this update was performed before we got to this point.
-          controller.registerRackChange(clusterName);
-        }
+      if (StringUtils.isNotBlank(clusterName) && rackChange) {
+        // Authorization check for this update was performed before we got to this point.
+        controller.registerRackChange(clusterName);
       }
 
+      if (!topologyUpdates.containsKey(clusterId.toString())) {
+        topologyUpdates.put(clusterId.toString(), new TopologyCluster());
+      }
+      topologyUpdates.get(clusterId.toString()).addTopologyHost(topologyHost);
+      TopologyUpdateEvent topologyUpdateEvent = new TopologyUpdateEvent(topologyUpdates,
+          UpdateEventType.UPDATE);
+      topologyHolder.updateData(topologyUpdateEvent);
       //todo: if attempt was made to update a property other than those
       //todo: that are allowed above, should throw exception
     }
   }
 
   @Transactional
-  protected DeleteStatusMetaData deleteHosts(Set<HostRequest> requests, boolean dryRun, boolean forceDelete)
+  protected DeleteStatusMetaData deleteHosts(Set<HostRequest> requests, boolean dryRun)
       throws AmbariException {
 
     AmbariManagementController controller = getManagementController();
@@ -859,7 +912,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       }
 
       try {
-        validateHostInDeleteFriendlyState(hostRequest, clusters, forceDelete);
+        validateHostInDeleteFriendlyState(hostRequest, clusters);
         okToRemove.add(hostRequest);
       } catch (Exception ex) {
         deleteStatusMetaData.addException(hostName, ex);
@@ -898,13 +951,26 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
   }
 
   private void processDeleteHostRequests(List<HostRequest> requests,  Clusters clusters, DeleteStatusMetaData deleteStatusMetaData) throws AmbariException {
+    Set<String> hostsClusters = new HashSet<>();
+    Set<String> hostNames = new HashSet<>();
+    Set<Long> hostIds = new HashSet<>();
+    TreeMap<String, TopologyCluster> topologyUpdates = new TreeMap<>();
     for (HostRequest hostRequest : requests) {
       // Assume the user also wants to delete it entirely, including all clusters.
       String hostname = hostRequest.getHostname();
+      Long hostId = clusters.getHost(hostname).getHostId();
+      hostNames.add(hostname);
+      hostIds.add(hostId);
+
+      if (hostRequest.getClusterName() != null) {
+        hostsClusters.add(hostRequest.getClusterName());
+      }
+
+      LOG.info("Received Delete request for host {} from cluster {}.", hostname, hostRequest.getClusterName());
 
       // delete all host components
       Set<ServiceComponentHostRequest> schrs = new HashSet<>();
-      for(Cluster cluster : clusters.getClustersForHost(hostname)) {
+      for (Cluster cluster : clusters.getClustersForHost(hostname)) {
         List<ServiceComponentHost> list = cluster.getServiceComponentHosts(hostname);
         for (ServiceComponentHost sch : list) {
           ServiceComponentHostRequest schr = new ServiceComponentHostRequest(cluster.getClusterName(),
@@ -916,7 +982,7 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
         }
       }
       DeleteStatusMetaData componentDeleteStatus = null;
-      if(schrs.size() > 0) {
+      if (schrs.size() > 0) {
         try {
           componentDeleteStatus = getManagementController().deleteHostComponents(schrs);
         } catch (Exception ex) {
@@ -933,24 +999,35 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
         }
       }
 
+      if (hostRequest.getClusterName() != null) {
+        hostsClusters.add(hostRequest.getClusterName());
+      }
       try {
+        Set<Cluster> hostClusters = new HashSet<>(clusters.getClustersForHost(hostname));
         clusters.deleteHost(hostname);
+        for (Cluster cluster : hostClusters) {
+          String clusterId = Long.toString(cluster.getClusterId());
+          if (!topologyUpdates.containsKey(clusterId)) {
+            topologyUpdates.put(clusterId, new TopologyCluster());
+          }
+          topologyUpdates.get(clusterId).getTopologyHosts().add(new TopologyHost(hostId, hostname));
+        }
         deleteStatusMetaData.addDeletedKey(hostname);
       } catch (Exception ex) {
         deleteStatusMetaData.addException(hostname, ex);
       }
       removeHostFromClusterTopology(clusters, hostRequest);
-      for (LogicalRequest logicalRequest: topologyManager.getRequests(Collections.<Long>emptyList())) {
+      for (LogicalRequest logicalRequest: topologyManager.getRequests(Collections.emptyList())) {
         logicalRequest.removeHostRequestByHostName(hostname);
       }
-
-      if (null != hostRequest.getClusterName()) {
-        clusters.getCluster(hostRequest.getClusterName()).recalculateAllClusterVersionStates();
-      }
     }
+    clusters.publishHostsDeletion(hostIds, hostNames);
+    TopologyUpdateEvent topologyUpdateEvent = new TopologyUpdateEvent(topologyUpdates,
+        UpdateEventType.DELETE);
+    topologyHolder.updateData(topologyUpdateEvent);
   }
 
-  private void validateHostInDeleteFriendlyState(HostRequest hostRequest, Clusters clusters, boolean forceDelete) throws AmbariException {
+  private void validateHostInDeleteFriendlyState(HostRequest hostRequest, Clusters clusters) throws AmbariException {
     Set<String> clusterNamesForHost = new HashSet<>();
     String hostName = hostRequest.getHostname();
     if (null != hostRequest.getClusterName()) {
@@ -970,42 +1047,25 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
       List<ServiceComponentHost> list = cluster.getServiceComponentHosts(hostName);
 
       if (!list.isEmpty()) {
-        List<String> componentsToRemove = new ArrayList<>();
         List<String> componentsStarted = new ArrayList<>();
         for (ServiceComponentHost sch : list) {
-          componentsToRemove.add(sch.getServiceComponentName());
-          if (sch.getState() == State.STARTED) {
+          if (!sch.canBeRemoved()) {
             componentsStarted.add(sch.getServiceComponentName());
           }
         }
 
-        if (forceDelete) {
-          // error if components are running
-          if (!componentsStarted.isEmpty()) {
-            StringBuilder reason = new StringBuilder("Cannot remove host ")
-                .append(hostName)
-                .append(" from ")
-                .append(hostRequest.getClusterName())
-                .append(
-                    ".  The following roles exist, and these components must be stopped: ");
+        // error if components are running
+        if (!componentsStarted.isEmpty()) {
+          StringBuilder reason = new StringBuilder("Cannot remove host ")
+              .append(hostName)
+              .append(" from ")
+              .append(hostRequest.getClusterName())
+              .append(
+                  ".  The following roles exist, and these components are not in the removable state: ");
 
-            reason.append(StringUtils.join(componentsToRemove, ", "));
+          reason.append(StringUtils.join(componentsStarted, ", "));
 
-            throw new AmbariException(reason.toString());
-          }
-        } else {
-          if (!componentsToRemove.isEmpty()) {
-            StringBuilder reason = new StringBuilder("Cannot remove host ")
-                .append(hostName)
-                .append(" from ")
-                .append(hostRequest.getClusterName())
-                .append(
-                    ".  The following roles exist, and these components must be stopped if running, and then deleted: ");
-
-            reason.append(StringUtils.join(componentsToRemove, ", "));
-
-            throw new AmbariException(reason.toString());
-          }
+          throw new AmbariException(reason.toString());
         }
       }
     }
@@ -1013,9 +1073,6 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
 
   /**
    * Removes hostname from the stateful cluster topology
-   * @param clusters
-   * @param hostRequest
-   * @throws AmbariException
    */
   private void removeHostFromClusterTopology(Clusters clusters, HostRequest hostRequest) throws AmbariException{
     if (hostRequest.getClusterName() == null) {
@@ -1045,11 +1102,11 @@ public class HostResourceProvider extends AbstractControllerResourceProvider {
    *
    * @return the host name for the host request
    */
-  private String getHostNameFromProperties(Map<String, Object> properties) {
-    String hostname = (String) properties.get(HOST_NAME_PROPERTY_ID);
+  public static String getHostNameFromProperties(Map<String, Object> properties) {
+    String hostname = (String) properties.get(HOST_HOST_NAME_PROPERTY_ID);
 
     return hostname != null ? hostname :
-        (String) properties.get(HOST_NAME_NO_CATEGORY_PROPERTY_ID);
+        (String) properties.get(HOST_NAME_PROPERTY_ID);
   }
 
   //todo: for api/v1/hosts we also end up here so we need to ensure proper 400 response

@@ -30,19 +30,20 @@ class KeeperException(Exception):
 
 class ResourceFilesKeeper():
   """
-  This class incapsulates all utility methods for resource files maintenance.
+  This class encapsulates all utility methods for resource files maintenance.
   """
 
-  HOOKS_DIR="hooks"
+  STACK_HOOKS_DIR= "stack-hooks"
   PACKAGE_DIR="package"
   STACKS_DIR="stacks"
   COMMON_SERVICES_DIR="common-services"
   CUSTOM_ACTIONS_DIR="custom_actions"
   HOST_SCRIPTS_DIR="host_scripts"
   DASHBOARDS_DIR="dashboards"
+  EXTENSIONS_DIR="extensions"
 
   # For these directories archives are created
-  ARCHIVABLE_DIRS = [HOOKS_DIR, PACKAGE_DIR]
+  ARCHIVABLE_DIRS = [PACKAGE_DIR]
 
   HASH_SUM_FILE=".hash"
   ARCHIVE_NAME="archive.zip"
@@ -75,7 +76,7 @@ class ResourceFilesKeeper():
 
   def _iter_update_directory_archive(self, subdirs_list):
     for subdir in subdirs_list:
-      for root, dirs, _ in os.walk(subdir):
+      for root, dirs, _ in os.walk(subdir, followlinks=True):
         for d in dirs:
           if d in self.ARCHIVABLE_DIRS:
             full_path = os.path.abspath(os.path.join(root, d))
@@ -106,6 +107,17 @@ class ResourceFilesKeeper():
     self.dbg_out("Common Services: {0}".format(pprint.pformat(valid_common_services)))
     # Iterate over common services directories
     self._iter_update_directory_archive(valid_common_services)
+
+    # archive extensions
+    extensions_root = os.path.join(self.resources_dir, self.EXTENSIONS_DIR)
+    self.dbg_out("Updating archives for extensions dirs at {0}...".format(extensions_root))
+    valid_extensions = self.list_extensions(extensions_root)
+    self.dbg_out("Extensions: {0}".format(pprint.pformat(valid_extensions)))
+    # Iterate over extension directories
+    self._iter_update_directory_archive(valid_extensions)
+
+    # stack hooks
+    self._update_resources_subdir_archive(self.STACK_HOOKS_DIR)
 
     # custom actions
     self._update_resources_subdir_archive(self.CUSTOM_ACTIONS_DIR)
@@ -145,14 +157,29 @@ class ResourceFilesKeeper():
     except Exception, err:
       raise KeeperException("Can not list common services: {0}".format(str(err)))
 
+  def list_extensions(self, root_dir):
+    """
+    Builds a list of extension directories
+    """
+    try:
+      return self._list_metainfo_dirs(root_dir)
+    except Exception, err:
+      raise KeeperException("Can not list extensions: {0}".format(str(err)))
+
   def update_directory_archive(self, directory):
     """
     If hash sum for directory is not present or differs from saved value,
-    recalculates hash sum and creates directory archive
+    recalculates hash sum and creates directory archive. The archive is
+    also created if the existing archive does not exist, even if the
+    saved and current hash sums are matching.
     """
     skip_empty_directory = True
+
     cur_hash = self.count_hash_sum(directory)
     saved_hash = self.read_hash_sum(directory)
+
+    directory_archive_name = os.path.join(directory, self.ARCHIVE_NAME)
+
     if cur_hash != saved_hash:
       if not self.nozip:
         self.zip_directory(directory, skip_empty_directory)
@@ -162,6 +189,8 @@ class ResourceFilesKeeper():
       else:
         self.write_hash_sum(directory, cur_hash)
       pass
+    elif not os.path.isfile(directory_archive_name):
+      self.zip_directory(directory, skip_empty_directory)
 
   def count_hash_sum(self, directory):
     """
@@ -219,7 +248,7 @@ class ResourceFilesKeeper():
     try:
       with open(hash_file, "w") as fh:
         fh.write(new_hash)
-      os.chmod(hash_file, 0o666)
+      os.chmod(hash_file, 0o644)
     except Exception, err:
       raise KeeperException("Can not write to file {0} : {1}".format(hash_file,
                                                                    str(err)))
@@ -249,7 +278,7 @@ class ResourceFilesKeeper():
                                         arcname))
             zf.write(absname, arcname)
       zf.close()
-      os.chmod(zip_file_path, 0o666)
+      os.chmod(zip_file_path, 0o755)
     except Exception, err:
       raise KeeperException("Can not create zip archive of "
                             "directory {0} : {1}".format(directory, str(err)))
@@ -289,4 +318,3 @@ def main(argv=None):
 
 if __name__ == '__main__':
   main(sys.argv)
-

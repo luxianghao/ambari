@@ -230,16 +230,16 @@
       <direction>DOWNGRADE</direction>
       <execute-stage title="Restore configuration directories and remove HDP 2.3 symlinks">
         <task xsi:type="execute">
-          <script>scripts/ru_set_all.py</script>
-          <function>unlink_all_configs</function>
+          <script>scripts/stack_select_set_all.py</script>
+          <function>foo_function</function>
         </task>
       </execute-stage>
     </group>
 
     <!-- After processing this group, will change the effective Stack of the UpgradeContext object. -->
-    <group xsi:type="update-stack" name="UPDATE_DESIRED_STACK_ID" title="Update Target Stack">
-      <execute-stage title="Update Target Stack">
-        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.UpdateDesiredStackAction">
+    <group xsi:type="update-stack" name="UPDATE_DESIRED_REPOSITORY_ID" title="Update Target Repositories">
+      <execute-stage title="Update Target Repositories">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.UpdateDesiredRepositoryAction">
         </task>
       </execute-stage>
     </group>
@@ -574,7 +574,7 @@
 
       <execute-stage title="Update stack to {{version}}">
         <task xsi:type="execute">
-          <script>scripts/ru_set_all.py</script>
+          <script>scripts/stack_select_set_all.py</script>
           <function>actionexecute</function>
         </task>
       </execute-stage>
@@ -935,6 +935,8 @@
             <function>delete_storm_local_data</function>
           </task>
         </pre-upgrade>
+        
+        <pre-downgrade copy-upgrade="true" />
 
         <upgrade>
           <task xsi:type="restart-task"/>
@@ -949,6 +951,8 @@
             <function>delete_storm_local_data</function>
           </task>
         </pre-upgrade>
+        
+        <pre-downgrade copy-upgrade="true" />
 
         <upgrade>
           <task xsi:type="restart-task"/>
@@ -959,6 +963,8 @@
             <message>Please rebuild your topology using the new Storm version dependencies and resubmit it using the newly created jar.</message>
           </task>
         </post-upgrade>
+        
+        <post-downgrade copy-upgrade="true" />
       </component>
     </service>
 

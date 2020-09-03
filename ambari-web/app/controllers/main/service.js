@@ -19,7 +19,7 @@
 var App = require('app');
 var misc = require('utils/misc');
 
-App.MainServiceController = Em.ArrayController.extend({
+App.MainServiceController = Em.ArrayController.extend(App.SupportClientConfigsDownload, {
 
   name: 'mainServiceController',
 
@@ -93,7 +93,7 @@ App.MainServiceController = Em.ArrayController.extend({
   /**
    * @type {bool}
    */
-  isStartStopAllClicked: Em.computed.notEqual('App.router.backgroundOperationsController.allOperationsCount', 0),
+  isStartStopAllClicked: Em.computed.notEqual('App.router.backgroundOperationsController.runningOperationsCount', 0),
 
   /**
    * Callback for <code>start all service</code> button
@@ -144,6 +144,13 @@ App.MainServiceController = Em.ArrayController.extend({
   },
 
   /**
+   * Download client configs for all services
+   */
+  downloadAllClientConfigs: function() {
+    this.downloadClientConfigsCall({resourceType: this.resourceTypeEnum.CLUSTER});
+  },
+
+  /**
    * Do request to server for "start|stop" all services
    * @param {string} state "STARTED|INSTALLED"
    * @param {object} query
@@ -164,14 +171,26 @@ App.MainServiceController = Em.ArrayController.extend({
         query: query
       },
       success: 'allServicesCallSuccessCallback',
-      error: 'allServicesCallErrorCallback'
+      error: 'allServicesCallErrorCallback',
+      showLoadingPopup: true
+    });
+  },
+
+  /**
+   * Restart all services - restarts by sending one RESTART command
+   */
+  restartAllServices: function () {
+    App.ajax.send({
+      name: 'restart.allServices',
+      sender: this,
+      showLoadingPopup: true
     });
   },
 
   /**
    * Restart all services - stops all services, then starts them back
    */
-  restartAllServices: function () {
+  stopAndStartAllServices: function () {
     this.silentStopAllServices();
   },
 
@@ -189,7 +208,8 @@ App.MainServiceController = Em.ArrayController.extend({
           state: 'INSTALLED'
         }
       },
-      success: 'silentStopSuccess'
+      success: 'silentStopSuccess',
+      showLoadingPopup: true
     });
   },
 
@@ -225,7 +245,7 @@ App.MainServiceController = Em.ArrayController.extend({
    */
   silentStartAllServices: function () {
     if (
-      !App.router.get('backgroundOperationsController').get('allOperationsCount')
+      !App.router.get('backgroundOperationsController').get('runningOperationsCount')
       && this.get('shouldStart')
       && !this.isStopAllServicesFailed()
     ) {
@@ -239,10 +259,11 @@ App.MainServiceController = Em.ArrayController.extend({
             state: 'STARTED'
           }
         },
-        success: 'silentCallSuccessCallback'
+        success: 'silentCallSuccessCallback',
+        showLoadingPopup: true
       });
     }
-  }.observes('shouldStart', 'controllers.backgroundOperationsController.allOperationsCount'),
+  }.observes('shouldStart', 'controllers.backgroundOperationsController.runningOperationsCount'),
 
   /**
    * Success callback for silent start
@@ -285,6 +306,7 @@ App.MainServiceController = Em.ArrayController.extend({
    */
   allServicesCallErrorCallback: function (request, ajaxOptions, error, opt, params) {
     params.query.set('status', 'FAIL');
+    App.ajax.defaultErrorHandler(request, opt.url, opt.type, request.status);
   },
 
   /**
@@ -308,7 +330,7 @@ App.MainServiceController = Em.ArrayController.extend({
       return App.showConfirmationPopup(function () {
             self.restartHostComponents();
           }, Em.I18n.t('services.service.refreshAll.confirmMsg').format(
-              App.HostComponent.find().filterProperty('staleConfigs').mapProperty('service.displayName').uniq().join(', ')),
+              App.Service.find().filterProperty('isRestartRequired').mapProperty('displayName').uniq().join(', ')),
           null,
           null,
           Em.I18n.t('services.service.restartAll.confirmButton')
@@ -323,68 +345,12 @@ App.MainServiceController = Em.ArrayController.extend({
    * @returns {$.ajax}
    */
   restartHostComponents: function () {
-    var batches, hiveInteractive = App.HostComponent.find().findProperty('componentName', 'HIVE_SERVER_INTERACTIVE');
-    var isYARNQueueRefreshRequired = hiveInteractive && hiveInteractive.get('staleConfigs');
-    var ajaxData = {
-      "RequestInfo": {
-        "command": "RESTART",
-        "context": "Restart all required services",
-        "operation_level": "host_component"
-      },
-      "Requests/resource_filters": [
-        {
-          "hosts_predicate": "HostRoles/stale_configs=true"
-        }
-      ]
-    };
-    
-    if (isYARNQueueRefreshRequired) {
-      batches = [
-        {
-          "order_id": 1,
-          "type": "POST",
-          "uri": App.apiPrefix + "/clusters/" + App.get('clusterName') + "/requests",
-          "RequestBodyInfo": {
-            "RequestInfo": {
-              "context": "Refresh YARN Capacity Scheduler",
-              "command": "REFRESHQUEUES",
-              "parameters/forceRefreshConfigTags": "capacity-scheduler"
-            },
-            "Requests/resource_filters": [{
-              "service_name": "YARN",
-              "component_name": "RESOURCEMANAGER",
-              "hosts": App.HostComponent.find().findProperty('componentName', 'RESOURCEMANAGER').get('hostName')
-            }]
-          }
-        },
-        {
-          "order_id": 2,
-          "type": "POST",
-          "uri": App.apiPrefix + "/clusters/" + App.get('clusterName') + "/requests",
-          "RequestBodyInfo": ajaxData
-        }
-      ];
-
-      App.ajax.send({
-        name: 'common.batch.request_schedules',
-        sender: this,
-        data: {
-          intervalTimeSeconds: 1,
-          tolerateSize: 0,
-          batches: batches
-        },
-        success: 'restartAllRequiredSuccessCallback'
-      });
-    } else {
-      App.ajax.send({
-        name: 'request.post',
-        sender: this,
-        data: {
-          data: ajaxData
-        },
-        success: 'restartAllRequiredSuccessCallback'
-      });
-    }
+    App.ajax.send({
+      name: 'restart.staleConfigs',
+      sender: this,
+      success: 'restartAllRequiredSuccessCallback',
+      showLoadingPopup: true
+    });
   },
 
   /**

@@ -574,6 +574,18 @@ describe('App.config', function() {
   describe('#textareaIntoFileConfigs', function () {
     var res, cs;
     beforeEach(function () {
+      var stackConfigs = [
+        Em.Object.create({
+          name: 'n1',
+          value: 'v1',
+          savedValue: 'v1',
+          serviceName: 'YARN',
+          filename: 'capacity-scheduler.xml',
+          isFinal: true,
+          group: null
+        })
+      ];
+      sinon.stub(App.configsCollection, 'getAll').returns(stackConfigs);
       res = [
         Em.Object.create({
           name: 'n1',
@@ -582,6 +594,7 @@ describe('App.config', function() {
           serviceName: 'YARN',
           filename: 'capacity-scheduler.xml',
           isFinal: true,
+          isUserProperty: false,
           group: null
         }),
         Em.Object.create({
@@ -591,6 +604,7 @@ describe('App.config', function() {
           serviceName: 'YARN',
           filename: 'capacity-scheduler.xml',
           isFinal: true,
+          isUserProperty: true,
           group: null
         })
       ];
@@ -609,6 +623,10 @@ describe('App.config', function() {
         'description': 'Capacity Scheduler properties',
         'displayType': 'capacityScheduler'
       });
+    });
+
+    afterEach(function () {
+      App.configsCollection.getAll.restore();
     });
 
     it('generate capacity scheduler', function () {
@@ -747,6 +765,36 @@ describe('App.config', function() {
       });
       it('overrideIsFinalValues is valid', function () {
         expect(configProperty.get('overrideIsFinalValues')).to.be.eql([overridenTemplate2.savedIsFinal]);
+      });
+
+    });
+
+    describe('overrides with empty string values', function () {
+
+      beforeEach(function () {
+        configProperty.set('overrides', [
+          {
+            savedValue: null,
+            savedIsFinal: true
+          },
+          {
+            savedValue: '',
+            savedIsFinal: false
+          },
+          {
+            savedValue: '1',
+            savedIsFinal: false
+          }
+        ]);
+        App.config.createOverride(configProperty, null, group);
+      });
+
+      it('values', function () {
+        expect(configProperty.get('overrideValues')).to.eql(['', '1']);
+      });
+
+      it('isFinal', function () {
+        expect(configProperty.get('overrideIsFinalValues')).to.eql([false, false]);
       });
 
     });
@@ -1060,6 +1108,7 @@ describe('App.config', function() {
           'hadoop.registry.zk.quorum': 'host1,host2'
         },
         propertyName: 'hadoop.registry.zk.quorum',
+        propertyType: 'yarn-site',
         hostsList: 'host1',
         e: 'host1'
       },
@@ -1068,6 +1117,7 @@ describe('App.config', function() {
           'hadoop.registry.zk.quorum': 'host1:10,host2:10'
         },
         propertyName: 'hadoop.registry.zk.quorum',
+        propertyType: 'yarn-site',
         hostsList: 'host2:10,host1:10',
         e: 'host1:10,host2:10'
       },
@@ -1076,6 +1126,7 @@ describe('App.config', function() {
           'hadoop.registry.zk.quorum': 'host1:10,host2:10,host3:10'
         },
         propertyName: 'hadoop.registry.zk.quorum',
+        propertyType: 'yarn-site',
         hostsList: 'host2:10,host1:10',
         e: 'host2:10,host1:10'
       },
@@ -1084,6 +1135,7 @@ describe('App.config', function() {
           'hadoop.registry.zk.quorum': 'host1:10,host2:10,host3:10'
         },
         propertyName: 'hadoop.registry.zk.quorum',
+        propertyType: 'yarn-site',
         hostsList: 'host2:10,host1:10,host3:10,host4:11',
         e: 'host2:10,host1:10,host3:10,host4:11'
       },
@@ -1092,15 +1144,114 @@ describe('App.config', function() {
           'hive.zookeeper.quorum': 'host1'
         },
         propertyName: 'some.new.property',
+        propertyType: 'hive-site',
         hostsList: 'host2,host1:10',
         e: 'host2,host1:10'
+      },
+      {
+        siteConfigs: {
+          'some.new.property': '[\'host1\',\'host2\']'
+        },
+        propertyName: 'some.new.property',
+        propertyType: 'property-type',
+        hostsList: '[\'host1\',\'host2\']',
+        isArray: true,
+        e: '[\'host1\',\'host2\']',
+        message: 'array-formatted property value with no changes'
+      },
+      {
+        siteConfigs: {
+          'some.new.property': '[\'host2\',\'host1\']'
+        },
+        propertyName: 'some.new.property',
+        propertyType: 'property-type',
+        hostsList: '[\'host1\',\'host2\']',
+        isArray: true,
+        e: '[\'host2\',\'host1\']',
+        message: 'array-formatted property value with different hosts order'
+      },
+      {
+        siteConfigs: {
+          'some.new.property': '[\'host1\',\'host2\']'
+        },
+        propertyName: 'some.new.property',
+        propertyType: 'property-type',
+        hostsList: '[\'host3\',\'host4\']',
+        isArray: true,
+        e: '[\'host3\',\'host4\']',
+        message: 'array-formatted property value with changes'
+      },
+      {
+        siteConfigs: {
+          'templeton.hive.properties': 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true'
+        },
+        propertyName: 'templeton.hive.properties',
+        propertyType: 'webhcat-site',
+        hostsList: 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        e: 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        message: 'templeton.hive.properties, no changes'
+      },
+      {
+        siteConfigs: {
+          'templeton.hive.properties': 'hive.metastore.local=false,hive.metastore.uris=thrift://host2:9083\\,thrift://host1:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true'
+        },
+        propertyName: 'templeton.hive.properties',
+        propertyType: 'webhcat-site',
+        hostsList: 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        e: 'hive.metastore.local=false,hive.metastore.uris=thrift://host2:9083\\,thrift://host1:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        message: 'templeton.hive.properties, different hosts order'
+      },
+      {
+        siteConfigs: {
+          'templeton.hive.properties': 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9082\\,thrift://host2:9082,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true'
+        },
+        propertyName: 'templeton.hive.properties',
+        propertyType: 'webhcat-site',
+        hostsList: 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        e: 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        message: 'templeton.hive.properties, different ports'
+      },
+      {
+        siteConfigs: {
+          'templeton.hive.properties': 'hive.metastore.local=false,hive.metastore.uris=thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true'
+        },
+        propertyName: 'templeton.hive.properties',
+        propertyType: 'webhcat-site',
+        hostsList: 'hive.metastore.local=false,hive.metastore.uris=thrift://host3:9083\\,thrift://host4:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        e: 'hive.metastore.local=false,hive.metastore.uris=thrift://host3:9083\\,thrift://host4:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        message: 'templeton.hive.properties, different hosts'
+      },
+      {
+        siteConfigs: {
+          'templeton.hive.properties': 'hive.metastore.local=false'
+        },
+        propertyName: 'templeton.hive.properties',
+        propertyType: 'hive-site',
+        hostsList: 'hive.metastore.local=true',
+        e: 'hive.metastore.local=true',
+        message: 'custom templeton.hive.properties'
       }
     ];
+
     tests.forEach(function(test) {
-      it('ZK located on {0}, current prop value is "{1}" "{2}" value should be "{3}"'.format(test.hostsList, ''+test.siteConfigs[test.propertyName], test.propertyName, test.e), function() {
-        var result = App.config.updateHostsListValue(test.siteConfigs, test.propertyName, test.hostsList);
-        expect(result).to.be.eql(test.e);
-        expect(test.siteConfigs[test.propertyName]).to.be.eql(test.e);
+      var message = test.message
+        || 'ZK located on {0}, current prop value is "{1}" "{2}" value should be "{3}"'
+          .format(test.hostsList, ''+test.siteConfigs[test.propertyName], test.propertyName, test.e);
+
+      describe(message, function () {
+        var result;
+
+        beforeEach(function () {
+          result = App.config.updateHostsListValue(test.siteConfigs, test.propertyType, test.propertyName, test.hostsList, test.isArray);
+        });
+
+        it('returned value', function() {
+          expect(result).to.be.eql(test.e);
+        });
+
+        it('value in configs object', function() {
+          expect(test.siteConfigs[test.propertyName]).to.be.eql(test.e);
+        });
       });
     });
   });
@@ -1260,7 +1411,7 @@ describe('App.config', function() {
             configuration: "hbase-env/hbase_principal_name",
             type: "user",
             local_username: "${hbase-env/hbase_user}",
-            value: "${hbase-env/hbase_user}-${cluster_name|toLower()}@${realm}"
+            value: "${hbase-env/hbase_user}${principal_suffix}@${realm}"
           },
           name: "hbase",
           keytab: {
@@ -1312,6 +1463,42 @@ describe('App.config', function() {
     });
   });
 
+  describe('#getTempletonHiveHosts', function () {
+    var testCases = [
+      {
+        value: 'hive.metastore.local=false,hive.metastore.uris=thrift://host0:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        result: ['thrift://host0:9083'],
+        message: 'one host'
+      },
+      {
+        value: 'hive.metastore.local=false,hive.metastore.uris=thrift://host0:9083\\,thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        result: ['thrift://host0:9083', 'thrift://host1:9083', 'thrift://host2:9083'],
+        message: 'several hosts'
+      },
+      {
+        value: 'thrift://host0:9083\\,thrift://host1:9083\\,thrift://host2:9083,hive.metastore.sasl.enabled=false,hive.metastore.execute.setugi=true',
+        result: ['thrift://host0:9083', 'thrift://host1:9083', 'thrift://host2:9083'],
+        message: 'no leading text'
+      },
+      {
+        value: 'hive.metastore.local=false,hive.metastore.uris=thrift://host0:9083\\,thrift://host1:9083\\,thrift://host2:9083',
+        result: ['thrift://host0:9083', 'thrift://host1:9083', 'thrift://host2:9083'],
+        message: 'no trailing text'
+      },
+      {
+        value: 'hive.metastore.local=false',
+        result: [],
+        message: 'no hosts list'
+      }
+    ];
+
+    testCases.forEach(function (test) {
+      it(test.message, function () {
+        expect(App.config.getTempletonHiveHosts(test.value)).to.eql(test.result);
+      });
+    });
+  });
+
   describe('#isDirHeterogeneous', function () {
     it ('retruns true for dfs.datanode.data.dir', function () {
       expect(App.config.isDirHeterogeneous('dfs.datanode.data.dir')).to.be.true;
@@ -1354,7 +1541,7 @@ describe('App.config', function() {
     var predefined = Em.Object.create({
       serviceName: 'serviceName1',
       displayName: 'displayName1',
-      configCategories: 'configCategories1'
+      configCategories: [{name: 'configCategories1'}]
     });
 
     var configs = [Em.Object.create({name: 'c1'})];
@@ -1377,7 +1564,6 @@ describe('App.config', function() {
       var res = {
         serviceName: 'serviceName1',
         displayName: 'displayName1',
-        configCategories: 'configCategories1',
         configs: configs,
         configGroups: configGroups,
         initConfigsLength: 1,
@@ -1388,13 +1574,15 @@ describe('App.config', function() {
           expect(App.config.createServiceConfig('serviceName1', configGroups, configs, 1).get(k)).to.eql(res[k]);
         });
       });
+      it('configCategories', function () {
+        expect(App.config.createServiceConfig('serviceName1', configGroups, configs, 1).get('configCategories').mapProperty('name')).to.eql(['configCategories1']);
+      });
     });
 
     describe('create default service config object', function () {
       var res = {
         serviceName: 'serviceName1',
         displayName: 'displayName1',
-        configCategories: 'configCategories1',
         configGroups: [],
         initConfigsLength: 0,
         dependentServiceNames: []
@@ -1403,6 +1591,9 @@ describe('App.config', function() {
         it(k, function() {
           expect(App.config.createServiceConfig('serviceName1').get(k)).to.eql(res[k]);
         });
+      });
+      it('configCategories', function () {
+        expect(App.config.createServiceConfig('serviceName1', configGroups, configs, 1).get('configCategories').mapProperty('name')).to.eql(['configCategories1']);
       });
     });
   });

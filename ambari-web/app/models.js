@@ -19,8 +19,6 @@
 
 // load all models here
 
-require('models/form'); // should be the 1st
-require('models/authentication');
 require('models/cluster');
 require('models/cluster_states');
 require('models/hosts');
@@ -29,7 +27,6 @@ require('models/stack_version/version');
 require('models/stack_version/repository_version');
 require('models/stack_version/os');
 require('models/stack_version/service_simple');
-require('models/stack_version/repository');
 require('models/stack_version/stack_upgrade_history');
 require('models/operating_system');
 require('models/repository');
@@ -38,8 +35,8 @@ require('models/stack_service_component');
 require('models/quick_links');
 require('models/quicklinks/quick_links_config');
 require('models/service');
-require('models/service_audit');
 require('models/service/hdfs');
+require('models/service/onefs');
 require('models/service/yarn');
 require('models/service/mapreduce2');
 require('models/service/hbase');
@@ -54,16 +51,12 @@ require('models/alerts/alert_config');
 require('models/alerts/alert_group');
 require('models/user');
 require('models/host');
-require('models/rack');
-require('models/background_operation');
 require('models/client_component');
 require('models/host_component');
 require('models/host_component_log');
-require('models/target_cluster');
 require('models/slave_component');
 require('models/master_component');
 require('models/host_stack_version');
-require('models/root_service');
 require('models/upgrade_entity');
 require('models/finished_upgrade_entity');
 require('models/configs/theme/theme_condition');
@@ -78,6 +71,7 @@ require('models/configs/theme/config_action');
 require('models/configs/objects/service_config');
 require('models/configs/objects/service_config_category');
 require('models/configs/objects/service_config_property');
+require('models/view_instance');
 require('models/widget');
 require('models/widget_property');
 require('models/widget_layout');

@@ -21,6 +21,10 @@ var App = require('app');
 module.exports = App.WizardRoute.extend({
   route: '/highAvailability/JournalNode/manage',
 
+  breadcrumbs: {
+    label: Em.I18n.t('admin.manageJournalNode.wizard.header')
+  },
+
   enter: function (router) {
     var manageJournalNodeWizardController = router.get('manageJournalNodeWizardController');
     manageJournalNodeWizardController.dataLoading().done(function () {
@@ -118,7 +122,7 @@ module.exports = App.WizardRoute.extend({
       controller.saveConfigTag(stepController.get("hdfsSiteTag"));
       controller.saveNameServiceId(stepController.get('content.nameServiceId'));
       App.set('router.nextBtnClickInProgress', false);
-      if (controller.isDeleteOnly()) {
+      if (controller.get('isDeleteOnly')) {
         router.transitionTo('step4');
       } else {
         router.transitionTo('step3');
@@ -167,8 +171,8 @@ module.exports = App.WizardRoute.extend({
     next: function (router) {
       var controller = router.get('manageJournalNodeWizardController');
       controller.clearTasksData();
-      if (controller.isDeleteOnly()) {
-        router.transitionTo('step8');
+      if (controller.get('isDeleteOnly')) {
+        router.transitionTo('step6');
       } else {
         router.transitionTo('step5');
       }
@@ -196,7 +200,7 @@ module.exports = App.WizardRoute.extend({
   }),
 
   step6: Em.Route.extend({
-    route: '/step5',
+    route: '/step6',
     connectOutlets: function (router) {
       var controller = router.get('manageJournalNodeWizardController');
       controller.dataLoading().done(function () {
@@ -226,26 +230,6 @@ module.exports = App.WizardRoute.extend({
         controller.setLowerStepsDisable(7);
         controller.loadAllPriorSteps().done(function () {
           controller.connectOutlet('manageJournalNodeWizardStep7', controller.get('content'));
-        });
-      })
-    },
-    unroutePath: function () {
-      return false;
-    },
-    next: function (router) {
-      router.transitionTo('step8');
-    }
-  }),
-
-  step8: Em.Route.extend({
-    route: '/step8',
-    connectOutlets: function (router) {
-      var controller = router.get('manageJournalNodeWizardController');
-      controller.dataLoading().done(function () {
-        controller.setCurrentStep('8');
-        controller.setLowerStepsDisable(8);
-        controller.loadAllPriorSteps().done(function () {
-          controller.connectOutlet('manageJournalNodeWizardStep8', controller.get('content'));
         });
       })
     },

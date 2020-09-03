@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -270,7 +270,7 @@ public class AlertTargetResourceProviderTest {
     testCreateResources(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testCreateResourcesAsClusterAdministrator() throws Exception {
     testCreateResources(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -331,7 +331,7 @@ public class AlertTargetResourceProviderTest {
     testCreateResourcesWithGroups(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testCreateResourcesWithGroupsAsClusterAdministrator() throws Exception {
     testCreateResourcesWithGroups(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -356,7 +356,7 @@ public class AlertTargetResourceProviderTest {
    */
   private void testCreateResourcesWithGroups(Authentication authentication) throws Exception {
     List<Long> groupIds = Arrays.asList(1L, 2L, 3L);
-    List<AlertGroupEntity> groups = new ArrayList<AlertGroupEntity>();
+    List<AlertGroupEntity> groups = new ArrayList<>();
     AlertGroupEntity group1 = new AlertGroupEntity();
     AlertGroupEntity group2 = new AlertGroupEntity();
     AlertGroupEntity group3 = new AlertGroupEntity();
@@ -407,7 +407,7 @@ public class AlertTargetResourceProviderTest {
     testCreateGlobalTarget(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testCreateGlobalTargetAsClusterAdministrator() throws Exception {
     testCreateGlobalTarget(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -473,7 +473,7 @@ public class AlertTargetResourceProviderTest {
     testCreateResourceWithRecipientArray(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testCreateResourceWithRecipientArrayAsClusterAdministrator() throws Exception {
     testCreateResourceWithRecipientArray(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -537,7 +537,7 @@ public class AlertTargetResourceProviderTest {
     testCreateResourceWithAlertStates(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testCreateResourceWithAlertStatesAsClusterAdministrator() throws Exception {
     testCreateResourceWithAlertStates(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -573,8 +573,8 @@ public class AlertTargetResourceProviderTest {
     Map<String, Object> requestProps = getCreationProperties();
     requestProps.put(
         AlertTargetResourceProvider.ALERT_TARGET_STATES,
-        new ArrayList<String>(Arrays.asList(AlertState.OK.name(),
-            AlertState.UNKNOWN.name())));
+      new ArrayList<>(Arrays.asList(AlertState.OK.name(),
+        AlertState.UNKNOWN.name())));
 
     Request request = PropertyHelper.getCreateRequest(Collections.singleton(requestProps), null);
 
@@ -604,7 +604,7 @@ public class AlertTargetResourceProviderTest {
     testUpdateResources(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testUpdateResourcesAsClusterAdministrator() throws Exception {
     testUpdateResources(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -649,7 +649,7 @@ public class AlertTargetResourceProviderTest {
 
     // create new properties, and include the ID since we're not going through
     // a service layer which would add it for us automatically
-    requestProps = new HashMap<String, Object>();
+    requestProps = new HashMap<>();
     requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_ID,
         ALERT_TARGET_ID.toString());
 
@@ -679,7 +679,7 @@ public class AlertTargetResourceProviderTest {
     testUpdateResourcesWithGroups(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testUpdateResourcesWithGroupsAsClusterAdministrator() throws Exception {
     testUpdateResourcesWithGroups(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -711,7 +711,7 @@ public class AlertTargetResourceProviderTest {
     expect(m_dao.findTargetById(ALERT_TARGET_ID)).andReturn(target).times(1);
 
     List<Long> groupIds = Arrays.asList(1L, 2L, 3L);
-    List<AlertGroupEntity> groups = new ArrayList<AlertGroupEntity>();
+    List<AlertGroupEntity> groups = new ArrayList<>();
     AlertGroupEntity group1 = new AlertGroupEntity();
     AlertGroupEntity group2 = new AlertGroupEntity();
     AlertGroupEntity group3 = new AlertGroupEntity();
@@ -735,7 +735,7 @@ public class AlertTargetResourceProviderTest {
 
     // create new properties, and include the ID since we're not going through
     // a service layer which would add it for us automatically
-    requestProps = new HashMap<String, Object>();
+    requestProps = new HashMap<>();
     requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_ID,
         ALERT_TARGET_ID.toString());
 
@@ -761,7 +761,7 @@ public class AlertTargetResourceProviderTest {
     testDeleteResources(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testDeleteResourcesAsClusterAdministrator() throws Exception {
     testDeleteResources(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -829,7 +829,7 @@ public class AlertTargetResourceProviderTest {
     testOverwriteDirective(TestAuthenticationFactory.createAdministrator());
   }
 
-  @Test(expected = AuthorizationException.class)
+  @Test
   public void testOverwriteDirectiveAsClusterAdministrator() throws Exception {
     testOverwriteDirective(TestAuthenticationFactory.createClusterAdministrator());
   }
@@ -864,7 +864,7 @@ public class AlertTargetResourceProviderTest {
     Map<String, Object> requestProps = getCreationProperties();
 
     // mock out the directive
-    Map<String, String> requestInfoProperties = new HashMap<String, String>();
+    Map<String, String> requestInfoProperties = new HashMap<>();
     requestInfoProperties.put(
         AlertTargetResourceDefinition.OVERWRITE_DIRECTIVE, "true");
 
@@ -926,7 +926,7 @@ public class AlertTargetResourceProviderTest {
       Collections.singleton(requestProps), null);
     provider.createResources(request);
 
-    requestProps = new HashMap<String, Object>();
+    requestProps = new HashMap<>();
     requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_ID, ALERT_TARGET_ID.toString());
 
     //selecting CUSTOM option for Groups, 2 group ids selected from the available options
@@ -982,7 +982,7 @@ public class AlertTargetResourceProviderTest {
       Collections.singleton(requestProps), null);
     provider.createResources(request);
 
-    requestProps = new HashMap<String, Object>();
+    requestProps = new HashMap<>();
     requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_ID, ALERT_TARGET_ID.toString());
 
     //selecting ALL option for Groups
@@ -1004,6 +1004,53 @@ public class AlertTargetResourceProviderTest {
     //Target must be global for ALL option
     assertEquals(true,entity.isGlobal());
 
+    verify(m_amc, m_dao);
+  }
+
+  @Test
+  public void testEnable() throws Exception {
+    Capture<AlertTargetEntity> entityCapture = EasyMock.newCapture();
+    m_dao.create(capture(entityCapture));
+    expectLastCall().times(1);
+
+    AlertTargetEntity target = new AlertTargetEntity();
+    target.setEnabled(false);
+    target.setProperties("{prop1=val1}");
+    expect(m_dao.findTargetById(ALERT_TARGET_ID)).andReturn(target).times(1);
+
+    expect(m_dao.merge(capture(entityCapture))).andReturn(target).once();
+
+    replay(m_amc, m_dao);
+
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+
+    AlertTargetResourceProvider provider = createProvider(m_amc);
+    Map<String, Object> requestProps = getCreationProperties();
+    Request request = PropertyHelper.getCreateRequest(
+      Collections.singleton(requestProps), null);
+    provider.createResources(request);
+
+    // create new properties, and include the ID since we're not going through
+    // a service layer which would add it for us automatically
+    requestProps = new HashMap<>();
+    requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_ID,
+      ALERT_TARGET_ID.toString());
+
+    requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_ENABLED,
+      "true");
+
+    Predicate predicate = new PredicateBuilder().property(
+      AlertTargetResourceProvider.ALERT_TARGET_ID).equals(
+      ALERT_TARGET_ID.toString()).toPredicate();
+
+    request = PropertyHelper.getUpdateRequest(requestProps, null);
+    provider.updateResources(request, predicate);
+
+    assertTrue(entityCapture.hasCaptured());
+
+    AlertTargetEntity entity = entityCapture.getValue();
+    assertTrue("{prop1=val1}".equals(entity.getProperties()));
+    assertTrue(entity.isEnabled());
     verify(m_amc, m_dao);
   }
 
@@ -1042,7 +1089,7 @@ public class AlertTargetResourceProviderTest {
    * @throws Exception
    */
   private Map<String, Object> getCreationProperties() throws Exception {
-    Map<String, Object> requestProps = new HashMap<String, Object>();
+    Map<String, Object> requestProps = new HashMap<>();
     requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_NAME,
             ALERT_TARGET_NAME);
 
@@ -1070,7 +1117,7 @@ public class AlertTargetResourceProviderTest {
    * @throws Exception
    */
   private Map<String, Object> getRecipientCreationProperties() throws Exception {
-    Map<String, Object> requestProps = new HashMap<String, Object>();
+    Map<String, Object> requestProps = new HashMap<>();
     requestProps.put(AlertTargetResourceProvider.ALERT_TARGET_NAME,
         ALERT_TARGET_NAME);
 

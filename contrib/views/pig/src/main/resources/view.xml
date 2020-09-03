@@ -21,6 +21,7 @@
     <build>${env.BUILD_NUMBER}</build>
 
     <min-ambari-version>2.0.*</min-ambari-version>
+    <max-ambari-version>2.5.*</max-ambari-version>
 
     <validator-class>org.apache.ambari.view.pig.PropertyValidator</validator-class>
     <view-class>org.apache.ambari.view.utils.ViewImpl</view-class>
@@ -191,6 +192,13 @@
         <description>HDFS directory to store meta information about Pig scripts and jobs.</description>
         <label>Meta HDFS Directory</label>
         <placeholder>/user/${username}/pig/store</placeholder>
+        <required>false</required>
+    </parameter>
+
+    <parameter>
+        <name>view.conf.keyvalues</name>
+        <description>The key values that will be copied to hdfs connection configuration verbatim.</description>
+        <label>View Configs</label>
         <required>false</required>
     </parameter>
 

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -37,14 +37,15 @@ import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.Schema;
 import javax.xml.validation.SchemaFactory;
 
-import org.apache.ambari.server.state.stack.ConfigUpgradePack;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradePack;
+import org.apache.ambari.server.stack.upgrade.UpgradePack;
 import org.apache.ambari.server.state.stack.ConfigurationXml;
 import org.apache.ambari.server.state.stack.ExtensionMetainfoXml;
 import org.apache.ambari.server.state.stack.RepositoryXml;
 import org.apache.ambari.server.state.stack.ServiceMetainfoXml;
 import org.apache.ambari.server.state.stack.StackMetainfoXml;
-import org.apache.ambari.server.state.stack.UpgradePack;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang.exception.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xml.sax.SAXException;
@@ -133,14 +134,22 @@ public class ModuleFileUnmarshaller {
 
     try {
       return clz.cast(u.unmarshal(file));
+    } catch (Exception unmarshalException) {
+
+      Throwable cause = ExceptionUtils.getRootCause(unmarshalException);
+
+      LOG.error("Cannot parse {}", file.getAbsolutePath());
+      if (null != cause) {
+        LOG.error(cause.getMessage(), cause);
+      }
+
+      throw unmarshalException;
     } finally {
       IOUtils.closeQuietly(xsdStream);
     }
   }
 
-  /**
-   * statically register the JAXB contexts
-   */
+  // statically register the JAXB contexts
   static {
     try {
       // three classes define the top-level element "metainfo", so we need 3 contexts for them

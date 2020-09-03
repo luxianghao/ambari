@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,6 +18,8 @@
 
 package org.apache.ambari.server.state;
 
+import static java.util.stream.Collectors.toSet;
+
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -26,16 +28,17 @@ import java.util.Set;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.controller.ClusterResponse;
 import org.apache.ambari.server.controller.ServiceConfigVersionResponse;
+import org.apache.ambari.server.controller.internal.DeleteHostComponentStatusMetaData;
 import org.apache.ambari.server.events.ClusterConfigChangedEvent;
-import org.apache.ambari.server.orm.entities.ClusterVersionEntity;
-import org.apache.ambari.server.orm.entities.HostEntity;
-import org.apache.ambari.server.orm.entities.HostVersionEntity;
+import org.apache.ambari.server.metadata.RoleCommandOrder;
+import org.apache.ambari.server.orm.entities.ClusterEntity;
 import org.apache.ambari.server.orm.entities.PrivilegeEntity;
 import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.orm.entities.UpgradeEntity;
-import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.state.configgroup.ConfigGroup;
+import org.apache.ambari.server.state.repository.VersionDefinitionXml;
 import org.apache.ambari.server.state.scheduler.RequestExecution;
+import org.apache.ambari.spi.ClusterInformation;
 
 import com.google.common.collect.ListMultimap;
 
@@ -75,6 +78,14 @@ public interface Cluster {
   Service getService(String serviceName) throws AmbariException;
 
   /**
+   * Gets a service from the given component name.
+   * @param componentName
+   * @return
+   * @throws AmbariException
+   */
+  Service getServiceByComponentName(String componentName) throws AmbariException;
+
+  /**
    * Get all services
    * @return
    */
@@ -112,11 +123,17 @@ public interface Cluster {
   List<ServiceComponentHost> getServiceComponentHosts(String serviceName, String componentName);
 
   /**
+   * Get all ServiceComponentHosts for this cluster.
+   */
+  List<ServiceComponentHost> getServiceComponentHosts();
+
+  /**
    * Get all hosts associated with this cluster.
    *
    * @return collection of hosts that are associated with this cluster
    */
   Collection<Host> getHosts();
+  default Set<String> getHostNames() { return getHosts().stream().map(Host::getHostName).collect(toSet()); }
 
   /**
    * Get all of the hosts running the provided service and component.
@@ -125,6 +142,22 @@ public interface Cluster {
    * @return
    */
   Set<String> getHosts(String serviceName, String componentName);
+
+  /**
+   * Get specific host info using host name.
+   *
+   * @param hostName the host name
+   * @return Host info {@link Host}
+   */
+  Host getHost(String hostName);
+
+  /**
+   * Get specific host info using host id.
+   *
+   * @param hostId the host id
+   * @return Host info {@link Host}
+   */
+  Host getHost(Long hostId);
 
 
   /**
@@ -142,45 +175,6 @@ public interface Cluster {
   void removeServiceComponentHost(ServiceComponentHost svcCompHost)
       throws AmbariException;
 
-
-  /**
-   * Get the ClusterVersionEntity object whose state is CURRENT.
-   * @return Cluster Version entity to whose state is CURRENT.
-   */
-  ClusterVersionEntity getCurrentClusterVersion();
-
-  /**
-   * Gets the current stack version associated with the cluster.
-   * <ul>
-   * <li>if there is no upgrade in progress then get the
-   * {@link ClusterVersionEntity} object whose state is
-   * {@link RepositoryVersionState#CURRENT}.
-   * <li>If an upgrade is in progress then based on the direction and the
-   * desired stack determine which version to use. Assuming upgrading from HDP
-   * 2.2.0.0-1 to 2.3.0.0-2:
-   * <ul>
-   * <li>RU Upgrade: 2.3.0.0-2 (desired stack id)
-   * <li>RU Downgrade: 2.2.0.0-1 (desired stack id)
-   * <li>EU Upgrade: while stopping services and before changing desired stack,
-   * use 2.2.0.0-1, after, use 2.3.0.0-2
-   * <li>EU Downgrade: while stopping services and before changing desired
-   * stack, use 2.3.0.0-2, after, use 2.2.0.0-1
-   * </ul>
-   * </ul>
-   *
-   * This method must take into account both a running and a suspended upgrade.
-   *
-   * @return the effective cluster stack version given the current upgrading
-   *         conditions of the cluster.
-   */
-  ClusterVersionEntity getEffectiveClusterVersion() throws AmbariException;
-
-  /**
-   * Get all of the ClusterVersionEntity objects for the cluster.
-   * @return
-   */
-  Collection<ClusterVersionEntity> getAllClusterVersions();
-
   /**
    * Get desired stack version
    * @return
@@ -192,15 +186,6 @@ public interface Cluster {
    * @param stackVersion
    */
   void setDesiredStackVersion(StackId stackVersion) throws AmbariException;
-
-  /**
-   * Sets the desired stack version, optionally setting all owned services,
-   * components, and host components
-   * @param stackId the stack id
-   * @param cascade {@code true} to cascade the desired version
-   */
-  public void setDesiredStackVersion(StackId stackId, boolean cascade) throws AmbariException;
-
 
   /**
    * Get current stack version
@@ -215,99 +200,33 @@ public interface Cluster {
   void setCurrentStackVersion(StackId stackVersion) throws AmbariException;
 
   /**
-   * Create host versions for all of the hosts that don't already have the stack version.
-   * @param hostNames Collection of host names
-   * @param currentClusterVersion Entity that contains the cluster's current stack (with its name and version)
-   * @param desiredState Desired state must be {@link RepositoryVersionState#CURRENT} or {@link RepositoryVersionState#UPGRADING}
-   * @throws AmbariException
-   */
-  void mapHostVersions(Set<String> hostNames,
-      ClusterVersionEntity currentClusterVersion,
-      RepositoryVersionState desiredState) throws AmbariException;
-
-  /**
    * Creates or updates host versions for all of the hosts within a cluster
    * based on state of cluster stack version. This is used to transition all
-   * hosts into the specified state.
+   * hosts into the correct state (which may not be
+   * {@link RepositoryVersionState#INSTALLING}).
    * <p/>
-   * The difference between this method compared to
-   * {@link Cluster#mapHostVersions} is that it affects all hosts (not only
-   * missing hosts).
-   * <p/>
-   * Hosts that are in maintenance mode will be transititioned directly into
-   * {@link RepositoryVersionState#OUT_OF_SYNC} instead.
+   * Hosts that are in maintenance mode will be transitioned directly into
+   * {@link RepositoryVersionState#OUT_OF_SYNC} instead. Hosts which do not need
+   * the version distributed to them will move into the
+   * {@link RepositoryVersionState#NOT_REQUIRED} state.
    *
-   * @param sourceClusterVersion
-   *          cluster version to be queried for a stack name/version info and
-   *          desired RepositoryVersionState. The only valid state of a cluster
-   *          version is {@link RepositoryVersionState#INSTALLING}
-   * @param state
-   *          the state to transition the cluster's hosts to.
+   * @param repoVersionEntity
+   *          the repository that the hosts are being transitioned for (not
+   *          {@code null}).
+   * @param versionDefinitionXml
+   *          the VDF, or {@code null} if none.
+   * @param forceInstalled
+   *          if {@code true}, then this will transition everything directly to
+   *          {@link RepositoryVersionState#INSTALLED} instead of
+   *          {@link RepositoryVersionState#INSTALLING}. Hosts which should
+   *          received other states (like
+   *          {@link RepositoryVersionState#NOT_REQUIRED} will continue to
+   *          receive those states.
+   * @return a list of hosts which need the repository installed.
    * @throws AmbariException
    */
-  void transitionHosts(ClusterVersionEntity sourceClusterVersion, RepositoryVersionState state)
-      throws AmbariException;
-
-  /**
-   * For a given host, will either either update an existing Host Version Entity for the given version, or create
-   * one if it doesn't exist
-   *
-   * @param host Host Entity object
-   * @param repositoryVersion Repository Version that the host is transitioning to
-   * @param stack Stack information with the version
-   * @return Returns either the newly created or the updated Host Version Entity.
-   * @throws AmbariException
-   */
-  HostVersionEntity transitionHostVersionState(HostEntity host,
-      final RepositoryVersionEntity repositoryVersion, final StackId stack)
-      throws AmbariException;
-
-  /**
-   * Update state of a cluster stack version for cluster based on states of host versions and stackids.
-   * @param repositoryVersion the repository version entity whose version is a value like 2.2.1.0-100)
-   * @throws AmbariException
-   */
-  void recalculateClusterVersionState(RepositoryVersionEntity repositoryVersion) throws AmbariException;
-
-  /**
-   * Update state of all cluster stack versions for cluster based on states of host versions.
-   * @throws AmbariException
-   */
-  void recalculateAllClusterVersionStates() throws AmbariException;
-
-  /**
-   * Create a cluster version for the given stack and version, whose initial
-   * state must either be either {@link RepositoryVersionState#UPGRADING} (if no
-   * other cluster version exists) or {@link RepositoryVersionState#INSTALLING}
-   * (if at exactly one CURRENT cluster version already exists) or {@link RepositoryVersionState#INIT}
-   * (if the cluster is being created using a specific repository version).
-   *
-   * @param stackId
-   *          Stack ID
-   * @param version
-   *          Stack version
-   * @param userName
-   *          User performing the operation
-   * @param state
-   *          Initial state
-   * @throws AmbariException
-   */
-  void createClusterVersion(StackId stackId, String version,
-      String userName, RepositoryVersionState state) throws AmbariException;
-
-  /**
-   * Transition an existing cluster version from one state to another.
-   *
-   * @param stackId
-   *          Stack ID
-   * @param version
-   *          Stack version
-   * @param state
-   *          Desired state
-   * @throws AmbariException
-   */
-  void transitionClusterVersion(StackId stackId, String version,
-      RepositoryVersionState state) throws AmbariException;
+  List<Host> transitionHostsToInstalling(RepositoryVersionEntity repoVersionEntity,
+      VersionDefinitionXml versionDefinitionXml, boolean forceInstalled) throws AmbariException;
 
   /**
    * Gets whether the cluster is still initializing or has finished with its
@@ -349,11 +268,19 @@ public interface Cluster {
   Map<String, Config> getConfigsByType(String configType);
 
   /**
-   * Gets all properties types that mach the specified type.
+   * Gets all properties types that matches the specified type for the current stack.
    * @param configType the config type to return
    * @return properties types for given config type
    */
   Map<PropertyInfo.PropertyType, Set<String>> getConfigPropertiesTypes(String configType);
+
+  /**
+   * Gets all properties types that matches the specified type for the given stack.
+   * @param configType the config type to return
+   * @param stackId the stack to scan properties for
+   * @return properties types for given config type
+   */
+  Map<PropertyInfo.PropertyType, Set<String>> getConfigPropertiesTypes(String configType, StackId stackId);
 
   /**
    * Gets the specific config that matches the specified type and tag.  This not
@@ -364,6 +291,13 @@ public interface Cluster {
    *          and version have not been set.
    */
   Config getConfig(String configType, String versionTag);
+
+  /**
+   * Get latest (including inactive ones) configurations with any of the given types.
+   * This method does not take into account the configuration being enabled.
+   * @return the list of configurations with the given types
+   */
+  List<Config> getLatestConfigsWithTypes(Collection<String> types);
 
   /**
    * Gets the specific config that matches the specified type and version.  This not
@@ -396,7 +330,7 @@ public interface Cluster {
    * @return <code>true</code> if the config was added, or <code>false</code>
    * if the config is already set as the current
    */
-  ServiceConfigVersionResponse addDesiredConfig(String user, Set<Config> configs);
+  ServiceConfigVersionResponse addDesiredConfig(String user, Set<Config> configs) throws AmbariException;
 
   /**
    * Adds and sets a DESIRED configuration to be applied to a cluster.  There
@@ -407,10 +341,10 @@ public interface Cluster {
    * @return <code>true</code> if the config was added, or <code>false</code>
    * if the config is already set as the current
    */
-  ServiceConfigVersionResponse addDesiredConfig(String user, Set<Config> configs, String serviceConfigVersionNote);
+  ServiceConfigVersionResponse addDesiredConfig(String user, Set<Config> configs, String serviceConfigVersionNote) throws AmbariException;
 
   ServiceConfigVersionResponse createServiceConfigVersion(String serviceName, String user, String note,
-                                                          ConfigGroup configGroup);
+                                                          ConfigGroup configGroup) throws AmbariException;
 
   String getServiceForConfigTypes(Collection<String> configTypes);
 
@@ -436,7 +370,7 @@ public interface Cluster {
    * @param serviceName service name
    * @return
    */
-  public List<ServiceConfigVersionResponse> getActiveServiceConfigVersionResponse(String serviceName);
+  List<ServiceConfigVersionResponse> getActiveServiceConfigVersionResponse(String serviceName);
 
   /**
    * Get service config version history
@@ -463,6 +397,15 @@ public interface Cluster {
    * @return a map of type-to-configuration information.
    */
   Map<String, DesiredConfig> getDesiredConfigs();
+
+  /**
+   * Gets the active desired configurations for the cluster.
+   * @param cachedConfigEntities retrieves cluster config entities from the cache if true, otherwise from the DB directly.
+   * @return a map of type-to-configuration information.
+   */
+  Map<String, DesiredConfig> getDesiredConfigs(boolean cachedConfigEntities);
+
+  ClusterEntity getClusterEntity();
 
   /**
    * Gets all versions of the desired configurations for the cluster.
@@ -500,7 +443,7 @@ public interface Cluster {
    * @param serviceName
    * @throws AmbariException
    */
-  void deleteService(String serviceName) throws AmbariException;
+  void deleteService(String serviceName, DeleteHostComponentStatusMetaData deleteMetaData) throws AmbariException;
 
   /**
    * Gets if the cluster can be deleted
@@ -516,11 +459,17 @@ public interface Cluster {
 
   /**
    * Add service to the cluster
+   *
    * @param serviceName
+   *          the name of the service to add (not {@code null}).
+   * @param repositoryVersion
+   *          the repository from which the service should be installed (not
+   *          {@code null}).
    * @return
    * @throws AmbariException
    */
-  Service addService(String serviceName) throws AmbariException;
+  Service addService(String serviceName, RepositoryVersionEntity repositoryVersion)
+      throws AmbariException;
 
   /**
    * Fetch desired configs for list of hosts in cluster
@@ -554,7 +503,7 @@ public interface Cluster {
    * @param id
    * @throws AmbariException
    */
-  void deleteConfigGroup(Long id) throws AmbariException, AuthorizationException;
+  void deleteConfigGroup(Long id) throws AmbariException;
 
   /**
    * Find all config groups associated with the give hostname
@@ -563,6 +512,20 @@ public interface Cluster {
    */
   Map<Long, ConfigGroup> getConfigGroupsByHostname(String hostname)
       throws AmbariException;
+
+  /**
+   * Find config group by config group id
+   * @param configId id of config group to return
+   * @return config group
+   */
+  ConfigGroup getConfigGroupsById(Long configId);
+
+  /**
+   * Find all config groups associated with the give service name
+   * @param serviceName
+   * @return Map of config group id to config group
+   */
+  Map<Long, ConfigGroup> getConfigGroupsByServiceName(String serviceName);
 
   /**
    * Add a @RequestExecution to the cluster
@@ -641,9 +604,8 @@ public interface Cluster {
   Map<String, Object> getSessionAttributes();
 
   /**
-   * Makes the most recent configurations in the specified stack the current set
-   * of configurations. This method will first ensure that the cluster's current
-   * stack matches that of the configuration stack specified.
+   * Makes the most recent configurations for the specified stack current. This
+   * will only modify configurations for the given service.
    * <p/>
    * When completed, all other configurations for any other stack will remain,
    * but will not be marked as selected.
@@ -651,18 +613,21 @@ public interface Cluster {
    * @param stackId
    *          the stack to use when finding the latest configurations (not
    *          {@code null}).
+   * @param serviceName
+   *          the service to modify configurations for (not {@code null}).
    */
-  void applyLatestConfigurations(StackId stackId);
+  void applyLatestConfigurations(StackId stackId, String serviceName);
 
   /**
-   * Removes all cluster configurations and service configurations that belong
-   * to the specified stack.
+   * Removes all configurations for the specified service and stack.
    *
    * @param stackId
    *          the stack to use when finding the configurations to remove (not
    *          {@code null}).
+   * @param serviceName
+   *          the service to rmeove configurations for (not {@code null}).
    */
-  void removeConfigurations(StackId stackId);
+  void removeConfigurations(StackId stackId, String serviceName);
 
   /**
    * Returns whether this cluster was provisioned by a Blueprint or not.
@@ -671,15 +636,21 @@ public interface Cluster {
   boolean isBluePrintDeployed();
 
   /**
-   * @return upgrade that is in progress for a cluster. If no upgrade is going
-   * on, a null is returned.
+   * Gets an {@link UpgradeEntity} if there is an upgrade in progress or an
+   * upgrade that has been suspended. This will return the associated
+   * {@link UpgradeEntity} if it exists.
+   *
+   * @return an upgrade which will either be in progress or suspended, or
+   *         {@code null} if none.
+   *
    */
-  UpgradeEntity getUpgradeEntity();
+  UpgradeEntity getUpgradeInProgress();
 
   /**
-   * The value is explicitly set on the ClusterEntity when Creating,
-   * Aborting (switching to downgrade), Resuming, or Finalizing an upgrade.
-   * @param upgradeEntity the upgrade entity to set for cluster
+   * Sets or clears the associated upgrade with the cluster.
+   *
+   * @param upgradeEntity
+   *          the upgrade entity to set for cluster, or {@code null} for none.
    * @throws AmbariException
    */
   void setUpgradeEntity(UpgradeEntity upgradeEntity) throws AmbariException;
@@ -688,22 +659,9 @@ public interface Cluster {
    * Gets whether there is an upgrade which has been suspended and not yet
    * finalized.
    *
-   * @return {@code true} if the last upgrade is in the
-   *         {@link UpgradeState#SUSPENDED}.
+   * @return {@code true} if the last upgrade is suspended
    */
   boolean isUpgradeSuspended();
-
-  /**
-   * Gets an {@link UpgradeEntity} if there is an upgrade in progress or an
-   * upgrade that has been suspended. This will first check
-   * {@link #getUpgradeEntity()} and return that if it is not {@code null}.
-   * Otherwise, this will perform a search for the most recent upgrade/downgrade
-   * which has not been completed.
-   *
-   * @return an upgrade which will either be in progress or suspended, or
-   *         {@code null} if none.
-   */
-  UpgradeEntity getUpgradeInProgress();
 
   /**
    * Returns the name of the service that the passed config type belongs to.
@@ -738,4 +696,42 @@ public interface Cluster {
    * @return number of hosts that form the cluster
    */
   int  getClusterSize();
+
+  /**
+   * Gets a new instance of a {@link RoleCommandOrder} for this cluster.
+   *
+   * @return the role command order instance (not {@code null}).
+   */
+  RoleCommandOrder getRoleCommandOrder();
+
+  /**
+   * Adds upgrade specific command and role parameters to the command maps if
+   * there is a suspended upgrade. If there is not a suspended upgrade, then the
+   * maps are not modified.
+   * <p/>
+   *
+   * @param commandParams
+   *          the command parameter map to supplement (not {@code null}).
+   * @param roleParams
+   *          the role parameter map to supplement (not {@code null}).
+   */
+  void addSuspendedUpgradeParameters(Map<String, String> commandParams,
+      Map<String, String> roleParams);
+
+  /**
+   * Gets a mapping of service to component/version for every installed
+   * component in the cluster which advertises a version and for which the
+   * repository has been resolved.
+   *
+   * @return a mapping of service to component version, or an empty map.
+   */
+  Map<String, Map<String, String>> getComponentVersionMap();
+
+  /**
+   * Builds a {@link ClusterInformation} instance from a {@link Cluster}.
+   *
+   * @return the {@link ClusterInformation} instance comprised of simple POJOs
+   *         and SPI classes.
+   */
+  ClusterInformation buildClusterInformation();
 }

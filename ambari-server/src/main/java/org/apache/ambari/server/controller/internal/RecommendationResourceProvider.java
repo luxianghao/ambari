@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -43,19 +43,33 @@ import org.apache.ambari.server.controller.spi.ResourceAlreadyExistsException;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Sets;
 
 public class RecommendationResourceProvider extends StackAdvisorResourceProvider {
+
+  private static final Logger LOG = LoggerFactory.getLogger(RecommendationResourceProvider.class);
 
   protected static final String RECOMMENDATION_ID_PROPERTY_ID = PropertyHelper.getPropertyId(
       "Recommendation", "id");
 
+  protected static final String CLUSTER_ID_PROPERTY_ID = "clusterId";
+  protected static final String SERVICE_NAME_PROPERTY_ID = "serviceName";
+  protected static final String AUTO_COMPLETE_PROPERTY_ID = "autoComplete";
+  protected static final String CONFIGS_RESPONSE_PROPERTY_ID = "configsResponse";
   protected static final String HOSTS_PROPERTY_ID = "hosts";
   protected static final String SERVICES_PROPERTY_ID = "services";
   protected static final String RECOMMEND_PROPERTY_ID = "recommend";
+  protected static final String RECOMMENDATIONS_PROPERTY_ID = "recommendations";
 
   protected static final String CONFIG_GROUPS_PROPERTY_ID = PropertyHelper
       .getPropertyId("recommendations", "config-groups");
 
+  protected static final String BLUEPRINT_PROPERTY_ID = PropertyHelper
+      .getPropertyId("recommendations", "blueprint");
   protected static final String BLUEPRINT_CONFIGURATIONS_PROPERTY_ID = PropertyHelper
       .getPropertyId("recommendations/blueprint", "configurations");
 
@@ -68,13 +82,60 @@ public class RecommendationResourceProvider extends StackAdvisorResourceProvider
       "recommendations/blueprint_cluster_binding", "host_groups");
   protected static final String BINDING_HOST_GROUPS_NAME_PROPERTY_ID = "name";
   protected static final String BINDING_HOST_GROUPS_HOSTS_PROPERTY_ID = "hosts";
+  protected static final String CHANGED_CONFIGURATIONS_PROPERTY_ID = "changed_configurations";
+  protected static final String BINDING_PROPERTY_ID = PropertyHelper
+      .getPropertyId("recommendations", "blueprint_cluster_binding");
+  protected static final String USER_CONTEXT_PROPERTY_ID = "user_context";
+  protected static final String USER_CONTEXT_OPERATION_PROPERTY_ID = PropertyHelper
+      .getPropertyId(USER_CONTEXT_PROPERTY_ID, "operation");
+  protected static final String USER_CONTEXT_OPERATION_DETAILS_PROPERTY_ID = PropertyHelper
+      .getPropertyId(USER_CONTEXT_PROPERTY_ID, "operation_details");
 
-  private static Set<String> pkPropertyIds = new HashSet<String>(
-      Arrays.asList(new String[] { RECOMMENDATION_ID_PROPERTY_ID }));
 
-  protected RecommendationResourceProvider(Set<String> propertyIds,
-      Map<Type, String> keyPropertyIds, AmbariManagementController managementController) {
-    super(propertyIds, keyPropertyIds, managementController);
+  /**
+   * The key property ids for a Recommendation resource.
+   */
+  private static final Map<Resource.Type, String> keyPropertyIds = ImmutableMap.<Resource.Type, String>builder()
+      .put(Type.Recommendation, RECOMMENDATION_ID_PROPERTY_ID)
+      .put(Type.Stack, STACK_NAME_PROPERTY_ID)
+      .put(Type.StackVersion, STACK_VERSION_PROPERTY_ID)
+      .build();
+
+  /**
+   * The property ids for a Recommendation resource.
+   */
+  private static final Set<String> propertyIds = Sets.newHashSet(
+      RECOMMENDATION_ID_PROPERTY_ID,
+      STACK_NAME_PROPERTY_ID,
+      STACK_VERSION_PROPERTY_ID,
+      RECOMMEND_PROPERTY_ID,
+      CLUSTER_ID_PROPERTY_ID,
+      SERVICE_NAME_PROPERTY_ID,
+      AUTO_COMPLETE_PROPERTY_ID,
+      CONFIGS_RESPONSE_PROPERTY_ID,
+      HOSTS_PROPERTY_ID,
+      SERVICES_PROPERTY_ID,
+      CONFIG_GROUPS_PROPERTY_ID,
+      CHANGED_CONFIGURATIONS_PROPERTY_ID,
+      USER_CONTEXT_PROPERTY_ID,
+      USER_CONTEXT_OPERATION_PROPERTY_ID,
+      USER_CONTEXT_OPERATION_DETAILS_PROPERTY_ID,
+      RECOMMENDATIONS_PROPERTY_ID,
+      BLUEPRINT_PROPERTY_ID,
+      BLUEPRINT_CONFIGURATIONS_PROPERTY_ID,
+      BLUEPRINT_HOST_GROUPS_PROPERTY_ID,
+      PropertyHelper.getPropertyId(BLUEPRINT_HOST_GROUPS_PROPERTY_ID, BLUEPRINT_HOST_GROUPS_NAME_PROPERTY_ID),
+      PropertyHelper.getPropertyId(BLUEPRINT_HOST_GROUPS_PROPERTY_ID, BLUEPRINT_HOST_GROUPS_COMPONENTS_PROPERTY_ID),
+      BINDING_PROPERTY_ID,
+      BINDING_HOST_GROUPS_PROPERTY_ID,
+      PropertyHelper.getPropertyId(BINDING_HOST_GROUPS_PROPERTY_ID, BINDING_HOST_GROUPS_NAME_PROPERTY_ID),
+      PropertyHelper.getPropertyId(BINDING_HOST_GROUPS_PROPERTY_ID, BINDING_HOST_GROUPS_HOSTS_PROPERTY_ID),
+      BINDING_HOST_GROUPS_NAME_PROPERTY_ID,
+      BINDING_HOST_GROUPS_HOSTS_PROPERTY_ID);
+
+
+  protected RecommendationResourceProvider(AmbariManagementController managementController) {
+    super(Type.Recommendation, propertyIds, keyPropertyIds, managementController);
   }
 
   @Override
@@ -93,7 +154,7 @@ public class RecommendationResourceProvider extends StackAdvisorResourceProvider
     } catch (StackAdvisorRequestException e) {
       LOG.warn("Error occured during recommendation", e);
       throw new IllegalArgumentException(e.getMessage(), e);
-    } catch (StackAdvisorException e) {
+    } catch (StackAdvisorException | AmbariException e) {
       LOG.warn("Error occured during recommendation", e);
       throw new SystemException(e.getMessage(), e);
     }
@@ -103,55 +164,58 @@ public class RecommendationResourceProvider extends StackAdvisorResourceProvider
       public Resource invoke() throws AmbariException {
 
         Resource resource = new ResourceImpl(Resource.Type.Recommendation);
-        setResourceProperty(resource, RECOMMENDATION_ID_PROPERTY_ID, response.getId(), getPropertyIds());
-        setResourceProperty(resource, STACK_NAME_PROPERTY_ID, response.getVersion().getStackName(),
-            getPropertyIds());
-        setResourceProperty(resource, STACK_VERSION_PROPERTY_ID, response.getVersion()
-            .getStackVersion(), getPropertyIds());
-        setResourceProperty(resource, HOSTS_PROPERTY_ID, response.getHosts(), getPropertyIds());
-        setResourceProperty(resource, SERVICES_PROPERTY_ID, response.getServices(),
-            getPropertyIds());
+        if (!recommendationRequest.getConfigsResponse()) {
+          setResourceProperty(resource, RECOMMENDATION_ID_PROPERTY_ID, response.getId(), getPropertyIds());
+          setResourceProperty(resource, STACK_NAME_PROPERTY_ID, response.getVersion().getStackName(),
+              getPropertyIds());
+          setResourceProperty(resource, STACK_VERSION_PROPERTY_ID, response.getVersion()
+              .getStackVersion(), getPropertyIds());
+          setResourceProperty(resource, HOSTS_PROPERTY_ID, response.getHosts(), getPropertyIds());
+          setResourceProperty(resource, SERVICES_PROPERTY_ID, response.getServices(),
+              getPropertyIds());
+        }
         setResourceProperty(resource, CONFIG_GROUPS_PROPERTY_ID,
           response.getRecommendations().getConfigGroups(), getPropertyIds());
         setResourceProperty(resource, BLUEPRINT_CONFIGURATIONS_PROPERTY_ID, response
             .getRecommendations().getBlueprint().getConfigurations(), getPropertyIds());
 
-        Set<HostGroup> hostGroups = response.getRecommendations().getBlueprint().getHostGroups();
-        List<Map<String, Object>> listGroupProps = new ArrayList<Map<String, Object>>();
-        for (HostGroup hostGroup : hostGroups) {
-          Map<String, Object> mapGroupProps = new HashMap<String, Object>();
-          mapGroupProps.put(BLUEPRINT_HOST_GROUPS_NAME_PROPERTY_ID, hostGroup.getName());
-          mapGroupProps
-              .put(BLUEPRINT_HOST_GROUPS_COMPONENTS_PROPERTY_ID, hostGroup.getComponents());
-          listGroupProps.add(mapGroupProps);
-        }
-        setResourceProperty(resource, BLUEPRINT_HOST_GROUPS_PROPERTY_ID, listGroupProps,
-            getPropertyIds());
+        if (!recommendationRequest.getConfigsResponse()) {
+          Set<HostGroup> hostGroups = response.getRecommendations().getBlueprint().getHostGroups();
+          List<Map<String, Object>> listGroupProps = new ArrayList<>();
+          for (HostGroup hostGroup : hostGroups) {
+            Map<String, Object> mapGroupProps = new HashMap<>();
+            mapGroupProps.put(BLUEPRINT_HOST_GROUPS_NAME_PROPERTY_ID, hostGroup.getName());
+            mapGroupProps
+                .put(BLUEPRINT_HOST_GROUPS_COMPONENTS_PROPERTY_ID, hostGroup.getComponents());
+            listGroupProps.add(mapGroupProps);
+          }
+          setResourceProperty(resource, BLUEPRINT_HOST_GROUPS_PROPERTY_ID, listGroupProps,
+              getPropertyIds());
 
-        Set<BindingHostGroup> bindingHostGroups = response.getRecommendations()
-            .getBlueprintClusterBinding().getHostGroups();
-        List<Map<String, Object>> listBindingGroupProps = new ArrayList<Map<String, Object>>();
-        for (BindingHostGroup hostGroup : bindingHostGroups) {
-          Map<String, Object> mapGroupProps = new HashMap<String, Object>();
-          mapGroupProps.put(BINDING_HOST_GROUPS_NAME_PROPERTY_ID, hostGroup.getName());
-          mapGroupProps.put(BINDING_HOST_GROUPS_HOSTS_PROPERTY_ID, hostGroup.getHosts());
-          listBindingGroupProps.add(mapGroupProps);
+          Set<BindingHostGroup> bindingHostGroups = response.getRecommendations()
+              .getBlueprintClusterBinding().getHostGroups();
+          List<Map<String, Object>> listBindingGroupProps = new ArrayList<>();
+          for (BindingHostGroup hostGroup : bindingHostGroups) {
+            Map<String, Object> mapGroupProps = new HashMap<>();
+            mapGroupProps.put(BINDING_HOST_GROUPS_NAME_PROPERTY_ID, hostGroup.getName());
+            mapGroupProps.put(BINDING_HOST_GROUPS_HOSTS_PROPERTY_ID, hostGroup.getHosts());
+            listBindingGroupProps.add(mapGroupProps);
+          }
+          setResourceProperty(resource, BINDING_HOST_GROUPS_PROPERTY_ID, listBindingGroupProps,
+              getPropertyIds());
         }
-        setResourceProperty(resource, BINDING_HOST_GROUPS_PROPERTY_ID, listBindingGroupProps,
-            getPropertyIds());
-
         return resource;
       }
     });
     notifyCreate(Resource.Type.Recommendation, request);
 
-    Set<Resource> resources = new HashSet<Resource>(Arrays.asList(recommendation));
+    Set<Resource> resources = new HashSet<>(Arrays.asList(recommendation));
     return new RequestStatusImpl(null, resources);
   }
 
   @Override
   protected Set<String> getPKPropertyIds() {
-    return pkPropertyIds;
+    return new HashSet<>(keyPropertyIds.values());
   }
 
 }

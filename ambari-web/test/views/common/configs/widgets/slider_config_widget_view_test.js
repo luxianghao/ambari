@@ -137,7 +137,15 @@ describe('App.SliderConfigWidgetView', function () {
     });
   });
 
-  describe('#mirrorValueObs', function () {
+  describe('#mirrorValueObsOnce', function () {
+
+    beforeEach(function () {
+      sinon.stub(Em.run, 'once', Em.tryInvoke);
+    });
+
+    afterEach(function () {
+      Em.run.once.restore();
+    });
 
     describe('check int', function () {
 
@@ -307,6 +315,19 @@ describe('App.SliderConfigWidgetView', function () {
       viewInt.set('config.group', {name: 'group1'});
       expect(viewInt.getValueAttributeByGroup('maximum')).to.equal('3072');
     });
+
+    it('minimum is missing', function () {
+      viewInt.set('config.stackConfigProperty.valueAttributes.minimum', undefined);
+      expect(viewInt.getValueAttributeByGroup('minimum')).to.equal('486');
+    });
+
+    it('minimum is missing, value is invalid', function () {
+      viewInt.get('config').setProperties({
+        'value': 3072,
+        'stackConfigProperty.valueAttributes.minimum': undefined
+      });
+      expect(viewInt.getValueAttributeByGroup('minimum')).to.equal('2096');
+    });
   });
 
   describe('#initSlider', function() {
@@ -365,7 +386,7 @@ describe('App.SliderConfigWidgetView', function () {
         },
         e: {
           ticks: [5, 16, 22, 28, 35, 39, 50],
-          ticksLabels: ['5 ','', '', '28 ', '', '', '50 ']
+          ticksLabels: ['5','', '', '28', '', '', '50']
         }
       },
       {
@@ -382,7 +403,7 @@ describe('App.SliderConfigWidgetView', function () {
         },
         e: {
           ticks: [1,2],
-          ticksLabels: ['1 ', '2 ']
+          ticksLabels: ['1', '2']
         }
       },
       {
@@ -399,7 +420,7 @@ describe('App.SliderConfigWidgetView', function () {
         },
         e: {
           ticks: [1,2,3],
-          ticksLabels: ['1 ', '2 ', '3 ']
+          ticksLabels: ['1', '2', '3']
         }
       },
       {
@@ -416,7 +437,7 @@ describe('App.SliderConfigWidgetView', function () {
         },
         e: {
           ticks: [0,1,2,3],
-          ticksLabels: ['0 ', '1 ', '2 ', '3 ']
+          ticksLabels: ['0', '1', '2', '3']
         }
       },
       {
@@ -433,7 +454,7 @@ describe('App.SliderConfigWidgetView', function () {
         },
         e: {
           ticks: [1,2,3,4,5],
-          ticksLabels: ['1 ', '', '3 ', '', '5 ']
+          ticksLabels: ['1', '', '3', '', '5']
         }
       },
       {
@@ -450,7 +471,7 @@ describe('App.SliderConfigWidgetView', function () {
         },
         e: {
           ticks: [0,2,3,5],
-          ticksLabels: ['0 ', '2 ', '3 ', '5 ']
+          ticksLabels: ['0', '2', '3', '5']
         }
       },
       {
@@ -467,7 +488,7 @@ describe('App.SliderConfigWidgetView', function () {
         },
         e: {
           ticks: [0,2,6,12,17,20,23],
-          ticksLabels: ['0 ', '', '', '12 ', '', '', '23 ']
+          ticksLabels: ['0', '', '', '12', '', '', '23']
         }
       },
       {
@@ -636,29 +657,6 @@ describe('App.SliderConfigWidgetView', function () {
       expect(viewInt.get('issueMessage')).to.equal('');
     });
 
-    describe('llap_queue_capacity property', function() {
-      beforeEach(function() {
-        viewInt.set('config.name', 'llap_queue_capacity');
-      });
-      it('should validate and warn about llap issue when value is 100%', function() {
-        viewInt.set('config.stackConfigProperty.valueAttributes.maximum', 100);
-        viewInt.set('config.value', '100');
-        viewInt.set('config.errorMessage', '');
-        viewInt.set('config.warnMessage', '');
-        viewInt.set('config.widgetType', 'slider');
-        assert.isTrue(viewInt.isValueCompatibleWithWidget(), 'value should be compatible with widget');
-        assert.equal(viewInt.get('config.warnMessage'), Em.I18n.t('config.warnMessage.llap_queue_capacity.max'), 'warn message validation');
-      });
-
-      it('should pass validation because llap < 100', function() {
-        viewInt.set('config.stackConfigProperty.valueAttributes.maximum', 100);
-        viewInt.set('config.value', '99');
-        viewInt.set('config.errorMessage', '');
-        viewInt.set('config.warnMessage', '');
-        assert.isTrue(viewInt.isValueCompatibleWithWidget(), 'value should be compatible with widget');
-        assert.equal(viewInt.get('config.warnMessage'), '', 'warn message validation');
-      });
-    });
   });
 
   describe('#formatTickLabel', function () {

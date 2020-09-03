@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,23 +18,6 @@
 
 package org.apache.ambari.server.topology;
 
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorBlueprintProcessor;
-import org.apache.ambari.server.controller.ClusterRequest;
-import org.apache.ambari.server.controller.ConfigurationRequest;
-import org.apache.ambari.server.controller.internal.BlueprintConfigurationProcessor;
-import org.apache.ambari.server.controller.internal.ClusterResourceProvider;
-import org.apache.ambari.server.controller.internal.ConfigurationTopologyException;
-import org.apache.ambari.server.controller.internal.Stack;
-import org.apache.ambari.server.serveraction.kerberos.KerberosInvalidConfigurationException;
-import org.apache.ambari.server.state.Cluster;
-import org.apache.ambari.server.state.SecurityType;
-import org.apache.ambari.server.utils.StageUtils;
-import org.apache.commons.collections.MapUtils;
-import org.apache.commons.lang.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -46,18 +29,37 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorBlueprintProcessor;
+import org.apache.ambari.server.controller.ClusterRequest;
+import org.apache.ambari.server.controller.ConfigurationRequest;
+import org.apache.ambari.server.controller.KerberosHelper;
+import org.apache.ambari.server.controller.internal.BlueprintConfigurationProcessor;
+import org.apache.ambari.server.controller.internal.ClusterResourceProvider;
+import org.apache.ambari.server.controller.internal.ConfigurationTopologyException;
+import org.apache.ambari.server.controller.internal.Stack;
+import org.apache.ambari.server.serveraction.kerberos.KerberosInvalidConfigurationException;
+import org.apache.ambari.server.state.Cluster;
+import org.apache.ambari.server.state.ConfigHelper;
+import org.apache.ambari.server.state.SecurityType;
+import org.apache.ambari.server.utils.StageUtils;
+import org.apache.commons.collections.MapUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.collect.ImmutableSet;
+
 /**
  * Responsible for cluster configuration.
  */
 public class ClusterConfigurationRequest {
 
-  protected final static Logger LOG = LoggerFactory.getLogger(ClusterConfigurationRequest.class);
+  private static final Logger LOG = LoggerFactory.getLogger(ClusterConfigurationRequest.class);
 
   /**
    * a regular expression Pattern used to find "clusterHostInfo.(component_name)_host" placeholders in strings
    */
   private static final Pattern CLUSTER_HOST_INFO_PATTERN_VARIABLE = Pattern.compile("\\$\\{clusterHostInfo/?([\\w\\-\\.]+)_host(?:\\s*\\|\\s*(.+?))?\\}");
-  public static final String CLUSTER_HOST_INFO = "clusterHostInfo";
 
   private AmbariContext ambariContext;
   private ClusterTopology clusterTopology;
@@ -65,6 +67,11 @@ public class ClusterConfigurationRequest {
   private StackAdvisorBlueprintProcessor stackAdvisorBlueprintProcessor;
   private Stack stack;
   private boolean configureSecurity = false;
+
+  public ClusterConfigurationRequest(AmbariContext ambariContext, ClusterTopology topology, boolean setInitial, StackAdvisorBlueprintProcessor stackAdvisorBlueprintProcessor, boolean configureSecurity) {
+    this(ambariContext, topology, setInitial, stackAdvisorBlueprintProcessor);
+    this.configureSecurity = configureSecurity;
+  }
 
   public ClusterConfigurationRequest(AmbariContext ambariContext, ClusterTopology clusterTopology, boolean setInitial,
                                      StackAdvisorBlueprintProcessor stackAdvisorBlueprintProcessor) {
@@ -77,7 +84,22 @@ public class ClusterConfigurationRequest {
     this.stackAdvisorBlueprintProcessor = stackAdvisorBlueprintProcessor;
     removeOrphanConfigTypes();
     if (setInitial) {
-      setConfigurationsOnCluster(clusterTopology, TopologyManager.INITIAL_CONFIG_TAG, Collections.<String>emptySet());
+      setConfigurationsOnCluster(clusterTopology, TopologyManager.INITIAL_CONFIG_TAG, Collections.emptySet());
+    }
+  }
+
+  /**
+   * Remove config-types from the given configuration if there is no any services related to them (except cluster-env and global).
+   */
+  private void removeOrphanConfigTypes(Configuration configuration) {
+    Blueprint blueprint = clusterTopology.getBlueprint();
+
+    Collection<String> configTypes = configuration.getAllConfigTypes();
+    for (String configType : configTypes) {
+      if (!blueprint.isValidConfigType(configType)) {
+        configuration.removeConfigType(configType);
+        LOG.info("Removing config type '{}' as related service is not present in either Blueprint or cluster creation template.", configType);
+      }
     }
   }
 
@@ -100,32 +122,9 @@ public class ClusterConfigurationRequest {
     }
   }
 
-  /**
-   * Remove config-types from the given configuration if there is no any services related to them (except cluster-env and global).
-   */
-  private void removeOrphanConfigTypes(Configuration configuration) {
-    Blueprint blueprint = clusterTopology.getBlueprint();
-
-    Collection<String> configTypes = configuration.getAllConfigTypes();
-    for (String configType : configTypes) {
-      if (!"cluster-env".equals(configType) && !"global".equals(configType)) {
-        String service = blueprint.getStack().getServiceForConfigType(configType);
-        if (!blueprint.getServices().contains(service)) {
-          configuration.removeConfigType(configType);
-          LOG.info("Removing config type '{}' as service '{}' is not present in either Blueprint or cluster creation template.", configType, service);
-        }
-      }
-    }
-  }
-
-  public ClusterConfigurationRequest(AmbariContext ambariContext, ClusterTopology topology, boolean setInitial, StackAdvisorBlueprintProcessor stackAdvisorBlueprintProcessor, boolean configureSecurity) {
-    this(ambariContext, topology, setInitial, stackAdvisorBlueprintProcessor);
-    this.configureSecurity = configureSecurity;
-  }
-
   // get names of required host groups
   public Collection<String> getRequiredHostGroups() {
-    Collection<String> requiredHostGroups = new HashSet<String>();
+    Collection<String> requiredHostGroups = new HashSet<>();
     requiredHostGroups.addAll(configurationProcessor.getRequiredHostGroups());
     if (configureSecurity) {
       requiredHostGroups.addAll(getRequiredHostgroupsForKerberosConfiguration());
@@ -137,17 +136,19 @@ public class ClusterConfigurationRequest {
     // this will update the topo cluster config and all host group configs in the cluster topology
     Set<String> updatedConfigTypes = new HashSet<>();
 
-    Configuration clusterConfiguration = clusterTopology.getConfiguration();
-    Map<String, Map<String, String>> existingConfigurations = clusterConfiguration.getFullProperties();
+    Map<String, Map<String, String>> userProvidedConfigurations = clusterTopology.getConfiguration().getFullProperties(1);
 
     try {
       if (configureSecurity) {
+        Configuration clusterConfiguration = clusterTopology.getConfiguration();
+        Map<String, Map<String, String>> existingConfigurations = clusterConfiguration.getFullProperties();
         updatedConfigTypes.addAll(configureKerberos(clusterConfiguration, existingConfigurations));
       }
 
       // obtain recommended configurations before config updates
       if (!ConfigRecommendationStrategy.NEVER_APPLY.equals(this.clusterTopology.getConfigRecommendationStrategy())) {
-        stackAdvisorBlueprintProcessor.adviseConfiguration(this.clusterTopology, existingConfigurations);
+        // get merged properties form Blueprint & cluster template (this doesn't contains stack default values)
+        stackAdvisorBlueprintProcessor.adviseConfiguration(this.clusterTopology, userProvidedConfigurations);
       }
 
       updatedConfigTypes.addAll(configurationProcessor.doUpdateForClusterCreate());
@@ -159,85 +160,42 @@ public class ClusterConfigurationRequest {
     setConfigurationsOnCluster(clusterTopology, TopologyManager.TOPOLOGY_RESOLVED_TAG, updatedConfigTypes);
   }
 
-  /**
-   * A config type is orphaned if there are services related to except cluster-env and global.
-   */
-  private boolean isOrphanedConfigType(String configType, Blueprint blueprint) {
-    boolean isOrphanedConfigType = false;
-    if (!"cluster-env".equals(configType) && !"global".equals(configType)) {
-      String service = blueprint.getStack().getServiceForConfigType(configType);
-      if (!blueprint.getServices().contains(service)) {
-        isOrphanedConfigType = true;
-      }
-    }
-    return isOrphanedConfigType;
-  }
-
   private Set<String> configureKerberos(Configuration clusterConfiguration, Map<String, Map<String, String>> existingConfigurations) throws AmbariException {
-    Set<String> updatedConfigTypes = new HashSet<>();
-
     Cluster cluster = getCluster();
     Blueprint blueprint = clusterTopology.getBlueprint();
-
-    Configuration stackDefaults = blueprint.getStack().getConfiguration(blueprint.getServices());
-    Map<String, Map<String, String>> stackDefaultProps = stackDefaults.getProperties();
+    Set<String> services = ImmutableSet.copyOf(blueprint.getServices());
+    Configuration stackDefaults = blueprint.getStack().getConfiguration(services);
 
     // add clusterHostInfo containing components to hosts map, based on Topology, to use this one instead of
     // StageUtils.getClusterInfo()
     Map<String, String> componentHostsMap = createComponentHostMap(blueprint);
-    existingConfigurations.put("clusterHostInfo", componentHostsMap);
+    existingConfigurations.put(KerberosHelper.CLUSTER_HOST_INFO, componentHostsMap);
 
     try {
+      KerberosHelper kerberosHelper = AmbariContext.getController().getKerberosHelper();
+
       // generate principals & keytabs for headless identities
-      AmbariContext.getController().getKerberosHelper()
-        .ensureHeadlessIdentities(cluster, existingConfigurations,
-          new HashSet<String>(blueprint.getServices()));
+      kerberosHelper.ensureHeadlessIdentities(cluster, existingConfigurations, services);
 
-      // apply Kerberos specific configurations
-      Map<String, Map<String, String>> updatedConfigs = AmbariContext.getController().getKerberosHelper()
-        .getServiceConfigurationUpdates(cluster, existingConfigurations,
-            createServiceComponentMap(blueprint), null, null, true, false);
+      // get Kerberos specific configurations
+      Map<String, Map<String, String>> updatedConfigs = kerberosHelper.getServiceConfigurationUpdates(
+        cluster, existingConfigurations, createServiceComponentMap(blueprint), null, null, true, false);
 
-      // ******************************************************************************************
       // Since Kerberos is being enabled, make sure the cluster-env/security_enabled property is
       // set to "true"
-      Map<String, String> clusterEnv = updatedConfigs.get("cluster-env");
+      updatedConfigs
+        .computeIfAbsent(ConfigHelper.CLUSTER_ENV, __ -> new HashMap<>())
+        .put("security_enabled", "true");
 
-      if(clusterEnv == null) {
-        clusterEnv = new HashMap<String,String>();
-        updatedConfigs.put("cluster-env", clusterEnv);
-      }
+      updatedConfigs.keySet().removeIf(configType -> !blueprint.isValidConfigType(configType));
 
-      clusterEnv.put("security_enabled", "true");
-      // ******************************************************************************************
-
-      for (String configType : updatedConfigs.keySet()) {
-        // apply only if config type has related services in Blueprint
-        if (!isOrphanedConfigType(configType, blueprint)) {
-          Map<String, String> propertyMap = updatedConfigs.get(configType);
-          Map<String, String> clusterConfigProperties = existingConfigurations.get(configType);
-          Map<String, String> stackDefaultConfigProperties = stackDefaultProps.get(configType);
-          for (String property : propertyMap.keySet()) {
-            // update value only if property value configured in Blueprint / ClusterTemplate is not a custom one
-            String currentValue = clusterConfiguration.getPropertyValue(configType, property);
-            String newValue = propertyMap.get(property);
-            if (!propertyHasCustomValue(clusterConfigProperties, stackDefaultConfigProperties, property) &&
-              (currentValue == null || !currentValue.equals(newValue))) {
-
-              LOG.debug("Update Kerberos related config property: {} {} {}", configType, property, propertyMap.get
-                (property));
-              clusterConfiguration.setProperty(configType, property, newValue);
-              updatedConfigTypes.add(configType);
-            }
-          }
-        }
-      }
-
+      // apply Kerberos specific configurations
+      return clusterConfiguration.applyUpdatesToStackDefaultProperties(stackDefaults, existingConfigurations, updatedConfigs);
     } catch (KerberosInvalidConfigurationException e) {
       LOG.error("An exception occurred while doing Kerberos related configuration update: " + e, e);
     }
 
-    return updatedConfigTypes;
+    return ImmutableSet.of();
   }
 
   /**
@@ -247,71 +205,30 @@ public class ClusterConfigurationRequest {
    * @return a map of service names to component names
    */
   private Map<String, Set<String>> createServiceComponentMap(Blueprint blueprint) {
-    Map<String, Set<String>> serviceComponents = new HashMap<String, Set<String>>();
+    Map<String, Set<String>> serviceComponents = new HashMap<>();
     Collection<String> services = blueprint.getServices();
 
     if(services != null) {
       for (String service : services) {
         Collection<String> components = blueprint.getComponents(service);
-        serviceComponents.put(service,
-            (components == null)
-                ? Collections.<String>emptySet()
-                : new HashSet<String>(blueprint.getComponents(service)));
+        Set<String> componentSet = components == null ? ImmutableSet.of() : ImmutableSet.copyOf(components);
+        serviceComponents.put(service, componentSet);
       }
     }
 
     return serviceComponents;
   }
 
-  /**
-   * Returns true if the property exists in clusterConfigProperties and has a custom user defined value. Property has
-   * custom value in case we there's no stack default value for it or it's not equal to stack default value.
-   * @param clusterConfigProperties
-   * @param stackDefaultConfigProperties
-   * @param property
-   * @return
-   */
-  private boolean propertyHasCustomValue(Map<String, String> clusterConfigProperties, Map<String, String>
-    stackDefaultConfigProperties, String property) {
-
-    boolean propertyHasCustomValue = false;
-    if (clusterConfigProperties != null) {
-      String propertyValue = clusterConfigProperties.get(property);
-      if (propertyValue != null) {
-        if (stackDefaultConfigProperties != null) {
-          String stackDefaultValue = stackDefaultConfigProperties.get(property);
-          if (stackDefaultValue != null) {
-            propertyHasCustomValue = !propertyValue.equals(stackDefaultValue);
-          } else {
-            propertyHasCustomValue = true;
-          }
-        } else {
-          propertyHasCustomValue = true;
-        }
-      }
-    }
-    return propertyHasCustomValue;
-  }
-
   private Map<String, String> createComponentHostMap(Blueprint blueprint) {
-    Map<String, String> componentHostsMap = new HashMap<String, String>();
-    for (String service : blueprint.getServices()) {
-      Collection<String> components = blueprint.getComponents(service);
-      for (String component : components) {
-        Collection<String> componentHost = clusterTopology.getHostAssignmentsForComponent(component);
-        // retrieve corresponding clusterInfoKey for component using StageUtils
-        String clusterInfoKey = StageUtils.getComponentToClusterInfoKeyMap().get(component);
-        if (clusterInfoKey == null) {
-          clusterInfoKey = component.toLowerCase() + "_hosts";
-        }
-        componentHostsMap.put(clusterInfoKey, StringUtils.join(componentHost, ","));
-      }
-    }
-    return componentHostsMap;
+    return StageUtils.createComponentHostMap(
+      blueprint.getServices(),
+      blueprint::getComponents,
+      (service, component) -> clusterTopology.getHostAssignmentsForComponent(component)
+    );
   }
 
   private Collection<String> getRequiredHostgroupsForKerberosConfiguration() {
-    Collection<String> requiredHostGroups = new HashSet<String>();
+    Collection<String> requiredHostGroups = new HashSet<>();
 
     try {
       Cluster cluster = getCluster();
@@ -319,7 +236,7 @@ public class ClusterConfigurationRequest {
 
       Configuration clusterConfiguration = clusterTopology.getConfiguration();
       Map<String, Map<String, String>> existingConfigurations = clusterConfiguration.getFullProperties();
-      existingConfigurations.put(CLUSTER_HOST_INFO, new HashMap<String, String>());
+      existingConfigurations.put(KerberosHelper.CLUSTER_HOST_INFO, new HashMap<>());
 
       // apply Kerberos specific configurations
       Map<String, Map<String, String>> updatedConfigs = AmbariContext.getController().getKerberosHelper()
@@ -347,9 +264,7 @@ public class ClusterConfigurationRequest {
         }
       }
 
-    } catch (KerberosInvalidConfigurationException e) {
-      LOG.error("An exception occurred while doing Kerberos related configuration update: " + e, e);
-    } catch (AmbariException e) {
+    } catch (KerberosInvalidConfigurationException | AmbariException e) {
       LOG.error("An exception occurred while doing Kerberos related configuration update: " + e, e);
     }
     return requiredHostGroups;
@@ -367,7 +282,7 @@ public class ClusterConfigurationRequest {
    */
   public void setConfigurationsOnCluster(ClusterTopology clusterTopology, String tag, Set<String> updatedConfigTypes)  {
     //todo: also handle setting of host group scoped configuration which is updated by config processor
-    List<BlueprintServiceConfigRequest> configurationRequests = new LinkedList<BlueprintServiceConfigRequest>();
+    List<BlueprintServiceConfigRequest> configurationRequests = new LinkedList<>();
 
     Blueprint blueprint = clusterTopology.getBlueprint();
     Configuration clusterConfiguration = clusterTopology.getConfiguration();
@@ -418,7 +333,7 @@ public class ClusterConfigurationRequest {
    */
   private void setConfigurationsOnCluster(List<BlueprintServiceConfigRequest> configurationRequests,
                                          String tag, Set<String> updatedConfigTypes)  {
-    String clusterName = null;
+    String clusterName;
     try {
       clusterName = ambariContext.getClusterName(clusterTopology.getClusterId());
     } catch (AmbariException e) {
@@ -429,9 +344,9 @@ public class ClusterConfigurationRequest {
     for (BlueprintServiceConfigRequest blueprintConfigRequest : configurationRequests) {
       ClusterRequest clusterRequest = null;
       // iterate over the config types associated with this service
-      List<ConfigurationRequest> requestsPerService = new LinkedList<ConfigurationRequest>();
+      List<ConfigurationRequest> requestsPerService = new LinkedList<>();
       for (BlueprintServiceConfigElement blueprintElement : blueprintConfigRequest.getConfigElements()) {
-        Map<String, Object> clusterProperties = new HashMap<String, Object>();
+        Map<String, Object> clusterProperties = new HashMap<>();
         clusterProperties.put(ClusterResourceProvider.CLUSTER_NAME_PROPERTY_ID, clusterName);
         clusterProperties.put(ClusterResourceProvider.CLUSTER_DESIRED_CONFIGS_PROPERTY_ID + "/type", blueprintElement.getTypeName());
         clusterProperties.put(ClusterResourceProvider.CLUSTER_DESIRED_CONFIGS_PROPERTY_ID + "/tag", tag);
@@ -489,6 +404,8 @@ public class ClusterConfigurationRequest {
       }
     }
 
+    ambariContext.notifyAgentsAboutConfigsChanges(clusterName);
+
     if (tag.equals(TopologyManager.TOPOLOGY_RESOLVED_TAG)) {
       // if this is a request to resolve config, then wait until resolution is completed
       try {
@@ -512,7 +429,7 @@ public class ClusterConfigurationRequest {
     private final String serviceName;
 
     private List<BlueprintServiceConfigElement> configElements =
-        new LinkedList<BlueprintServiceConfigElement>();
+      new LinkedList<>();
 
     BlueprintServiceConfigRequest(String serviceName) {
       this.serviceName = serviceName;

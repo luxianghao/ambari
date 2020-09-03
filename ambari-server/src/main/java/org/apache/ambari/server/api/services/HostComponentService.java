@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -35,17 +35,37 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 
+import org.apache.ambari.annotations.ApiIgnore;
+import org.apache.ambari.annotations.SwaggerPreferredParent;
 import org.apache.ambari.server.api.resources.ResourceInstance;
 import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.controller.HostComponentProcessResponse;
+import org.apache.ambari.server.controller.HostComponentSwagger;
 import org.apache.ambari.server.controller.spi.Resource;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.Validate;
+import org.apache.http.HttpStatus;
+
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiImplicitParam;
+import io.swagger.annotations.ApiImplicitParams;
+import io.swagger.annotations.ApiOperation;
+import io.swagger.annotations.ApiResponse;
+import io.swagger.annotations.ApiResponses;
 
 /**
  * Service responsible for host_components resource requests.
  */
+@Api(value = "Host Components", description = "Endpoint for host component specific operations")
+@SwaggerPreferredParent(preferredParent = ClusterService.class)
 public class HostComponentService extends BaseService {
+
+  public static final String HOST_ROLE_REQUEST_TYPE = "org.apache.ambari.server.controller.ServiceComponentHostResponse";
+
   /**
    * Parent cluster id.
    */
@@ -78,7 +98,19 @@ public class HostComponentService extends BaseService {
    */
   @GET
   @Path("{hostComponentName}")
-  @Produces("text/plain")
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Get single host component for a host", response = HostComponentSwagger.class)
+  @ApiImplicitParams({
+    @ApiImplicitParam(name = QUERY_FIELDS, value = QUERY_FILTER_DESCRIPTION, dataType = DATA_TYPE_STRING, paramType = PARAM_TYPE_QUERY),
+  })
+  @ApiResponses({
+    @ApiResponse(code = HttpStatus.SC_OK, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_OR_HOST_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+    @ApiResponse(code = HttpStatus.SC_BAD_REQUEST, message = MSG_INVALID_ARGUMENTS),
+  })
   public Response getHostComponent(String body, @Context HttpHeaders headers, @Context UriInfo ui,
                                    @PathParam("hostComponentName") String hostComponentName, @QueryParam("format") String format) {
 
@@ -106,8 +138,24 @@ public class HostComponentService extends BaseService {
    * @return host_component collection resource representation
    */
   @GET
-  @Produces("text/plain")
-  public Response getHostComponents(String body, @Context HttpHeaders headers, @Context UriInfo ui) {
+  @Path("") // This is needed if class level path is not present otherwise no Swagger docs will be generated for this method
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Get all host components for a host", response = HostComponentSwagger.class, responseContainer = RESPONSE_CONTAINER_LIST)
+  @ApiImplicitParams({
+    @ApiImplicitParam(name = QUERY_FIELDS, value = QUERY_FILTER_DESCRIPTION, dataType = DATA_TYPE_STRING, paramType = PARAM_TYPE_QUERY),
+  })
+  @ApiResponses({
+    @ApiResponse(code = HttpStatus.SC_OK, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_OR_HOST_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+    @ApiResponse(code = HttpStatus.SC_BAD_REQUEST, message = MSG_INVALID_ARGUMENTS),
+  })
+  public Response getHostComponents(String body, @Context HttpHeaders headers, @Context UriInfo ui, @QueryParam("format") String format) {
+    if (format != null && format.equals("client_config_tar")) {
+      return createClientConfigResource(body, headers, ui, null);
+    }
     return handleRequest(headers, body, ui, Request.Type.GET,
         createHostComponentResource(m_clusterName, m_hostName, null));
   }
@@ -123,8 +171,21 @@ public class HostComponentService extends BaseService {
    *
    * @return status code only, 201 if successful
    */
-  @POST
-  @Produces("text/plain")
+  @POST @ApiIgnore // ignored as doesnt work as intended, not able to accept multiple HostRoles
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Create new host components")
+  @ApiImplicitParams({
+    @ApiImplicitParam(dataType = HOST_ROLE_REQUEST_TYPE, paramType = PARAM_TYPE_BODY,  allowMultiple = true)
+  })
+  @ApiResponses(value = {
+    @ApiResponse(code = HttpStatus.SC_CREATED, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_ACCEPTED, message = MSG_REQUEST_ACCEPTED),
+    @ApiResponse(code = HttpStatus.SC_BAD_REQUEST, message = MSG_INVALID_ARGUMENTS),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+  })
   public Response createHostComponents(String body, @Context HttpHeaders headers, @Context UriInfo ui) {
 
     return handleRequest(headers, body, ui, Request.Type.POST,
@@ -144,7 +205,20 @@ public class HostComponentService extends BaseService {
    */
   @POST
   @Path("{hostComponentName}")
-  @Produces("text/plain")
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Create new host component")
+  @ApiImplicitParams({
+    @ApiImplicitParam(dataType = HOST_ROLE_REQUEST_TYPE, paramType = PARAM_TYPE_BODY)
+  })
+  @ApiResponses(value = {
+    @ApiResponse(code = HttpStatus.SC_CREATED, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_ACCEPTED, message = MSG_REQUEST_ACCEPTED),
+    @ApiResponse(code = HttpStatus.SC_BAD_REQUEST, message = MSG_INVALID_ARGUMENTS),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+  })
   public Response createHostComponent(String body, @Context HttpHeaders headers, @Context UriInfo ui,
                                    @PathParam("hostComponentName") String hostComponentName) {
 
@@ -165,7 +239,20 @@ public class HostComponentService extends BaseService {
    */
   @PUT
   @Path("{hostComponentName}")
-  @Produces("text/plain")
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Update host component detail")
+  @ApiImplicitParams({
+    @ApiImplicitParam(dataType = HOST_ROLE_REQUEST_TYPE, paramType = PARAM_TYPE_BODY)
+  })
+  @ApiResponses({
+    @ApiResponse(code = HttpStatus.SC_OK, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_ACCEPTED, message = MSG_REQUEST_ACCEPTED),
+    @ApiResponse(code = HttpStatus.SC_BAD_REQUEST, message = MSG_INVALID_ARGUMENTS),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_OR_HOST_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+  })
   public Response updateHostComponent(String body, @Context HttpHeaders headers, @Context UriInfo ui,
                                       @PathParam("hostComponentName") String hostComponentName) {
 
@@ -183,8 +270,21 @@ public class HostComponentService extends BaseService {
    *
    * @return information regarding updated host_component resources
    */
-  @PUT
-  @Produces("text/plain")
+  @PUT @ApiIgnore // ignored as doesnt work as intended, not able to accept multiple HostRoles
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Update multiple host component details")
+  @ApiImplicitParams({
+    @ApiImplicitParam(dataType = HOST_ROLE_REQUEST_TYPE, paramType = PARAM_TYPE_BODY,  allowMultiple = true)
+  })
+  @ApiResponses({
+    @ApiResponse(code = HttpStatus.SC_OK, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_ACCEPTED, message = MSG_REQUEST_ACCEPTED),
+    @ApiResponse(code = HttpStatus.SC_BAD_REQUEST, message = MSG_INVALID_ARGUMENTS),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_OR_HOST_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+  })
   public Response updateHostComponents(String body, @Context HttpHeaders headers, @Context UriInfo ui) {
 
     return handleRequest(headers, body, ui, Request.Type.PUT,
@@ -203,7 +303,17 @@ public class HostComponentService extends BaseService {
    */
   @DELETE
   @Path("{hostComponentName}")
-  @Produces("text/plain")
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Delete host component")
+  @ApiImplicitParams({
+  })
+  @ApiResponses({
+    @ApiResponse(code = HttpStatus.SC_OK, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_OR_HOST_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+  })
   public Response deleteHostComponent(@Context HttpHeaders headers, @Context UriInfo ui,
                                    @PathParam("hostComponentName") String hostComponentName) {
 
@@ -221,19 +331,43 @@ public class HostComponentService extends BaseService {
    * @return host_component resource representation
    */
   @DELETE
-  @Produces("text/plain")
+  @Path("") // This is needed if class level path is not present otherwise no Swagger docs will be generated for this method
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Delete host components")
+  @ApiImplicitParams({
+  })
+  @ApiResponses({
+    @ApiResponse(code = HttpStatus.SC_OK, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_OR_HOST_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+  })
   public Response deleteHostComponents(String body, @Context HttpHeaders headers, @Context UriInfo ui) {
 
     return handleRequest(headers, body, ui, Request.Type.DELETE,
         createHostComponentResource(m_clusterName, m_hostName, null));
   }
 
+
   @GET
   @Path("{hostComponentName}/processes")
-  @Produces("text/plain")
+  @Produces(MediaType.TEXT_PLAIN)
+  @ApiOperation(value = "Get processes of a specific host component", response = HostComponentProcessResponse.class)
+  @ApiImplicitParams({
+    @ApiImplicitParam(name = QUERY_FIELDS, value = QUERY_FILTER_DESCRIPTION, dataType = DATA_TYPE_STRING, paramType = PARAM_TYPE_QUERY),
+  })
+  @ApiResponses({
+    @ApiResponse(code = HttpStatus.SC_OK, message = MSG_SUCCESSFUL_OPERATION),
+    @ApiResponse(code = HttpStatus.SC_NOT_FOUND, message = MSG_CLUSTER_OR_HOST_NOT_FOUND),
+    @ApiResponse(code = HttpStatus.SC_UNAUTHORIZED, message = MSG_NOT_AUTHENTICATED),
+    @ApiResponse(code = HttpStatus.SC_FORBIDDEN, message = MSG_PERMISSION_DENIED),
+    @ApiResponse(code = HttpStatus.SC_INTERNAL_SERVER_ERROR, message = MSG_SERVER_ERROR),
+    @ApiResponse(code = HttpStatus.SC_BAD_REQUEST, message = MSG_INVALID_ARGUMENTS),
+  })
   public Response getProcesses(@Context HttpHeaders headers, @Context UriInfo ui,
       @PathParam("hostComponentName") String hostComponentName) {
-    Map<Resource.Type,String> mapIds = new HashMap<Resource.Type, String>();
+    Map<Resource.Type,String> mapIds = new HashMap<>();
     mapIds.put(Resource.Type.Cluster, m_clusterName);
     mapIds.put(Resource.Type.Host, m_hostName);
     mapIds.put(Resource.Type.HostComponent, hostComponentName);
@@ -253,7 +387,7 @@ public class HostComponentService extends BaseService {
    * @return a host resource instance
    */
   ResourceInstance createHostComponentResource(String clusterName, String hostName, String hostComponentName) {
-    Map<Resource.Type,String> mapIds = new HashMap<Resource.Type, String>();
+    Map<Resource.Type,String> mapIds = new HashMap<>();
     mapIds.put(Resource.Type.Cluster, clusterName);
     mapIds.put(Resource.Type.Host, hostName);
     mapIds.put(Resource.Type.HostComponent, hostComponentName);
@@ -263,11 +397,10 @@ public class HostComponentService extends BaseService {
 
   private Response createClientConfigResource(String body, HttpHeaders headers, UriInfo ui,
                                               String hostComponentName) {
-    Map<Resource.Type,String> mapIds = new HashMap<Resource.Type, String>();
+    Map<Resource.Type,String> mapIds = new HashMap<>();
     mapIds.put(Resource.Type.Cluster, m_clusterName);
     mapIds.put(Resource.Type.Host, m_hostName);
     mapIds.put(Resource.Type.Component, hostComponentName);
-
 
     Response response = handleRequest(headers, body, ui, Request.Type.GET,
             createResource(Resource.Type.ClientConfig, mapIds));
@@ -277,10 +410,21 @@ public class HostComponentService extends BaseService {
       return response;
     }
 
+    String filePrefixName;
+
+    if (StringUtils.isEmpty(hostComponentName)) {
+      filePrefixName = m_hostName + "(" + Resource.InternalType.Host.toString().toUpperCase()+")";
+    } else {
+      filePrefixName = hostComponentName;
+    }
+
+    Validate.notNull(filePrefixName, "compressed config file name should not be null");
+    String fileName =  filePrefixName + "-configs" + Configuration.DEF_ARCHIVE_EXTENSION;
+
     Response.ResponseBuilder rb = Response.status(Response.Status.OK);
     Configuration configs = new Configuration();
     String tmpDir = configs.getProperty(Configuration.SERVER_TMP_DIR.getKey());
-    File file = new File(tmpDir+File.separator+hostComponentName+"-configs.tar.gz");
+    File file = new File(tmpDir,fileName);
     InputStream resultInputStream = null;
     try {
       resultInputStream = new FileInputStream(file);
@@ -288,9 +432,8 @@ public class HostComponentService extends BaseService {
       e.printStackTrace();
     }
 
-    String contentType = "application/x-ustar";
-    String outputFileName = hostComponentName + "-configs.tar.gz";
-    rb.header("Content-Disposition",  "attachment; filename=\"" + outputFileName + "\"");
+    String contentType = Configuration.DEF_ARCHIVE_CONTENT_TYPE;
+    rb.header("Content-Disposition",  "attachment; filename=\"" + fileName + "\"");
     rb.entity(resultInputStream);
     return rb.type(contentType).build();
 

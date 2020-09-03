@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,13 +17,13 @@
  */
 package org.apache.ambari.server.audit;
 
-import nl.jqno.equalsverifier.EqualsVerifier;
+import static org.hamcrest.core.IsEqual.equalTo;
+import static org.junit.Assert.assertThat;
 
 import org.apache.ambari.server.audit.event.LogoutAuditEvent;
 import org.junit.Test;
 
-import static org.hamcrest.core.IsEqual.equalTo;
-import static org.junit.Assert.assertThat;
+import nl.jqno.equalsverifier.EqualsVerifier;
 
 public class LogoutAuditEventTest {
 
@@ -33,10 +33,13 @@ public class LogoutAuditEventTest {
     String testUserName = "USER1";
     String testRemoteIp = "127.0.0.1";
 
+    String testProxyUserName = "PROXYUSER1";
+
     LogoutAuditEvent evnt = LogoutAuditEvent.builder()
       .withTimestamp(System.currentTimeMillis())
       .withRemoteIp(testRemoteIp)
       .withUserName(testUserName)
+      .withProxyUserName(null)
       .build();
 
     // When
@@ -45,6 +48,22 @@ public class LogoutAuditEventTest {
     // Then
     String expectedAuditMessage = String.format("User(%s), RemoteIp(%s), Operation(Logout), Status(Success)",
       testUserName, testRemoteIp);
+
+    assertThat(actualAuditMessage, equalTo(expectedAuditMessage));
+
+    evnt = LogoutAuditEvent.builder()
+        .withTimestamp(System.currentTimeMillis())
+        .withRemoteIp(testRemoteIp)
+        .withUserName(testUserName)
+        .withProxyUserName(testProxyUserName)
+        .build();
+
+    // When
+    actualAuditMessage = evnt.getAuditMessage();
+
+    // Then
+    expectedAuditMessage = String.format("User(%s), RemoteIp(%s), ProxyUser(%s), Operation(Logout), Status(Success)",
+        testUserName, testRemoteIp, testProxyUserName);
 
     assertThat(actualAuditMessage, equalTo(expectedAuditMessage));
 

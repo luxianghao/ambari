@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,25 +17,18 @@
  */
 package org.apache.ambari.server.metrics.system.impl;
 
-import org.apache.ambari.server.metrics.system.AmbariMetricSink;
+import org.apache.ambari.server.metrics.system.MetricsSink;
 import org.apache.ambari.server.metrics.system.MetricsSource;
 
-import java.util.Map;
-
 public abstract class AbstractMetricsSource implements MetricsSource {
-  protected AmbariMetricSink sink;
+  protected MetricsSink sink;
+  protected MetricsConfiguration configuration;
 
   /**
    *  Pass metrics sink to metrics source
    **/
   @Override
-  public void init(AmbariMetricSink sink) {
-      this.sink = sink;
+  public void init(MetricsConfiguration configuration, MetricsSink sink) {
+    this.sink = sink;
   }
-
-  /**
-   *  Get metrics at the instance
-   *  @return a map for metrics that maps metrics name to metrics value
-   **/
-  abstract public Map<String, Number> getMetrics();
 }

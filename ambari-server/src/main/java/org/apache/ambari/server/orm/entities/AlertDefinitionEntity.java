@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -71,9 +71,10 @@ import org.apache.ambari.server.state.alert.SourceType;
     }),
   @NamedQuery(name = "AlertDefinitionEntity.findByService", query = "SELECT ad FROM AlertDefinitionEntity ad WHERE ad.serviceName = :serviceName AND ad.clusterId = :clusterId"),
   @NamedQuery(name = "AlertDefinitionEntity.findByServiceAndComponent", query = "SELECT ad FROM AlertDefinitionEntity ad WHERE ad.serviceName = :serviceName AND ad.componentName = :componentName AND ad.clusterId = :clusterId"),
-  @NamedQuery(name = "AlertDefinitionEntity.findByServiceMaster", query = "SELECT ad FROM AlertDefinitionEntity ad WHERE ad.serviceName IN :services AND ad.scope = :scope AND ad.clusterId = :clusterId AND ad.componentName IS NULL"),
-  @NamedQuery(name = "AlertDefinitionEntity.findByIds", query = "SELECT ad FROM AlertDefinitionEntity ad WHERE ad.definitionId IN :definitionIds")})
-
+  @NamedQuery(name = "AlertDefinitionEntity.findByServiceMaster", query = "SELECT ad FROM AlertDefinitionEntity ad WHERE ad.serviceName IN :services AND ad.scope = :scope AND ad.clusterId = :clusterId AND ad.componentName IS NULL" +
+      " AND ad.sourceType <> org.apache.ambari.server.state.alert.SourceType.AGGREGATE"),
+  @NamedQuery(name = "AlertDefinitionEntity.findByIds", query = "SELECT ad FROM AlertDefinitionEntity ad WHERE ad.definitionId IN :definitionIds"),
+  @NamedQuery(name = "AlertDefinitionEntity.findBySourceType", query = "SELECT ad FROM AlertDefinitionEntity ad WHERE ad.clusterId = :clusterId AND ad.sourceType = :sourceType")})
 public class AlertDefinitionEntity {
 
   @Id
@@ -309,7 +310,7 @@ public class AlertDefinitionEntity {
    * otherwise.
    */
   public boolean getEnabled() {
-    return enabled == Integer.valueOf(0) ? false : true;
+    return !Objects.equals(enabled, 0);
   }
 
   /**
@@ -331,7 +332,7 @@ public class AlertDefinitionEntity {
    * otherwise.
    */
   public boolean isHostIgnored() {
-    return ignoreHost == Integer.valueOf(0) ? false : true;
+    return !Objects.equals(ignoreHost, 0);
   }
 
   /**
@@ -529,7 +530,7 @@ public class AlertDefinitionEntity {
    *         value.
    */
   public boolean isRepeatToleranceEnabled() {
-    return repeatToleranceEnabled == Short.valueOf((short) 0) ? false : true;
+    return !Objects.equals(repeatToleranceEnabled, (short) 0);
   }
 
   /**
@@ -538,7 +539,7 @@ public class AlertDefinitionEntity {
    * value from {@link #getRepeatTolerance()} should be used to calculate retry
    * tolerance.
    *
-   * @param repeatToleranceEnabled
+   * @param enabled
    *          {@code true} to override the defautlt value and use the value
    *          returned from {@link #getRepeatTolerance()}.
    */
@@ -555,7 +556,7 @@ public class AlertDefinitionEntity {
    */
   protected void addAlertGroup(AlertGroupEntity alertGroup) {
     if (null == alertGroups) {
-      alertGroups = new HashSet<AlertGroupEntity>();
+      alertGroups = new HashSet<>();
     }
 
     alertGroups.add(alertGroup);

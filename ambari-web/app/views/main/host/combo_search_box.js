@@ -18,17 +18,10 @@
 
 var App = require('app');
 
-App.MainHostComboSearchBoxView = Em.View.extend({
-  templateName: require('templates/main/host/combo_search_box'),
+App.MainHostComboSearchBoxView = App.SearchBoxView.extend({
   healthStatusCategories: require('data/host/categories'),
-  errMsg: '',
   serviceMap : {},
-
-  didInsertElement: function () {
-    this.initVS();
-    this.restoreComboFilterQuery();
-    this.showHideClearButton();
-  },
+  controllerBinding: 'App.router.mainHostComboSearchBoxController',
 
   initVS: function() {
     this.setupLabelMap();
@@ -41,6 +34,7 @@ App.MainHostComboSearchBoxView = Em.View.extend({
       unquotable: [
         'text'
       ],
+      remainder: 'Host Name',
       callbacks: {
         search: this.search.bind(this),
         facetMatches: this.facetMatches.bind(this),
@@ -55,12 +49,7 @@ App.MainHostComboSearchBoxView = Em.View.extend({
    * @param searchCollection
    */
   search: function (query, searchCollection) {
-    this.clearErrMsg();
-    var invalidFacet = this.findInvalidFacet(searchCollection);
-    if (invalidFacet) {
-      this.showErrMsg(invalidFacet);
-    }
-    var tableView = this.get('parentView.parentView');
+    var tableView = this.get('parentView');
     App.db.setComboSearchQuery(tableView.get('controller.name'), query);
     var filterConditions = this.createFilterConditions(searchCollection);
     tableView.updateComboFilter(filterConditions);
@@ -259,42 +248,6 @@ App.MainHostComboSearchBoxView = Em.View.extend({
     callback(list, {preserveOrder: true});
   },
 
-  findInvalidFacet: function(searchCollection) {
-    var result = null;
-    var map = App.router.get('mainHostController.labelValueMap');
-    for (var i = 0; i < searchCollection.models.length; i++) {
-      var facet = searchCollection.models[i];
-      if (!map[facet.attributes.category]) {
-        result = facet;
-        break;
-      }
-    }
-    return result;
-  },
-
-  showErrMsg: function(category) {
-    this.set('errMsg', category.attributes.value + " " + Em.I18n.t('hosts.combo.search.invalidCategory'));
-  },
-
-  clearErrMsg: function() {
-    this.set('errMsg', '')
-  },
-
-  showHideClearButton: function () {
-    if (visualSearch.searchQuery.toJSON().length > 0) {
-      $('.VS-cancel-search-box').removeClass('hide');
-    } else {
-      $('.VS-cancel-search-box').addClass('hide');
-    }
-  },
-
-  restoreComboFilterQuery: function() {
-    var query = App.db.getComboSearchQuery(this.get('parentView.parentView.controller.name'));
-    if (query) {
-      visualSearch.searchBox.setQuery(query);
-    }
-  },
-
   getHostComponentList: function() {
     var hostComponentList = [];
     App.MasterComponent.find().rejectProperty('totalCount', 0).toArray()
@@ -307,6 +260,7 @@ App.MainHostComboSearchBoxView = Em.View.extend({
         App.router.get('mainHostController.labelValueMap')[displayName] = component.get('componentName');
       }
     });
+    hostComponentList = hostComponentList.sortProperty('label');
     return hostComponentList;
   },
 

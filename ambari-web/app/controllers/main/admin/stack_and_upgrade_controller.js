@@ -40,6 +40,13 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
   upgradeId: null,
 
   /**
+   * Start version of upgrade
+   * @type {string}
+   * @default null
+   */
+  fromVersion: null,
+
+  /**
    * @type {string}
    * @default null
    */
@@ -50,6 +57,21 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @default null
    */
   upgradeType: null,
+
+  /**
+   * @type {Em.Object}
+   */
+  upgradeTypeConfig: Em.computed.findByKey('upgradeMethods', 'type', 'upgradeType'),
+
+  /**
+   * @type {boolean}
+   */
+  cantBeStarted: Em.computed.alias('upgradeTypeConfig.cantBeStarted'),
+
+  /**
+   * @type {boolean}
+   */
+  showPauseButton: Em.computed.and('!App.upgradeSuspended', '!App.upgradeCompleted', '!App.upgradeInit'),
 
   /**
    * @type {boolean}
@@ -126,6 +148,40 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
   isWizardRestricted: false,
 
   /**
+   * @type {string}
+   */
+  wizardModalTitle: function () {
+    var repoVersion = App.RepositoryVersion.find().findProperty('repositoryVersion', this.get('toVersion'));
+    return this.getUpgradeDowngradeHeader(
+      this.get('upgradeTypeDisplayName'),
+      this.get('upgradeVersion'),
+      this.get('isDowngrade'),
+      repoVersion
+    );
+  }.property('upgradeTypeDisplayName', 'upgradeVersion', 'isDowngrade'),
+
+
+  /**
+   * @param {string} upgradeType
+   * @param {string} upgradeVersion
+   * @param {boolean} isDowngrade
+   * @param {boolean} isPatch
+   * @returns {string}
+   */
+  getUpgradeDowngradeHeader: function(upgradeType, upgradeVersion, isDowngrade, repoVersion) {
+    if (isDowngrade) {
+      return Em.I18n.t('admin.stackUpgrade.dialog.downgrade.header').format(upgradeVersion);
+    }
+    if (repoVersion && repoVersion.get('isPatch')) {
+      return Em.I18n.t('admin.stackUpgrade.dialog.upgrade.patch.header').format(upgradeType, upgradeVersion);
+    }
+    if (repoVersion && repoVersion.get('isMaint')) {
+      return Em.I18n.t('admin.stackUpgrade.dialog.upgrade.maint.header').format(upgradeType, upgradeVersion);
+    }
+    return Em.I18n.t('admin.stackUpgrade.dialog.upgrade.header').format(upgradeType, upgradeVersion);
+  },
+
+  /**
    * methods through which cluster could be upgraded, "allowed" indicated if the method is allowed
    * by stack upgrade path
    * @type {Array}
@@ -171,7 +227,8 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       precheckResultsMessage: '',
       precheckResultsTitle: '',
       action: '',
-      isWizardRestricted: !App.supports.enabledWizardForHostOrderedUpgrade
+      isWizardRestricted: !App.supports.enabledWizardForHostOrderedUpgrade,
+      cantBeStarted: true
     })
   ],
 
@@ -222,8 +279,10 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * properties that stored to localStorage to resume wizard progress
    */
   wizardStorageProperties: [
+    'fromVersion',
     'upgradeId',
     'upgradeVersion',
+    'toVersion',
     'currentVersion',
     'upgradeTypeDisplayName',
     'upgradeType',
@@ -332,7 +391,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     } else if (this.get('upgradeData.Upgrade')){
       return this.get('upgradeData.Upgrade.request_status');
     } else {
-      return '';
+      return 'INIT';
     }
   }.property('upgradeData.Upgrade.request_status', 'App.upgradeSuspended'),
 
@@ -362,23 +421,27 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     var dfd = $.Deferred();
     var self = this;
 
-    this.loadUpgradeData(true).done(function() {
-      self.loadStackVersionsToModel(true).done(function () {
-        self.loadRepoVersionsToModel().done(function() {
-          self.loadCompatibleVersions().done(function() {
-            var currentVersion = App.StackVersion.find().findProperty('state', 'CURRENT');
-            if (currentVersion) {
-              self.set('currentVersion', {
-                repository_version: currentVersion.get('repositoryVersion.repositoryVersion'),
-                repository_name: currentVersion.get('repositoryVersion.displayName')
-              });
-            }
-            dfd.resolve();
-          });
+    this.loadStackVersionsToModel(true).done(function () {
+      self.loadRepoVersionsToModel().done(function() {
+        self.loadCompatibleVersions().done(function() {
+          self.updateCurrentStackVersion();
+          dfd.resolve();
         });
       });
     });
     return dfd.promise();
+  },
+
+  updateCurrentStackVersion: function(){
+    var currentVersion = App.StackVersion.find().findProperty('state', 'CURRENT');
+    if (currentVersion) {
+      this.set('currentVersion', {
+        stack_name: currentVersion.get('repositoryVersion.stackVersionType'),
+        repository_version: currentVersion.get('repositoryVersion.repositoryVersion'),
+        repository_name: currentVersion.get('repositoryVersion.displayName'),
+        id: currentVersion.get('repositoryVersion.id')
+      });
+    }
   },
 
   /**
@@ -585,13 +648,18 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
               data.tasks.forEach(function (task) {
                 var currentTask = item.get('tasks').findProperty('id', task.Tasks.id);
                 this.get('taskDetailsProperties').forEach(function (property) {
-                  currentTask.set(property, task.Tasks[property]);
+                  if (!Em.isNone(task.Tasks[property])) {
+                    currentTask.set(property, task.Tasks[property]);
+                  }
                 }, this);
               }, this);
             } else {
               var tasks = [];
               data.tasks.forEach(function (task) {
-                tasks.pushObject(App.upgradeEntity.create({type: 'TASK'}, task.Tasks));
+                tasks.pushObject(App.upgradeEntity.create({
+                  type: 'TASK',
+                  group_id: data.UpgradeItem.group_id
+                }, task.Tasks));
               });
               item.set('tasks', tasks);
             }
@@ -599,6 +667,33 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
           }
         }, this);
       }
+    }, this);
+  },
+
+
+  /**
+   * request Upgrade Task
+   * @param {Em.Object} task
+   * @return {$.ajax}
+   */
+  getUpgradeTask: function (task) {
+    return App.ajax.send({
+      name: 'admin.upgrade.upgrade_task',
+      sender: this,
+      data: {
+        upgradeId: task.get('request_id'),
+        groupId: task.get('group_id'),
+        stageId: task.get('stage_id'),
+        taskId: task.get('id'),
+        task: task
+      },
+      success: 'getUpgradeTaskSuccessCallback'
+    });
+  },
+
+  getUpgradeTaskSuccessCallback: function (data, xhr, params) {
+    this.get('taskDetailsProperties').forEach(function (property) {
+      params.task.set(property, data.Tasks[property]);
     }, this);
   },
 
@@ -637,6 +732,9 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    */
   confirmDowngrade: function (event) {
     var self = this;
+    if(!this.get('currentVersion')){
+      this.updateCurrentStackVersion();
+    }
     var currentVersion = this.get('currentVersion');
     return App.showConfirmationPopup(
       function() {
@@ -644,7 +742,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       },
       Em.I18n.t('admin.stackUpgrade.downgrade.body').format(currentVersion.repository_name),
       null,
-      Em.I18n.t('admin.stackUpgrade.dialog.downgrade.header').format(currentVersion.repository_name),
+      Em.I18n.t('admin.stackUpgrade.dialog.downgrade.header').format(this.get('upgradeVersion')),
       Em.I18n.t('admin.stackUpgrade.downgrade.proceed')
     );
   },
@@ -658,7 +756,12 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     var self = this;
     this.set('requestInProgress', true);
     this.abortUpgrade().done(function() {
-      self.startDowngrade(currentVersion);
+      var interval = setInterval(function() {
+        if (self.get('upgradeData.Upgrade.request_status') == 'ABORTED') {
+          clearInterval(interval);
+          self.startDowngrade(currentVersion);
+        }
+      }, 1000);
     });
   },
 
@@ -687,9 +790,9 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       name: 'admin.downgrade.start',
       sender: this,
       data: {
-        from: App.RepositoryVersion.find().findProperty('displayName', this.get('upgradeVersion')).get('repositoryVersion'),
         value: currentVersion.repository_version,
-        label: currentVersion.repository_name,
+        label: this.get('upgradeVersion'),
+        id: currentVersion.id,
         isDowngrade: true,
         upgradeType: this.get('upgradeType')
       },
@@ -793,7 +896,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    */
   showPreparingUpgradeIndicator: function () {
     return App.ModalPopup.show({
-      header: '',
+      header: Em.I18n.t('admin.stackUpgrade.dialog.prepareUpgrade.header'),
       showFooter: false,
       showCloseButton: false,
       bodyClass: Em.View.extend({
@@ -806,12 +909,6 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
          */
         barWidth: 'width: 100%;',
         progressBarClass: 'progress log_popup',
-
-        /**
-         * Popup-message
-         * @type {string}
-         */
-        message: Em.I18n.t('admin.stackUpgrade.dialog.prepareUpgrade.header'),
 
         /**
          * Hide popup when upgrade wizard is open
@@ -849,6 +946,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
   upgradeSuccessCallback: function (data, opt, params) {
     this.set('upgradeData', null);
     this.set('upgradeId', data.resources[0].Upgrade.request_id);
+    this.set('toVersion', params.value);
     this.set('upgradeVersion', params.label);
     this.set('isDowngrade', !!params.isDowngrade);
     var upgradeMethod = this.get('upgradeMethods').findProperty('type', params.type),
@@ -872,6 +970,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     this.setDBProperties({
       upgradeVersion: params.label,
       upgradeId: data.resources[0].Upgrade.request_id,
+      toVersion: params.value,
       upgradeState: 'PENDING',
       isDowngrade: !!params.isDowngrade,
       upgradeType: upgradeType,
@@ -888,6 +987,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       localdb: App.db.data
     });
     this.load();
+    App.router.get('wizardWatcherController').setUser(App.router.get('mainAdminStackAndUpgradeController').get('name'));
     this.openUpgradeDialog();
   },
 
@@ -910,7 +1010,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     this.get('upgradeMethods').forEach(function (method) {
       if (method.get('allowed')) {
         this.runPreUpgradeCheckOnly({
-          value: version.get('repositoryVersion'),
+          id: version.get('id'),
           label: version.get('displayName'),
           type: method.get('type')
         });
@@ -930,22 +1030,30 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     if (configsMergeWarning && Em.get(configsMergeWarning, 'UpgradeChecks.status') === 'WARNING') {
       var configsMergeCheckData = Em.get(configsMergeWarning, 'UpgradeChecks.failed_detail');
       if (configsMergeCheckData && Em.isArray(configsMergeCheckData)) {
-        configs = configsMergeCheckData.map(function (item) {
-          var isDeprecated = Em.isNone(item.new_stack_value),
-            willBeRemoved = Em.isNone(item.result_value);
-          return {
+        configs = configsMergeCheckData.reduce(function (allConfigs, item) {
+          const isDeprecated = Em.isNone(item.new_stack_value),
+                willBeRemoved = Em.isNone(item.result_value),
+                configInfo = App.configsCollection.getConfigByName(item.property, item.type) || {};
+
+          return allConfigs.concat({
             type: item.type,
             name: item.property,
+            serviceName: configInfo.serviceName,
+            wasModified: (!isDeprecated && !willBeRemoved && Em.compare(item.current, item.result_value) === 0),
             currentValue: item.current,
             recommendedValue: isDeprecated ? Em.I18n.t('popup.clusterCheck.Upgrade.configsMerge.deprecated') : item.new_stack_value,
             isDeprecated: isDeprecated,
             resultingValue: willBeRemoved ? Em.I18n.t('popup.clusterCheck.Upgrade.configsMerge.willBeRemoved') : item.result_value,
             willBeRemoved: willBeRemoved
-          };
-        });
+          });
+        }, []);
       }
     }
     return configs;
+  },
+
+  showUpgradeOptions: function ( version ) {
+    this.upgradeOptions(false, version, true);
   },
 
   /**
@@ -954,7 +1062,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @param {object} version
    * @return App.ModalPopup
    */
-  upgradeOptions: function (isInUpgradeWizard, version) {
+  upgradeOptions: function (isInUpgradeWizard, version, preUpgradeShow) {
     var self = this,
       upgradeMethods = this.get('upgradeMethods'),
       runningCheckRequests = this.get('runningCheckRequests');
@@ -979,22 +1087,24 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       this.set('isUpgradeTypesLoaded', true);
     }
 
-    return App.ModalPopup.show({
+    const modal = App.ModalPopup.show({
       encodeBody: false,
       primary: function() {
-        return isInUpgradeWizard || this.get('controller.getSupportedUpgradeError')
-               ? Em.I18n.t('ok')
-               : Em.I18n.t('common.proceed')
+        if ( preUpgradeShow ) return false;
+        if ( isInUpgradeWizard || this.get('controller.getSupportedUpgradeError') ) return Em.I18n.t('ok');
+        return Em.I18n.t('common.proceed');
       }.property('controller.getSupportedUpgradeError'),
       secondary: function() {
-        return this.get('controller.getSupportedUpgradeError') ? null : Em.I18n.t('common.cancel');
+        if (preUpgradeShow) return Em.I18n.t('common.dismiss');
+        if (this.get('controller.getSupportedUpgradeError')) return null;
+        return Em.I18n.t('common.cancel');
       }.property('controller.getSupportedUpgradeError'),
-      primaryClass: 'btn-success',
+      secondaryClass: preUpgradeShow ? 'btn-success' : '',
       classNames: ['upgrade-options-popup'],
-      header: Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.header'),
+      header: preUpgradeShow ? Em.I18n.t('admin.stackVersions.version.preUpgrade.header') : Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.header'),
       controller: this,
       showFooter: function() {
-        return this.get('controller.isUpgradeTypesLoaded');
+        return this.get('controller.isUpgradeTypesLoaded') || preUpgradeShow;
       }.property('controller.isUpgradeTypesLoaded'),
       bodyClass: Em.View.extend({
         templateName: require('templates/main/admin/stack_upgrade/upgrade_options'),
@@ -1020,7 +1130,11 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
         }.property().volatile(),
         isInUpgradeWizard: isInUpgradeWizard,
         showPreUpgradeChecks: App.get('supports.preUpgradeCheck') && !isInUpgradeWizard,
-        versionText: isInUpgradeWizard ? '' : Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.bodyMsg.version').format(version.get('displayName')),
+        versionText: (function () {
+          if ( preUpgradeShow ) return Em.I18n.t('admin.stackVersions.version.preUpgrade.bodyMsg.version').format(version.get('displayName'));
+          if ( isInUpgradeWizard ) return '';
+          return Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.bodyMsg.version').format(version.get('displayName'));
+        })(),
         selectMethod: function (event) {
           if (isInUpgradeWizard || !event.context.get('allowed') || event.context.get('isPrecheckFailed')) return;
           var selectedMethod = event.context;
@@ -1040,8 +1154,9 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
         },
         rerunCheck: function (event) {
           self.runPreUpgradeCheckOnly({
-            value: version.get('repositoryVersion'),
+            id: version.get('id'),
             label: version.get('displayName'),
+            id: version.get('id'),
             type: event.context.get('type')
           });
         },
@@ -1076,13 +1191,18 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
             bypassedFailures: bypassedFailures,
             callback: function () {
               self.runPreUpgradeCheckOnly.call(self, {
-                value: version.get('repositoryVersion'),
+                id: version.get('id'),
                 label: version.get('displayName'),
+                id: version.get('id'),
                 type: event.context.get('type')
               });
+            },
+            closeParent: function() {
+              modal.onClose();
             }
-          }, configs, version.get('displayName'));
-        }
+          }, configs);
+        },
+        upgradeShow: !preUpgradeShow
       }),
 
       /**
@@ -1125,13 +1245,12 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
           version.skipComponentFailures = this.get('skipComponentFailures');
           version.skipSCFailures = this.get('skipSCFailures');
 
-          var fromVersion = self.get('upgradeVersion') || App.RepositoryVersion.find().findProperty('status', 'CURRENT').get('displayName');
           var toVersion = version.get('displayName');
           var bodyMessage = Em.Object.create({
             confirmButton: Em.I18n.t('yes'),
             confirmMsg: upgradeMethod.get('type') === 'ROLLING' ?
-              Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.RU.confirm.msg').format(fromVersion, toVersion) :
-              Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.EU.confirm.msg').format(fromVersion, toVersion)
+              Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.RU.confirm.msg').format(toVersion) :
+              Em.I18n.t('admin.stackVersions.version.upgrade.upgradeOptions.EU.confirm.msg').format(toVersion)
           });
           return App.showConfirmationFeedBackPopup(function (query) {
             return self.runPreUpgradeCheck.call(self, version);
@@ -1139,6 +1258,8 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
         }
       }
     });
+
+    return modal;
   },
 
   /**
@@ -1330,7 +1451,9 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       label: version.get('displayName'),
       type: version.get('upgradeType'),
       skipComponentFailures: version.get('skipComponentFailures') ? 'true' : 'false',
-      skipSCFailures: version.get('skipSCFailures') ? 'true' : 'false'
+      skipSCFailures: version.get('skipSCFailures') ? 'true' : 'false',
+      id: version.get('id'),
+      targetStack: version.get('displayName')
     };
     if (App.get('supports.preUpgradeCheck')) {
       this.set('requestInProgress', true);
@@ -1399,7 +1522,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       },
       Em.I18n.t('admin.stackUpgrade.upgrade.retry.confirm.body').format(version.get('displayName')),
       null,
-      Em.I18n.t('admin.stackUpgrade.dialog.header').format(version.get('upgradeTypeDislayName'), version.get('displayName'))
+      this.getUpgradeDowngradeHeader(version.get('upgradeTypeDislayName'), version.get('displayName'))
     );
   },
 
@@ -1420,13 +1543,32 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
   /**
    * confirmation popup before install repository version
    */
-  installRepoVersionConfirmation: function (repo) {
+  installRepoVersionPopup: function (repo) {
+    var availableServices = repo.get('stackServices').filter(function(service) {
+      return App.Service.find(service.get('name')).get('isLoaded') && service.get('isAvailable') && service.get('isUpgradable');
+    }, this);
+    if (!availableServices.length && !repo.get('isStandard')){
+      return App.showAlertPopup( Em.I18n.t('admin.stackVersions.upgrade.installPackage.fail.title'), Em.I18n.t('admin.stackVersions.upgrade.installPackage.fail.noAvailableServices').format(repo.get('displayName')) );
+    }
     var self = this;
-    return App.showConfirmationPopup(function () {
+    var bodyContent = repo.get('isPatch')
+      ? Em.I18n.t('admin.stackVersions.version.install.patch.confirm')
+      : Em.I18n.t('admin.stackVersions.version.install.confirm');
+    return App.ModalPopup.show({
+      header: Em.I18n.t('popup.confirmation.commonHeader'),
+      popupBody: bodyContent.format(repo.get('displayName')),
+      skipDependencyCheck: false,
+      bodyClass: Em.View.extend({
+        classNames: ['install-repo-confirmation'],
+        content: availableServices,
+        showAvailableServices: repo.get('isPatch') || repo.get('isMaint'),
+        templateName: require('templates/common/modal_popups/install_repo_confirmation')
+      }),
+      onPrimary: function () {
         self.installRepoVersion(repo);
-      },
-      Em.I18n.t('admin.stackVersions.version.install.confirm').format(repo.get('displayName'))
-    );
+        this._super();
+      }
+    });
   },
 
   /**
@@ -1457,6 +1599,109 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       callback: function() {
         this.sender.set('requestInProgress', false);
         this.sender.set('requestInProgressRepoId', null);
+      }
+    });
+  },
+  
+  /**
+   * TODO unify and move modal view into common/modal_popups
+   * @param {string[]} hosts
+   * @param {string} title
+   * @param {string} operation
+   * @param {Function} primary
+   */
+  showReinstallRemoveConfirmation: function({hosts, title, operation, primary = () => {}}) {
+    return App.ModalPopup.show({
+      header: title,
+      visibleHosts: hosts.join("\n"),
+      expanded: true,
+      onPrimary: function() {
+        primary(hosts);
+        this._super();
+      },
+    
+      bodyClass: Em.View.extend({
+        templateName: require('templates/main/host/bulk_operation_confirm_popup'),
+        message: Em.I18n.t('hosts.bulkOperation.confirmation.hosts').format(operation, hosts.length),
+        textareaVisible: false,
+        textTrigger: function() {
+          this.toggleProperty('textareaVisible');
+        },
+        putHostNamesToTextarea: function() {
+          var hostNames = this.get('parentView.visibleHosts');
+          if (this.get('textareaVisible')) {
+            var wrapper = $(".task-detail-log-maintext");
+            $('.task-detail-log-clipboard').html(hostNames).width(wrapper.width()).height(250);
+            Em.run.next(function() {
+              $('.task-detail-log-clipboard').select();
+            });
+          }
+        }.observes('textareaVisible')
+      })
+    });
+  },
+  
+  removeOutOfSyncComponents: function (event) {
+    const hosts = App.RepositoryVersion.find(event.context.repoId).get('stackVersion.outOfSyncHosts');
+    return this.showReinstallRemoveConfirmation({
+      hosts,
+      title: Em.I18n.t('admin.stackVersions.version.errors.outOfSync.remove.title'),
+      operation: Em.I18n.t('hosts.host.maintainance.removeFailedComponents.context'),
+      primary: () => {
+        App.get('router.mainAdminKerberosController').getKDCSessionState(() => {
+          App.ajax.send({
+            name: 'host.host_component.delete_components',
+            sender: this,
+            data: {
+              hosts,
+              data: JSON.stringify({
+                RequestInfo: {
+                  query: 'HostRoles/host_name.in(' + hosts.join(',') + ')&HostRoles/state=INSTALL_FAILED'
+                }
+              })
+            }
+          });
+        });
+      }
+    });
+  },
+  
+  reinstallOutOfSyncComponents: function (event) {
+    const hosts = App.RepositoryVersion.find(event.context.repoId).get('stackVersion.outOfSyncHosts');
+    return this.showReinstallRemoveConfirmation({
+      hosts,
+      title: Em.I18n.t('admin.stackVersions.version.errors.outOfSync.reinstall.title'),
+      operation: Em.I18n.t('hosts.host.maintainance.reinstallFailedComponents.context'),
+      primary: () => {
+        App.get('router.mainAdminKerberosController').getKDCSessionState(() => {
+          App.ajax.send({
+            name: 'common.host_components.update',
+            sender: this,
+            data: {
+              HostRoles: {
+                state: 'INSTALLED'
+              },
+              query: 'HostRoles/host_name.in(' + hosts.join(',') + ')&HostRoles/state=INSTALL_FAILED',
+              context: Em.I18n.t('hosts.host.maintainance.reinstallFailedComponents.context')
+            },
+            success: 'reinstallOutOfSyncComponentsSuccessCallback'
+          });
+        });
+      }
+    });
+  },
+  
+  reinstallOutOfSyncComponentsSuccessCallback: function (data, opt, params, req) {
+    if (!data && req.status == 200) {
+      return App.ModalPopup.show({
+        header: Em.I18n.t('rolling.nothingToDo.header'),
+        body: Em.I18n.t('rolling.nothingToDo.body').format(params.noOpsMessage || Em.I18n.t('hosts.host.maintainance.allComponents.context')),
+        secondary: false
+      });
+    }
+    return App.router.get('userSettingsController').dataLoading('show_bg').done(function (initValue) {
+      if (initValue) {
+        App.router.get('backgroundOperationsController').showPopup();
       }
     });
   },
@@ -1587,6 +1832,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       sender: this,
       data: {
         repo: repo,
+        repoName: repo.get('repoName'),
         repoId: repo.get('repoId'),
         baseUrl: repo.get('baseUrl'),
         osType: os.get('osType'),
@@ -1627,7 +1873,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * @param data
    * @method installStackVersionSuccess
    */
-  installRepoVersionError: function (data) {
+  installRepoVersionError: function (data, opt, params) {
     var header = Em.I18n.t('admin.stackVersions.upgrade.installPackage.fail.title');
     var body = "";
     if (data && data.responseText) {
@@ -1639,6 +1885,11 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     if (data && data.statusText === "timeout") {
       body = Em.I18n.t('admin.stackVersions.upgrade.installPackage.fail.timeout');
     }
+    var version = App.RepositoryVersion.find(params.id);
+    version.set('defaultStatus', 'INSTALL_FAILED');
+    if (version.get('stackVersion')) {
+      version.set('stackVersion.state', 'INSTALL_FAILED');
+    }
     App.showAlertPopup(header, body);
   },
 
@@ -1649,20 +1900,35 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    */
   showProgressPopup: function(version) {
     var popupTitle = Em.I18n.t('admin.stackVersions.details.install.hosts.popup.title').format(version.get('displayName'));
-    var requestIds = App.get('testMode') ? [1] : App.db.get('repoVersionInstall', 'id');
+    var requestIds = this.getRepoVersionInstallId();
     var hostProgressPopupController = App.router.get('highAvailabilityProgressPopupController');
     hostProgressPopupController.initPopup(popupTitle, requestIds, this);
   },
 
+  getRepoVersionInstallId: function() {
+    if (App.get('testMode')) return [1];
+
+    var requestIds = App.db.get('repoVersionInstall', 'id');
+    var lastRepoVersionInstall = App.router.get('backgroundOperationsController.services').find(function(request) {
+      return request.get('name').startsWith('Install version');
+    });
+    if (lastRepoVersionInstall &&
+      (!requestIds || !requestIds.contains(lastRepoVersionInstall.get('id')))) {
+      requestIds = [lastRepoVersionInstall.get('id')];
+    }
+    return requestIds || [];
+  },
+
   /**
-   * reset upgradeState to INIT when upgrade is COMPLETED
+   * reset upgradeState to NOT_REQUIRED when upgrade is COMPLETED
    * and clean auxiliary data
    */
   finish: function () {
     var upgradeVersion = this.get('upgradeVersion') && this.get('upgradeVersion').match(/[a-zA-Z]+\-\d+\.\d+/);
     this.setDBProperties({
+      fromVersion: undefined,
       upgradeId: undefined,
-      upgradeState: 'INIT',
+      upgradeState: 'NOT_REQUIRED',
       upgradeVersion: undefined,
       currentVersion: undefined,
       upgradeTypeDisplayName: undefined,
@@ -1672,13 +1938,14 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
       isDowngrade: undefined,
       downgradeAllowed: undefined
     });
+    this.initDBProperties();
     App.clusterStatus.setClusterStatus({
       localdb: App.db.data
     });
     if (upgradeVersion && upgradeVersion[0]) {
       App.set('currentStackVersion', upgradeVersion[0]);
     }
-    App.set('upgradeState', 'INIT');
+    App.set('upgradeState', 'NOT_REQUIRED');
   },
 
   /**
@@ -1811,7 +2078,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
    * get the installed repositories of HDP from server
    */
   loadRepositories: function () {
-    if (App.router.get('clusterController.isLoaded')) {
+    if (App.router.get('clusterController.isLoaded') && App.get('currentStackVersion')) {
       var nameVersionCombo = App.get('currentStackVersion');
       var stackName = nameVersionCombo.split('-')[0];
       var stackVersion = nameVersionCombo.split('-')[1];
@@ -1894,31 +2161,135 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
   },
 
   /**
+   *
+   * @param {Em.Object} version
+   */
+  confirmRevertPatchUpgrade: function(version) {
+    var self = this;
+    var currentStack = App.RepositoryVersion.find(this.get('currentVersion.id'));
+    App.ModalPopup.show({
+      header: Em.I18n.t('popup.confirmation.commonHeader'),
+      popupBody: Em.I18n.t('admin.stackVersions.upgrade.patch.revert.confirmation'),
+      bodyClass: Em.View.extend({
+        classNames: ['revert-patch-upgrade-confirmation'],
+        servicesToBeReverted: this.getServicesToBeReverted(version, currentStack),
+        stackFromVersion: version.get('displayName'),
+        stackToVersion: currentStack.get('displayNameSimple'),
+        templateName: require('templates/common/modal_popups/revert_patch_upgrade_confirmation')
+      }),
+      onPrimary: function () {
+        self.revertPatchUpgrade(version);
+        this._super();
+      }
+    });
+  },
+
+  /**
+   *
+   * @param {Em.Object} version
+   * @param {Em.Object} currentStack
+   * @returns {Array}
+   */
+  getServicesToBeReverted: function(version, currentStack) {
+    return version.get('stackServices').filter(function(_service) {
+      var originalService = App.Service.find(_service.get('name'));
+      var isOriginal = originalService.get('desiredRepositoryVersionId') === version.get('id')
+      return (originalService.get('isLoaded') && _service.get('isAvailable')) && isOriginal;
+    }).map(function(_service) {
+      return {
+        displayName: _service.get('displayName'),
+        fromVersion: _service.get('latestVersion'),
+        toVersion: currentStack.get('stackServices').findProperty('name', _service.get('name')).get('latestVersion')
+      }
+    });
+  },
+
+  /**
+   *
+   * @param {Em.Object} version
+   * @returns {$.ajax}
+   */
+  revertPatchUpgrade: function (version) {
+    this.set('requestInProgress', true);
+    return App.ajax.send({
+      name: 'admin.upgrade.revert',
+      sender: this,
+      success: 'upgradeSuccessCallback',
+      error: 'upgradeErrorCallback',
+      callback: function () {
+        this.sender.set('requestInProgress', false);
+      },
+      data: {
+        upgradeId: version.get('stackVersion').get('revertUpgradeId'),
+        id: version.get('id'),
+        value: version.get('repositoryVersion'),
+        label: version.get('displayName'),
+        isDowngrade: true
+      }
+    });
+  },
+
+  /**
+   * @param {App.RepositoryVersion} version
+   * @returns {Em.Object}
+   */
+  confirmDiscardRepoVersion: function(version) {
+    var self = this;
+    return App.showConfirmationPopup(function() {
+      self.discardRepoVersion(version);
+    });
+  },
+
+  /**
+   * @param {App.RepositoryVersion} version
+   * @returns {$.ajax}
+   */
+  discardRepoVersion: function(version) {
+    this.set('requestInProgress', true);
+    return App.ajax.send({
+      name: 'admin.stack_versions.discard',
+      sender: this,
+      callback: function () {
+        this.sender.set('requestInProgress', false);
+      },
+      data: {
+        id: version.get('id'),
+        stackName: version.get('stackVersionType'),
+        stackVersion: version.get('stackVersionNumber')
+      },
+    });
+  },
+
+  /**
    * restore last Upgrade data
    * @param {object} lastUpgradeData
    */
   restoreLastUpgrade: function(lastUpgradeData) {
     var self = this;
     var upgradeType = this.get('upgradeMethods').findProperty('type', lastUpgradeData.Upgrade.upgrade_type);
-
+    const isDowngrade = lastUpgradeData.Upgrade.direction === 'DOWNGRADE';
     this.setDBProperties({
+      toVersion: lastUpgradeData.Upgrade.associated_version,
       upgradeId: lastUpgradeData.Upgrade.request_id,
-      isDowngrade: lastUpgradeData.Upgrade.direction === 'DOWNGRADE',
+      isDowngrade,
       upgradeState: lastUpgradeData.Upgrade.request_status,
       upgradeType: lastUpgradeData.Upgrade.upgrade_type,
       isWizardRestricted: upgradeType.get('isWizardRestricted'),
       downgradeAllowed: lastUpgradeData.Upgrade.downgrade_allowed,
       upgradeTypeDisplayName: upgradeType.get('displayName'),
-      failuresTolerance: Em.Object.create({
+      isSuspended: lastUpgradeData.Upgrade.suspended,
+      failuresTolerance: {
         skipComponentFailures: lastUpgradeData.Upgrade.skip_failures,
         skipSCFailures: lastUpgradeData.Upgrade.skip_service_check_failures
-      })
+      }
     });
+    this.initDBProperties();
+    App.set('upgradeState', lastUpgradeData.Upgrade.request_status);
     this.loadRepoVersionsToModel().done(function () {
-      var toVersion = App.RepositoryVersion.find().findProperty('repositoryVersion', lastUpgradeData.Upgrade.to_version);
-      self.setDBProperty('upgradeVersion', toVersion && toVersion.get('displayName'));
-      self.initDBProperties();
-      self.loadUpgradeData(true);
+      var version = App.RepositoryVersion.find().findProperty('repositoryVersion', lastUpgradeData.Upgrade.associated_version);
+      var upgradeVersion = version && version.get('displayName');
+      self.setDBProperty('upgradeVersion', upgradeVersion);
+      self.set('upgradeVersion', upgradeVersion);
     });
   },
 
@@ -1932,6 +2303,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
 
     output += '<table style="text-align: left;"><thead><tr>' +
         '<th>' + Em.I18n.t('popup.clusterCheck.Upgrade.configsMerge.configType') + '</th>' +
+        '<th>' + Em.I18n.t('popup.clusterCheck.Upgrade.configsMerge.serviceName') + '</th>' +
         '<th>' + Em.I18n.t('popup.clusterCheck.Upgrade.configsMerge.propertyName') + '</th>' +
         '<th>' + Em.I18n.t('popup.clusterCheck.Upgrade.configsMerge.currentValue') + '</th>' +
         '<th>' + Em.I18n.t('popup.clusterCheck.Upgrade.configsMerge.recommendedValue') + '</th>' +
@@ -1941,6 +2313,7 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     configs.context.forEach(function (config) {
       output += '<tr>' +
           '<td>' + config.type + '</td>' +
+          '<td>' + App.format.role(config.serviceName) + '</td>' +
           '<td>' + config.name + '</td>' +
           '<td>' + config.currentValue + '</td>' +
           '<td>' + config.recommendedValue + '</td>' +
@@ -1954,41 +2327,48 @@ App.MainAdminStackAndUpgradeController = Em.Controller.extend(App.LocalStorage, 
     newWindow.focus();
   },
 
-  /**
-   * load version for services to display on Choose Services page
-   * should load from VersionDefinition endpoint
-   */
-  loadServiceVersionFromVersionDefinitions: function () {
-    return App.ajax.send({
-      name: 'cluster.load_current_repo_stack_services',
-      sender: this,
-      data: {
-        clusterName: App.get('clusterName')
-      },
-      success: 'loadServiceVersionFromVersionDefinitionsSuccessCallback',
-      error: 'loadServiceVersionFromVersionDefinitionsErrorCallback'
-    });
-  },
-
   serviceVersionsMap: {},
 
   /**
-   * @param {object|null} jsonData
+   * load version for services to display on admin service page
+   * it should be fetched from the repo which corresponds to the desiredRepositoryVersionId of the service
    */
-  loadServiceVersionFromVersionDefinitionsSuccessCallback: function (jsonData) {
-    var rv = Em.getWithDefault(jsonData, 'items', []).filter(function(i) {
-      return Em.getWithDefault(i, 'ClusterStackVersions.stack', null) === App.get('currentStackName') &&
-       Em.getWithDefault(i, 'ClusterStackVersions.version', null) === App.get('currentStackVersionNumber');
-    })[0];
-    var map = this.get('serviceVersionsMap');
-    var stackServices = Em.getWithDefault(rv || {}, 'repository_versions.0.RepositoryVersions.stack_services', false);
-    if (stackServices) {
-      stackServices.forEach(function (item) {
-        map[item.name] = item.versions[0];
-      });
+  getServiceVersionFromRepo: function () {
+    if (!App.router.get('clusterController.isLoaded') || !App.router.get('clusterController.isStackVersionsLoaded')) {
+      return;
     }
-  },
 
-  loadServiceVersionFromVersionDefinitionsErrorCallback: function (request, ajaxOptions, error) {}
+    var currentStackName = App.get('currentStackName');
+    var currentStackVersionNumber = App.get('currentStackVersionNumber');
+    var map = this.get('serviceVersionsMap');
+
+    var stackServices = App.StackService.find().filter(function (service) {
+      return service.get('stackName') === currentStackName && service.get('stackVersion') === currentStackVersionNumber;
+    });
+
+    stackServices.forEach(function (service) {
+      var serviceName = service.get('serviceName');
+
+      var installedService = App.Service.find().findProperty('serviceName', serviceName);
+      var desiredRepositoryVersionId = installedService ? installedService.get('desiredRepositoryVersionId') : null;
+      var serviceVersion = "";
+      var currentStackRepoVersions = App.RepositoryVersion.find().filter(function (repoVersion) {
+        return repoVersion.get('stackVersionType') === currentStackName && repoVersion.get('stackVersionNumber') === currentStackVersionNumber;
+      });
+
+      //Get service version from the current standard repo for stack services which are not installed else search by id
+      if(!desiredRepositoryVersionId) {
+        currentStackRepoVersions.forEach(function(repoVersion) {
+          if(repoVersion.get('isCurrent') && repoVersion.get('isStandard')) {
+            serviceVersion = repoVersion.get('stackServices').findProperty('name', serviceName).get('latestVersion');
+          }
+        })
+      } else {
+        var repoVersion = currentStackRepoVersions.findProperty('id', desiredRepositoryVersionId);
+        serviceVersion = repoVersion.get('stackServices').findProperty('name', serviceName).get('latestVersion');
+      }
+      map[serviceName] = serviceVersion;
+    });
+  }.observes('App.router.clusterController.isLoaded', 'App.router.clusterController.isStackVersionsLoaded')
 
 });

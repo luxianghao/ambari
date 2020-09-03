@@ -21,6 +21,10 @@ var App = require('app');
 module.exports = App.WizardRoute.extend({
   route: '/highAvailability/RangerAdmin/enable',
 
+  breadcrumbs: {
+    label: Em.I18n.t('admin.ra_highAvailability.wizard.header')
+  },
+
   enter: function (router) {
     var rAHighAvailabilityWizardController = router.get('rAHighAvailabilityWizardController');
     rAHighAvailabilityWizardController.dataLoading().done(function () {
@@ -130,6 +134,8 @@ module.exports = App.WizardRoute.extend({
       controller.dataLoading().done(function () {
         controller.setCurrentStep('3');
         controller.loadAllPriorSteps().done(function () {
+          var stepController = router.get('rAHighAvailabilityWizardStep3Controller');
+          stepController.set('wizardController', controller);
           controller.connectOutlet('rAHighAvailabilityWizardStep3', controller.get('content'));
         });
       });
@@ -150,6 +156,8 @@ module.exports = App.WizardRoute.extend({
         controller.setCurrentStep('4');
         controller.setLowerStepsDisable(4);
         controller.loadAllPriorSteps().done(function () {
+          var stepController = router.get('rAHighAvailabilityWizardStep4Controller');
+          stepController.set('wizardController', controller);
           controller.connectOutlet('rAHighAvailabilityWizardStep4', controller.get('content'));
         });
       });

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,6 +17,9 @@
  */
 package org.apache.ambari.server.orm.entities;
 
+import java.util.Collection;
+import java.util.List;
+
 import javax.persistence.CascadeType;
 import javax.persistence.Column;
 import javax.persistence.Entity;
@@ -30,8 +33,6 @@ import javax.persistence.NamedQuery;
 import javax.persistence.OneToMany;
 import javax.persistence.Table;
 import javax.persistence.TableGenerator;
-import java.util.Collection;
-import java.util.List;
 
 @Table(name = "requestschedule")
 @Entity
@@ -68,6 +69,12 @@ public class RequestScheduleEntity {
 
   @Column(name = "batch_toleration_limit")
   private Integer batchTolerationLimit;
+
+  @Column(name = "batch_toleration_limit_per_batch")
+  private Integer batchTolerationLimitPerBatch;
+
+  @Column(name = "pause_after_first_batch")
+  private Boolean pauseAfterFirstBatch;
 
   @Column(name = "authenticated_user_id")
   private Integer authenticatedUserId;
@@ -325,5 +332,21 @@ public class RequestScheduleEntity {
     int result = (int) (scheduleId ^ (scheduleId >>> 32));
     result = 31 * result + clusterId.hashCode();
     return result;
+  }
+
+  public Integer getBatchTolerationLimitPerBatch() {
+    return batchTolerationLimitPerBatch;
+  }
+
+  public void setBatchTolerationLimitPerBatch(Integer batchTolerationLimitPerBatch) {
+    this.batchTolerationLimitPerBatch = batchTolerationLimitPerBatch;
+  }
+
+  public Boolean isPauseAfterFirstBatch() {
+    return pauseAfterFirstBatch;
+  }
+
+  public void setPauseAfterFirstBatch(Boolean pauseAfterFirstBatch) {
+    this.pauseAfterFirstBatch = pauseAfterFirstBatch;
   }
 }

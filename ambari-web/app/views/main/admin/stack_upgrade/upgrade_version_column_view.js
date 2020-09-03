@@ -17,87 +17,96 @@
  */
 
 var App = require('app');
-var stringUtils = require('utils/string_utils');
 
 App.UpgradeVersionColumnView = App.UpgradeVersionBoxView.extend({
   templateName: require('templates/main/admin/stack_upgrade/upgrade_version_column'),
   isVersionColumnView: true,
-  classNames: ['version-column', 'col-md-4'],
+  classNames: ['version-column', 'version'],
+
+  /**
+   * Indicates whether block for version type should be displayed.
+   * True if any of available versions is of PATCH, MAINT or SERVICE type
+   * @type {Boolean}
+   */
+  displayVersionTypeBlock: false,
+
+  currentLabelClass: 'btn btn-primary',
 
   didInsertElement: function () {
     App.tooltip($('.out-of-sync-badge'), {title: Em.I18n.t('hosts.host.stackVersions.status.out_of_sync')});
+    App.tooltip($('.not-upgradable'));
     if (!this.get('content.isCompatible')) {
       App.tooltip(this.$(".repo-version-tooltip"), {
         title: Em.I18n.t('admin.stackVersions.version.noCompatible.tooltip')
       });
     }
-    //set the width, height of each version colum dynamically
-    var widthFactor = App.RepositoryVersion.find().get('length') > 3 ? 0.18: 0.31;
-    $('.version-column').width($('.versions-slides').width() * widthFactor);
-    var height = App.Service.find().get('length') > 10 ? ((App.Service.find().get('length') - 10) * 40 + 500) : 500;
-    $('.version-column').height(height);
-
-    // fix the line up minor diff issue in FireFox
-    if ($.browser.mozilla) {
-      $('.line-separator').css('top', '-6px');
-      $('.line-separator-bottom').css('top', '-4px');
-    }
+    this.adjustColumnWidth();
   },
 
-  services: function() {
-    var repoRecord = App.RepositoryVersion.find(this.get('content.id'));
-    var originalServices = repoRecord.get('stackServices');
+  adjustColumnWidth: function () {
+    //set the width of each version column dynamically
+    const reposCount = App.RepositoryVersion.find().filterProperty('isVisible').get('length'),
+      widthFactor = reposCount > 3 ? 0.19 : 0.31,
+      columnBorderWidth = 1, // from ambari-web/app/styles/stack_versions.less
+      columnPadding = 5, // from ambari-web/app/styles/stack_versions.less
+      columnWrapperPadding = 7, // from ambari-web/app/styles/stack_versions.less
+      width = $('.versions-slides').width() * widthFactor + 2 * (columnBorderWidth + columnPadding + columnWrapperPadding);
+    $('.version-column.version').width(width);
+    $('.versions-slides-bar').width(width * reposCount + columnWrapperPadding);
+  }.observes('parentView.repoVersions.@each.isVisible'),
+
+  services: function () {
+    const originalServices = this.get('content.stackServices');
     // sort the services in the order the same as service menu
-    var sorted = App.Service.find().map(function (service) {
-      var latestVersion = '';
-      if (originalServices.someProperty('name', service.get('serviceName'))){
-        latestVersion = originalServices.filterProperty('name', service.get('serviceName'))[0].get('latestVersion');
+    return App.Service.find().map(service => {
+
+      const stackService = originalServices.findProperty('name', service.get('serviceName')),
+        isAvailable = this.isStackServiceAvailable(stackService);
+      let notUpgradable = false,
+        notUpgradableTitle = '';
+      if (!stackService) {
+        console.error(`${stackService} definition does not exist in the stack.`);
+        notUpgradable = true;
+        notUpgradableTitle = Em.I18n.t('admin.stackVersions.version.service.notSupported');
+      } else {
+        notUpgradable = this.getNotUpgradable(isAvailable, stackService.get('isUpgradable'));
+        if (notUpgradable) {
+          notUpgradableTitle = Em.I18n.t('admin.stackVersions.version.service.notUpgradable');
+        }
       }
+
       return Em.Object.create({
         displayName: service.get('displayName'),
         name: service.get('serviceName'),
-        latestVersion: latestVersion,
-        isVersionInvisible: latestVersion == false
+        latestVersion: stackService ? stackService.get('latestVersion') : '',
+        isVersionInvisible: !stackService,
+        notUpgradable,
+        notUpgradableTitle,
+        isAvailable
       });
     });
-    return sorted;
   }.property(),
 
+  getNotUpgradable: function (isAvailable, isUpgradable) {
+    return this.get('content.isMaint') && !this.get('isUpgrading') && this.get('content.status') !== 'CURRENT' && isAvailable && !isUpgradable;
+  },
+
+
   /**
-   * map of properties which correspond to particular state of Upgrade version
-   * @type {object}
+   * @param {Em.Object} stackService
+   * @returns {boolean}
    */
-  statePropertiesMap: {
-    'CURRENT': {
-      isLabel: true,
-      text: Em.I18n.t('common.current'),
-      class: 'label label-success'
-    },
-    'INIT': {
-      isButton: true,
-      text: Em.I18n.t('common.install'),
-      action: 'installRepoVersionConfirmation'
-    },
-    'LOADING': {
-      isSpinner: true,
-      class: 'spinner'
-    },
-    'INSTALLING': {
-      iconClass: 'glyphicon glyphicon-cog',
-      isLink: true,
-      text: Em.I18n.t('hosts.host.stackVersions.status.installing'),
-      action: 'showProgressPopup'
-    },
-    'INSTALLED': {
-      iconClass: 'glyphicon glyphicon-ok',
-      isLink: true,
-      text: Em.I18n.t('common.installed'),
-      action: null
-    },
-    'SUSPENDED': {
-      isButton: true,
-      text: Em.I18n.t('admin.stackUpgrade.dialog.resume'),
-      action: 'resumeUpgrade'
+  isStackServiceAvailable: function (stackService) {
+    var self = this;
+    if (!stackService) {
+      return false;
+    }
+    if (this.get('content.isCurrent')) {
+      var originalService = App.Service.find(stackService.get('name'));
+      return stackService.get('isAvailable') && originalService.get('desiredRepositoryVersionId') === this.get('content.id');
+    }
+    else {
+      return stackService.get('isAvailable')
     }
   },
 
@@ -121,4 +130,3 @@ App.UpgradeVersionColumnView = App.UpgradeVersionBoxView.extend({
     });
   }
 });
-

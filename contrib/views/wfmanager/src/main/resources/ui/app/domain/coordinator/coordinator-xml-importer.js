@@ -16,54 +16,76 @@
 */
 import Ember from 'ember';
 import { Coordinator } from '../coordinator/coordinator';
+import SchemaVersions from '../schema-versions';
+import CommonUtils from "../../utils/common-utils";
+import {SLAMapper} from "../../domain/mapping-utils";
+import {SlaInfo} from '../../domain/sla-info';
 
 var CoordinatorXmlImporter= Ember.Object.extend({
   x2js : new X2JS(),
+  schemaVersions: SchemaVersions.create({}),
+  slaMapper: SLAMapper.create({}),
   importCoordinator (xml){
     var coordinatorJson = this.get("x2js").xml_str2json(xml);
     return this.processCoordinatorXML(coordinatorJson);
   },
   createNewCoordinator(){
     return Coordinator.create({
-      workflow : {
-        appPath : '',
-        configuration :{
-          property : Ember.A([])
-        }
-      },
-      frequency : {
-        type : '',
-        value : ''
-      },
-      start : {
-        value : '',
-        displayValue : '',
-        type : 'date'
-      },
-      end : {
-        value : '',
-        displayValue : '',
-        type : 'date'
-      },
-      timezone : '',
-      datasets : Ember.A([]),
-      dataInputs : Ember.A([]),
-      dataOutputs : Ember.A([]),
-      dataInputType : 'simple',
       parameters : {
         configuration :{
           property : Ember.A([])
         }
       },
-      controls : Ember.A([])
+      controls : Ember.A([]),
+      datasets : Ember.A([]),
+      dataInputs : Ember.A([]),
+      inputLogic : null,
+      dataOutputs : Ember.A([]),
+      workflow : {
+        appPath : undefined,
+        configuration :{
+          property : Ember.A([])
+        }
+      },
+      frequency : {
+        type : undefined,
+        value : undefined
+      },
+      start : {
+        value : undefined,
+        displayValue : undefined,
+        type : 'date'
+      },
+      end : {
+        value : undefined,
+        displayValue : undefined,
+        type : 'date'
+      },
+      timezone : 'UTC',
+      dataInputType : 'simple',
+      slaInfo : SlaInfo.create({}),
+      schemaVersions : {
+        coordinatorVersion : this.get('schemaVersions').getDefaultVersion('coordinator')
+      }
     });
   },
   processCoordinatorXML(coordinatorJson){
+    var errors=Ember.A([]);
+    if (!coordinatorJson || !coordinatorJson["coordinator-app"]){
+      errors.push({message: "Could not import invalid coordinator",dismissable:true});
+      return {coordinator:null, errors: errors};
+    }
     var coordinatorApp = coordinatorJson["coordinator-app"];
     var coordinator = this.createNewCoordinator();
     coordinator.name = coordinatorApp._name;
+    var coordinatorVersion=CommonUtils.extractSchemaVersion(coordinatorApp._xmlns);
+    var maxCoordinatorVersion = Math.max.apply(Math, this.get('schemaVersions').getSupportedVersions('coordinator'));
+    if (coordinatorVersion > maxCoordinatorVersion) {
+      errors.push({message: "Unsupported coordinator version - " + coordinatorVersion});
+    }
+    coordinator.schemaVersions.coordinatorVersion = coordinatorVersion;
     var frequency = coordinatorApp._frequency;
-    if(frequency.startsWith('${coord:')){
+    if(CommonUtils.startsWith(frequency,'${coord:')){
       coordinator.frequency.type = frequency.substring(frequency.indexOf(':')+1, frequency.indexOf('('));
       coordinator.frequency.value = frequency.substring(frequency.indexOf('(')+1, frequency.indexOf(')'));
     }else{
@@ -77,16 +99,23 @@ var CoordinatorXmlImporter= Ember.Object.extend({
     if(coordinatorApp['input-events'] && coordinatorApp['input-events']['data-in']){
       coordinator.dataInputType = 'simple';
       this.extractInputEvents(coordinatorApp, coordinator);
-    }else{
+    }else if(coordinatorApp['input-events']){
       coordinator.dataInputType = 'logical';
       coordinator.supportsConditionalDataInput = true;
       this.extractLogicalInputEvents(coordinatorApp, coordinator);
+    }
+    if(coordinatorApp['input-logic']){
+      this.extractInputLogic(coordinatorApp, coordinator);
     }
     this.extractOutputEvents(coordinatorApp, coordinator);
     this.extractAction(coordinatorApp, coordinator);
     this.extractParameters(coordinatorApp, coordinator);
     this.extractControls(coordinatorApp, coordinator);
-    return coordinator;
+    if (coordinatorApp.action.info && coordinatorApp.action.info.__prefix==="sla") {
+      coordinator.slaEnabled=true;
+      this.get("slaMapper").handleImport(coordinator, coordinatorApp.action.info, "slaInfo");
+    }
+    return {coordinator: coordinator, errors: errors};
   },
   extractDateField(value){
     var dateField = {};
@@ -110,7 +139,7 @@ var CoordinatorXmlImporter= Ember.Object.extend({
       timezone : dataset._timezone
     };
     var frequency = dataset._frequency;
-    if(frequency.startsWith('${coord:')){
+    if(CommonUtils.startsWith(frequency,'${coord:')){
       dataSetJson.frequency.type = frequency.substring(frequency.indexOf(':')+1, frequency.indexOf('('));
       dataSetJson.frequency.value = frequency.substring(frequency.indexOf('(')+1, frequency.indexOf(')'));
     }else{
@@ -118,8 +147,11 @@ var CoordinatorXmlImporter= Ember.Object.extend({
       dataSetJson.frequency.value = frequency;
     }
     dataSetJson["uriTemplate"] = dataset['uri-template'];
-    if (dataset['done-flag']){
+    if (dataset.hasOwnProperty('done-flag')){
       dataSetJson.doneFlag = dataset['done-flag'];
+      dataSetJson.doneFlagType = "custom";
+    } else {
+      dataSetJson.doneFlagType = "default";
     }
     return dataSetJson;
   },
@@ -169,6 +201,15 @@ var CoordinatorXmlImporter= Ember.Object.extend({
     var conditionJson = coordinatorApp['input-events'];
     var condition = {};
     coordinator.conditionalDataInput = condition;
+    Object.keys(conditionJson).forEach((key)=>{
+      condition.operator = key;
+      this.parseConditionTree(conditionJson[key], condition);
+    }, this);
+  },
+  extractInputLogic(coordinatorApp, coordinator){
+    var conditionJson = coordinatorApp['input-logic'];
+    var condition = {};
+    coordinator.inputLogic = condition;
     Object.keys(conditionJson).forEach((key)=>{
       condition.operator = key;
       this.parseConditionTree(conditionJson[key], condition);

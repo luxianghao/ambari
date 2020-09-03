@@ -60,12 +60,12 @@ App.ServiceConfig = Ember.Object.extend({
 
   setActiveProperties: function() {
     Em.run.once(this, 'setActivePropertiesOnce');
-  }.observes('configs.@each.isActive', 'configs.@each.isRequiredByAgent', 'configs.@each.value'),
+  }.observes('configs.@each.isActive', 'configs.@each.isRequiredByAgent', 'configs.@each.value', 'configs.@each.isUndefinedLabel'),
 
   setActivePropertiesOnce: function() {
     if (this.get('isDestroyed')) return false;
     var activeProperties = this.get('configs').filter(function(c) {
-      return c.get('isActive') && (c.get('isRequiredByAgent') || c.get('isRequired'));
+      return (c.get('isActive') || c.get('isUndefinedLabel')) && (c.get('isRequiredByAgent') || c.get('isRequired'));
     });
     this.set('activeProperties', activeProperties);
   },
@@ -87,7 +87,7 @@ App.ServiceConfig = Ember.Object.extend({
 
   setConfigsWithErrorsOnce: function() {
     var configsWithErrors = this.get('activeProperties').filter(function(c) {
-      return !c.get('isValid') || !c.get('isValidOverride');
+      return (!c.get('isValid') || !c.get('isValidOverride'));
     });
     this.set('configsWithErrors', configsWithErrors);
   },
@@ -96,7 +96,7 @@ App.ServiceConfig = Ember.Object.extend({
     this.get('configCategories').setEach('errorCount', 0);
     this.get('configsWithErrors').forEach(function(c) {
       //configurations with widget shouldn't affect advanced category error counter
-      if (this.get('configCategoriesMap')[c.get('category')] && !c.get('widget')) {
+      if (this.get('configCategoriesMap')[c.get('category')] && !c.get('isInDefaultTheme')) {
         this.get('configCategoriesMap')[c.get('category')].incrementProperty('errorCount');
       }
     }, this);
@@ -158,6 +158,7 @@ App.ServiceConfig = Ember.Object.extend({
     this._super();
     this.set('dependentServiceNames', App.StackService.find(this.get('serviceName')).get('dependentServiceNames') || []);
     this.observeForeignKeys();
+    this.setActiveProperties();
   },
 
   hasConfigIssues: Em.computed.someBy('activeProperties', 'hasIssues', true)

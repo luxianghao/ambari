@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,152 +17,121 @@
  */
 package org.apache.ambari.server.metrics.system.impl;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.events.publishers.STOMPUpdatePublisher;
+import org.apache.ambari.server.metrics.system.MetricsService;
+import org.apache.ambari.server.metrics.system.MetricsSink;
+import org.apache.ambari.server.metrics.system.MetricsSource;
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
-import org.apache.ambari.server.controller.AmbariManagementController;
-import org.apache.ambari.server.controller.internal.AbstractControllerResourceProvider;
-import org.apache.ambari.server.controller.internal.ServiceConfigVersionResourceProvider;
-import org.apache.ambari.server.controller.spi.Predicate;
-import org.apache.ambari.server.controller.spi.Request;
-import org.apache.ambari.server.controller.spi.Resource;
-import org.apache.ambari.server.controller.spi.ResourceProvider;
-import org.apache.ambari.server.controller.utilities.PredicateBuilder;
-import org.apache.ambari.server.controller.utilities.PropertyHelper;
-import org.apache.ambari.server.metrics.system.AmbariMetricSink;
-import org.apache.ambari.server.metrics.system.MetricsService;
-import org.apache.ambari.server.security.authorization.internal.InternalAuthenticationToken;
-import org.apache.ambari.server.state.Cluster;
-import org.apache.ambari.server.state.Clusters;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.security.core.context.SecurityContextHolder;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 @Singleton
 public class MetricsServiceImpl implements MetricsService {
-  private static Logger LOG = LoggerFactory.getLogger(MetricsServiceImpl.class);
-  private Map<String, AbstractMetricsSource> sources = new HashMap<>();
-  private AmbariMetricSink sink = new AmbariMetricSinkImpl();
-  private String collectorUri = "";
-  private String collectorProtocol = "";
-  private Configuration configuration;
+  private static final Logger LOG = LoggerFactory.getLogger(MetricsServiceImpl.class);
+  private static Map<String, MetricsSource> sources = new HashMap<>();
+  private static MetricsSink sink = null;
+  private MetricsConfiguration configuration = null;
 
   @Inject
   AmbariManagementController amc;
+  @Inject
+  STOMPUpdatePublisher STOMPUpdatePublisher;
 
   @Override
-  public void init() {
+  public void start() {
+    LOG.info("********* Initializing AmbariServer Metrics Service **********");
     try {
-      configuration = new Configuration();
-      if (collectorUri.isEmpty() || collectorProtocol.isEmpty()) {
-        setCollectorUri();
+      configuration = MetricsConfiguration.getMetricsConfiguration();
+      if (configuration == null) {
+        return;
       }
-      configureSourceAndSink();
-    } catch (Exception e) {
-      LOG.info("Error initializing MetricsService", e);
-    }
+      sink = new AmbariMetricSinkImpl(amc);
+      initializeMetricsSink();
+      initializeMetricSources();
 
-  }
-  @Override
-  public void run() {
-    final ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
-    for (Map.Entry<String, AbstractMetricsSource> entry : sources.entrySet()) {
-      publishMetrics(executor, entry);
-    }
-  }
-
-
-  private void setCollectorUri() {
-    InternalAuthenticationToken authenticationToken = new InternalAuthenticationToken("admin");
-    authenticationToken.setAuthenticated(true);
-    SecurityContextHolder.getContext().setAuthentication(authenticationToken);
-    Clusters clusters = amc.getClusters();
-    for (Map.Entry<String, Cluster> kv : clusters.getClusters().entrySet()) {
-      String clusterName = kv.getKey();
-      Resource.Type type = Resource.Type.ServiceConfigVersion;
-
-      Set<String> propertyIds = new HashSet<String>();
-      propertyIds.add(ServiceConfigVersionResourceProvider.SERVICE_CONFIG_VERSION_CONFIGURATIONS_PROPERTY_ID);
-
-      Predicate predicate = new PredicateBuilder().property(
-        ServiceConfigVersionResourceProvider.SERVICE_CONFIG_VERSION_CLUSTER_NAME_PROPERTY_ID).equals(clusterName).and().property(
-        ServiceConfigVersionResourceProvider.SERVICE_CONFIG_VERSION_SERVICE_NAME_PROPERTY_ID).equals("AMBARI_METRICS").and().property(
-        ServiceConfigVersionResourceProvider.SERVICE_CONFIG_VERSION_IS_CURRENT_PROPERTY_ID).equals("true").toPredicate();
-
-      Request request = PropertyHelper.getReadRequest(propertyIds);
-
-      ResourceProvider provider = AbstractControllerResourceProvider.getResourceProvider(
-        type,
-        PropertyHelper.getPropertyIds(type),
-        PropertyHelper.getKeyPropertyIds(type),
-        amc);
-
-      try {
-        Set<Resource> resources = provider.getResources(request, predicate);
-
-        // get collector uri
-        for (Resource resource : resources) {
-          if (resource != null) {
-            ArrayList<LinkedHashMap<Object, Object>> configs = (ArrayList<LinkedHashMap<Object, Object>>)
-              resource.getPropertyValue(ServiceConfigVersionResourceProvider.SERVICE_CONFIG_VERSION_CONFIGURATIONS_PROPERTY_ID);
-            for (LinkedHashMap<Object, Object> config : configs) {
-              if (config != null && config.get("type").equals("ams-site")) {
-                TreeMap<Object, Object> properties = (TreeMap<Object, Object>) config.get("properties");
-                collectorUri = (String) properties.get("timeline.metrics.service.webapp.address");
-                String which_protocol = (String) properties.get("timeline.metrics.service.http.policy");
-                collectorProtocol = which_protocol.equals("HTTP_ONLY") ? "http" : "https";
-                break;
+      if (!sink.isInitialized()) {
+        // If Sink is not initialized (say, cluster has not yet been deployed or AMS had not been installed)
+        // Service will check for every 5 mins.
+        Executors.newScheduledThreadPool(1).scheduleWithFixedDelay(new Runnable() {
+          @Override
+          public void run() {
+            if (!sink.isInitialized()) {
+              LOG.info("Attempting to initialize metrics sink");
+              initializeMetricsSink();
+              if (sink.isInitialized()) {
+                LOG.info("Metric sink initialization successful");
               }
             }
           }
+        }, 5, 5, TimeUnit.MINUTES);
+      }
+    } catch (Exception e) {
+      LOG.info("Unable to initialize MetricsService : ", e.getMessage());
+    }
+  }
+
+  private void initializeMetricsSink() {
+
+    LOG.info("********* Configuring Metric Sink **********");
+    sink.init(configuration);
+  }
+
+  private void initializeMetricSources() {
+    try {
+
+      LOG.info("********* Configuring Metric Sources **********");
+      String commaSeparatedSources = configuration.getProperty("metric.sources");
+
+      if (StringUtils.isEmpty(commaSeparatedSources)) {
+        LOG.info("No metric sources configured.");
+        return;
+      }
+
+      String[] sourceNames = commaSeparatedSources.split(",");
+      for (String sourceName : sourceNames) {
+
+        if (StringUtils.isEmpty(sourceName)) {
+          continue;
         }
-      } catch (Exception e) {
-        LOG.info("Throwing exception when retrieving Collector URI", e);
-      }
-    }
-  }
+        sourceName = sourceName.trim();
 
-  private void configureSourceAndSink() {
-    try {
-      LOG.info("********* Configuring Ambari Metrics Sink and Source**********");
-      int frequency = Integer.parseInt(configuration.getProperty("sink.frequency", "10")); // default value 10
-      sink.init(collectorProtocol, collectorUri, frequency);
-      String[] sourceNames = configuration.getProperty("metrics.sources").split(",");
-      for (String sourceName: sourceNames) {
         String className = configuration.getProperty("source." + sourceName + ".class");
-        Class t = Class.forName(className);
-        AbstractMetricsSource src = (AbstractMetricsSource)t.newInstance();
-        src.init(sink);
+        Class sourceClass;
+        try {
+          sourceClass = Class.forName(className);
+        } catch (ClassNotFoundException ex) {
+          LOG.info("Source class not found for source name :" + sourceName);
+          continue;
+        }
+        AbstractMetricsSource src = (AbstractMetricsSource) sourceClass.newInstance();
+        src.init(MetricsConfiguration.getSubsetConfiguration(configuration, "source." + sourceName + "."), sink);
         sources.put(sourceName, src);
+        if (src instanceof StompEventsMetricsSource) {
+          STOMPUpdatePublisher.registerAPI(src);
+          STOMPUpdatePublisher.registerAgent(src);
+        }
+        src.start();
       }
-    }
-    catch (Exception e) {
-      LOG.info("Throwing exception when registering metric sink and source", e);
-    }
-  }
-
-  private void publishMetrics(ScheduledExecutorService executor, Map.Entry<String, AbstractMetricsSource> entry) {
-    String className = entry.getKey();
-    AbstractMetricsSource source = entry.getValue();
-    String interval = "source." + className + ".interval";
-    int duration = Integer.parseInt(configuration.getProperty(interval, "5")); // default value 5
-    try {
-      executor.scheduleWithFixedDelay(source, 0, duration, TimeUnit.SECONDS);
 
     } catch (Exception e) {
-      LOG.info("Throwing exception when failing scheduling source", e);
+      LOG.error("Error when configuring metric sink and source", e);
     }
+  }
+
+  public static MetricsSource getSource(String type) {
+    return sources.get(type);
+  }
+
+  public static MetricsSink getSink() {
+    return sink;
   }
 }

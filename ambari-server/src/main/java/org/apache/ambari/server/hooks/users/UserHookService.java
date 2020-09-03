@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -139,7 +139,7 @@ public class UserHookService implements HookService {
       String stageContextText = String.format(POST_USER_CREATION_REQUEST_CONTEXT, ctx.getUserGroups().size());
 
       Stage stage = stageFactory.createNew(requestStageContainer.getId(), configuration.getServerTempDir() + File.pathSeparatorChar + requestStageContainer.getId(), clsData.getClusterName(),
-          clsData.getClusterId(), stageContextText, "{}", "{}", "{}");
+          clsData.getClusterId(), stageContextText, "{}", "{}");
       stage.setStageId(requestStageContainer.getLastStageId());
 
       ServiceComponentHostServerActionEvent serverActionEvent = new ServiceComponentHostServerActionEvent("ambari-server-host", System.currentTimeMillis());
@@ -170,7 +170,9 @@ public class UserHookService implements HookService {
 
     commandParams.put(UserHookParams.CMD_HDFS_KEYTAB.param(), clusterData.getKeytab());
     commandParams.put(UserHookParams.CMD_HDFS_PRINCIPAL.param(), clusterData.getPrincipal());
+    commandParams.put(UserHookParams.CMD_HDFS_USER.param(), clusterData.getHdfsUser());
     commandParams.put(UserHookParams.CMD_INPUT_FILE.param(), generateInputFileName());
+
 
     commandParams.put(UserHookParams.PAYLOAD.param(), objectMapper.writeValueAsString(context.getUserGroups()));
 
@@ -228,14 +230,15 @@ public class UserHookService implements HookService {
         break;
     }
 
-    return new ClusterData(cluster.getClusterName(), cluster.getClusterId(), cluster.getSecurityType().name(), principal, keyTab);
+
+    return new ClusterData(cluster.getClusterName(), cluster.getClusterId(), cluster.getSecurityType().name(), principal, keyTab, getHdfsUser(cluster));
   }
 
-  private void getSecurityData(Configuration configuraiton) {
-    //principal
-
-    //keytab
+  private String getHdfsUser(Cluster cluster) {
+    String hdfsUser = cluster.getDesiredConfigByType("hadoop-env").getProperties().get("hdfs_user");
+    return hdfsUser;
   }
+
 
   /**
    * Local representation of cluster data.
@@ -247,12 +250,15 @@ public class UserHookService implements HookService {
     private String principal;
     private String keytab;
 
-    public ClusterData(String clusterName, Long clusterId, String securityType, String principal, String keytab) {
+    private String hdfsUser;
+
+    public ClusterData(String clusterName, Long clusterId, String securityType, String principal, String keytab, String hdfsUser) {
       this.clusterName = clusterName;
       this.clusterId = clusterId;
       this.securityType = securityType;
       this.principal = principal;
       this.keytab = keytab;
+      this.hdfsUser = hdfsUser;
     }
 
     public String getClusterName() {
@@ -274,6 +280,9 @@ public class UserHookService implements HookService {
     public String getKeytab() {
       return keytab;
     }
-  }
 
+    public String getHdfsUser() {
+      return hdfsUser;
+    }
+  }
 }

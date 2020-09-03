@@ -19,8 +19,8 @@ limitations under the License.
 Ambari Agent
 
 """
-__all__ = ["is_lzo_enabled", "should_install_phoenix", "should_install_ams_collector", "should_install_ams_grafana",
-           "should_install_mysql", "should_install_mysql_connector", "should_install_ranger_tagsync"]
+__all__ = ["should_install_phoenix", "should_install_ams_collector", "should_install_ams_grafana",
+           "should_install_mysql", "should_install_ranger_tagsync"]
 
 import os
 from resource_management.libraries.script import Script
@@ -44,12 +44,6 @@ def _has_local_components(config, components, indicator_function = any):
 def _has_applicable_local_component(config, components):
   return _has_local_components(config, components, any)
 
-def should_install_lzo():
-  config = Script.get_config()
-  io_compression_codecs = default("/configurations/core-site/io.compression.codecs", None)
-  lzo_enabled = io_compression_codecs is not None and "com.hadoop.compression.lzo" in io_compression_codecs.lower()
-  return lzo_enabled
-
 def should_install_phoenix():
   phoenix_hosts = default('/clusterHostInfo/phoenix_query_server_hosts', [])
   phoenix_enabled = default('/configurations/hbase-env/phoenix_sql_enabled', False)
@@ -70,7 +64,7 @@ def should_install_infra_solr():
 
 def should_install_infra_solr_client():
   config = Script.get_config()
-  return _has_applicable_local_component(config, ['INFRA_SOLR_CLIENT', 'ATLAS_SERVER', 'RANGER_ADMIN'])
+  return _has_applicable_local_component(config, ['INFRA_SOLR_CLIENT', 'ATLAS_SERVER', 'RANGER_ADMIN', 'LOGSEARCH_SERVER'])
 
 def should_install_logsearch_portal():
   config = Script.get_config()
@@ -86,8 +80,13 @@ def should_install_mysql():
   return _has_applicable_local_component(config, "MYSQL_SERVER")
 
 def should_install_mysql_connector():
-  mysql_jdbc_driver_jar = "/usr/share/java/mysql-connector-java.jar"
-  return not os.path.exists(mysql_jdbc_driver_jar)
+  config = Script.get_config()
+  hive_database = config['configurations']['hive-env']['hive_database']
+  hive_use_existing_db = hive_database.startswith('Existing')
+
+  if hive_use_existing_db:
+    return False
+  return _has_applicable_local_component(config, ["MYSQL_SERVER", "HIVE_METASTORE", "HIVE_SERVER", "HIVE_SERVER_INTERACTIVE"])
 
 def should_install_hive_atlas():
   atlas_hosts = default('/clusterHostInfo/atlas_server_hosts', [])
@@ -96,7 +95,7 @@ def should_install_hive_atlas():
 
 def should_install_falcon_atlas_hook():
   config = Script.get_config()
-  stack_version_unformatted = config['hostLevelParams']['stack_version']
+  stack_version_unformatted = config['clusterLevelParams']['stack_version']
   stack_version_formatted = format_stack_version(stack_version_unformatted)
   if check_stack_feature(StackFeature.FALCON_ATLAS_SUPPORT_2_3, stack_version_formatted) \
       or check_stack_feature(StackFeature.FALCON_ATLAS_SUPPORT, stack_version_formatted):

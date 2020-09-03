@@ -15,23 +15,23 @@
    limitations under the License.
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/maven-v4_0_0.xsd">
   <parent>
     <groupId>org.apache.ambari</groupId>
     <artifactId>ambari-project</artifactId>
-    <version>2.0.0.0-SNAPSHOT</version>
+    <version>${revision}</version>
     <relativePath>../../ambari-project</relativePath>
   </parent>
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.apache.ambari.contrib.views</groupId>
   <artifactId>ambari-contrib-views</artifactId>
   <packaging>pom</packaging>
-  <version>2.0.0.0-SNAPSHOT</version>
   <name>Ambari Contrib Views</name>
   <properties>
-    <ambari.version>2.0.0.0-SNAPSHOT</ambari.version>
+    <ambari.version>${revision}</ambari.version>
     <ambari.dir>${project.parent.parent.basedir}</ambari.dir>
-    <hadoop.version>2.7.1</hadoop.version>
+    <jetty.version>9.3.19.v20170502</jetty.version>
+    <hadoop.version>3.1.0</hadoop.version>
     <views.jars.dir>views-jars</views.jars.dir>
     <views.jars.dir.rel>../target/${views.jars.dir}</views.jars.dir.rel>
   </properties>
@@ -39,31 +39,13 @@
     <module>utils</module>
     <module>commons</module>
     <module>files</module>
-    <module>jobs</module>
     <module>pig</module>
-    <module>slider</module>
     <module>capacity-scheduler</module>
-    <module>tez</module>
-    <module>hawq</module>
-    <module>storm</module>
-    <module>zeppelin</module>
-    <module>hueambarimigration</module>
-    <module>hive-next</module>
-    <module>hive</module>
     <module>wfmanager</module>
     <!--ambari-views-package should be last in the module list for it to function properly-->
     <module>ambari-views-package</module>
   </modules>
   <build>
-    <pluginManagement>
-      <plugins>
-        <plugin>
-          <groupId>org.apache.rat</groupId>
-          <artifactId>apache-rat-plugin</artifactId>
-          <version>0.11</version>
-        </plugin>
-      </plugins>
-    </pluginManagement>
     <plugins>
       <plugin>
         <groupId>org.apache.rat</groupId>
@@ -79,11 +61,9 @@
             <exclude>pass.txt</exclude>
             <exclude>.DS_Store</exclude>
             <exclude>.iml/</exclude>
-            <exclude>**/*.iml</exclude>
             <exclude>.classpath</exclude>
             <exclude>.project</exclude>
             <exclude>.settings</exclude>
-            <exclude>**/target/**</exclude>
             <exclude>**/.gitkeep</exclude>
             <exclude>**/.ember-cli</exclude>
             <exclude>**/.travis.yml</exclude>
@@ -113,6 +93,7 @@
             <exclude>**/assets/static/javascripts/**</exclude>
             <exclude>**/assets/static/stylesheets/**</exclude>
             <exclude>storm/src/main/resources/**</exclude>
+            <exclude>**/yarn.lock</exclude>
           </excludes>
         </configuration>
       </plugin>
@@ -173,13 +154,88 @@
           <family>unix</family>
         </os>
       </activation>
-      <modules>
-        <module>hive</module>
-      </modules>
     </profile>
   </profiles>
   <dependencyManagement>
     <dependencies>
+      <!--We had to include the jetty's and other's version specific to the one used in hadoop and override the ambari managed version because the tests were failing. -->
+      <dependency>
+        <groupId>javax.servlet</groupId>
+        <artifactId>javax.servlet-api</artifactId>
+        <version>3.1.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty</groupId>
+        <artifactId>jetty-server</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty</groupId>
+        <artifactId>jetty-security</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty</groupId>
+        <artifactId>jetty-servlet</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty</groupId>
+        <artifactId>jetty-servlets</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty</groupId>
+        <artifactId>jetty-webapp</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty</groupId>
+        <artifactId>jetty-util-ajax</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty.websocket</groupId>
+        <artifactId>websocket-servlet</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+      <dependency>
+        <groupId>org.eclipse.jetty.websocket</groupId>
+        <artifactId>websocket-server</artifactId>
+        <version>${jetty.version}</version>
+        <scope>test</scope>
+        <optional>true</optional>
+      </dependency>
+
+      <dependency>
+        <groupId>commons-collections</groupId>
+        <artifactId>commons-collections</artifactId>
+        <version>3.2.2</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.httpcomponents</groupId>
+        <artifactId>httpclient</artifactId>
+        <version>4.4</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.httpcomponents</groupId>
+        <artifactId>httpcore</artifactId>
+        <version>4.4</version>
+      </dependency>
       <dependency>
         <groupId>org.glassfish.jersey.containers</groupId>
         <artifactId>jersey-container-servlet</artifactId>
@@ -210,7 +266,7 @@
       <dependency>
         <groupId>org.apache.ambari</groupId>
         <artifactId>ambari-views</artifactId>
-        <version>2.0.0.0-SNAPSHOT</version>
+        <version>${revision}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

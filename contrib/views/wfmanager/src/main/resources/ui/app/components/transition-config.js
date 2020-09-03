@@ -28,7 +28,7 @@ const Validations = buildValidations({
 export default Ember.Component.extend(FindNodeMixin, Validations, {
   selectedKillNode : '',
   initialize : function(){
-    this.set('descendantNodes',this.getDesendantNodes(this.get('currentNode')));
+    this.set('descendantNodes', this.get('currentNode.validErrorToNodes'));
     if(!this.get('transition.okToNode')){
       var defaultOkToNode = this.getOKToNode(this.get('currentNode'));
       this.set('transition.okToNode', defaultOkToNode);
@@ -62,6 +62,9 @@ export default Ember.Component.extend(FindNodeMixin, Validations, {
     okToHandler (name){
       var validOkToNodes = this.get('currentNode.validOkToNodes');
       var node = validOkToNodes.findBy('name',name);
+      if(!node){
+        node = this.get('killNodes').findBy('name',name);
+      }
       if(node.id !== this.get('defaultOkToNode').id){
         this.set('showWarning', true);
       }else{

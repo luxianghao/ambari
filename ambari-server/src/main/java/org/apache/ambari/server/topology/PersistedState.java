@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,11 +18,12 @@
 
 package org.apache.ambari.server.topology;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.controller.internal.BaseClusterRequest;
-import org.apache.ambari.server.controller.internal.ProvisionClusterRequest;
 import org.apache.ambari.server.state.Host;
 
 /**
@@ -79,4 +80,15 @@ public interface PersistedState {
    * @return
    */
   LogicalRequest getProvisionRequest(long clusterId);
+
+  /**
+   * Remove the given host requests (must belong to the same topology request),
+   * and also the topology request if it does not have any host requests left.
+   */
+  void removeHostRequests(long logicalRequestId, Collection<HostRequest> hostRequests);
+
+  /**
+   * Update the status of the given host request.
+   */
+  void setHostRequestStatus(long hostRequestId, HostRoleStatus status, String message);
 }

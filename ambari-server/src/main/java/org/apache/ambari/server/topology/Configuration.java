@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -10,8 +10,7 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distribut
- * ed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
@@ -23,11 +22,21 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import org.apache.commons.lang3.tuple.Pair;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 
 /**
  * Configuration for a topology entity such as a blueprint, hostgroup or cluster.
  */
 public class Configuration {
+
+  private static final Logger LOG = LoggerFactory.getLogger(Configuration.class);
+
   /**
    * properties for this configuration instance
    */
@@ -42,6 +51,76 @@ public class Configuration {
    * parent configuration
    */
   private Configuration parentConfiguration;
+
+  public static Configuration newEmpty() {
+    return new Configuration(new HashMap<>(), new HashMap<>());
+  }
+
+  /**
+   * Apply configuration changes from {@code updatedConfigs} to {@code config}, but only
+   * change properties that are either absent in the existing config, or have values that
+   * match the stack default config.
+   *
+   * @return config types that had any updates applied
+   */
+  public Set<String> applyUpdatesToStackDefaultProperties(Configuration stackDefaultConfig, Map<String, Map<String, String>> existingConfigurations, Map<String, Map<String, String>> updatedConfigs) {
+    Set<String> updatedConfigTypes = new HashSet<>();
+
+    Map<String, Map<String, String>> stackDefaults = stackDefaultConfig.getProperties();
+
+    for (Map.Entry<String, Map<String, String>> configEntry : updatedConfigs.entrySet()) {
+      String configType = configEntry.getKey();
+      Map<String, String> propertyMap = configEntry.getValue();
+      Map<String, String> clusterConfigProperties = existingConfigurations.get(configType);
+      Map<String, String> stackDefaultConfigProperties = stackDefaults.get(configType);
+      for (Map.Entry<String, String> propertyEntry : propertyMap.entrySet()) {
+        String property = propertyEntry.getKey();
+        String newValue = propertyEntry.getValue();
+        String currentValue = getPropertyValue(configType, property);
+
+        if (!propertyHasCustomValue(clusterConfigProperties, stackDefaultConfigProperties, property) && !Objects.equals(currentValue, newValue)) {
+          LOG.debug("Update config property {}/{}: {} -> {}", configType, property, currentValue, newValue);
+          setProperty(configType, property, newValue);
+          updatedConfigTypes.add(configType);
+        }
+      }
+    }
+
+    return updatedConfigTypes;
+  }
+
+  /**
+   * Returns true if the property exists in clusterConfigProperties and has a custom user defined value. Property has
+   * custom value in case we there's no stack default value for it or it's not equal to stack default value.
+   */
+  private static boolean propertyHasCustomValue(Map<String, String> clusterConfigProperties, Map<String, String> stackDefaultConfigProperties, String property) {
+
+    boolean propertyHasCustomValue = false;
+    if (clusterConfigProperties != null) {
+      String propertyValue = clusterConfigProperties.get(property);
+      if (propertyValue != null) {
+        if (stackDefaultConfigProperties != null) {
+          String stackDefaultValue = stackDefaultConfigProperties.get(property);
+          if (stackDefaultValue != null) {
+            propertyHasCustomValue = !propertyValue.equals(stackDefaultValue);
+          } else {
+            propertyHasCustomValue = true;
+          }
+        } else {
+          propertyHasCustomValue = true;
+        }
+      }
+    }
+    return propertyHasCustomValue;
+  }
+
+  public Configuration copy() {
+    Configuration parent = parentConfiguration;
+    parentConfiguration = null;
+    Configuration copy = new Configuration(getFullProperties(), getFullAttributes());
+    parentConfiguration = parent;
+    return copy;
+  }
 
   /**
    * Constructor.
@@ -71,8 +150,8 @@ public class Configuration {
   /**
    * Configuration.
    *
-   * @param properties  properties
-   * @param attributes  attributes
+   * @param properties  properties in configType -> propertyName -> value format
+   * @param attributes  attributes in configType -> attributeName -> propertyName -> attributeValue format
    */
   public Configuration(Map<String, Map<String, String>> properties,
                        Map<String, Map<String, Map<String, String>>> attributes) {
@@ -115,20 +194,20 @@ public class Configuration {
    */
   public Map<String, Map<String, String>> getFullProperties(int depthLimit) {
     if (depthLimit == 0) {
-      HashMap<String, Map<String, String>> propertiesCopy = new HashMap<String, Map<String, String>>();
+      HashMap<String, Map<String, String>> propertiesCopy = new HashMap<>();
       for (Map.Entry<String, Map<String, String>> typeProperties : properties.entrySet()) {
-        propertiesCopy.put(typeProperties.getKey(), new HashMap<String, String>(typeProperties.getValue()));
+        propertiesCopy.put(typeProperties.getKey(), new HashMap<>(typeProperties.getValue()));
       }
       return propertiesCopy;
     }
 
     Map<String, Map<String, String>> mergedProperties = parentConfiguration == null ?
-        new HashMap<String, Map<String, String>>() :
-        new HashMap<String, Map<String, String>>(parentConfiguration.getFullProperties(--depthLimit));
+      new HashMap<>() :
+      new HashMap<>(parentConfiguration.getFullProperties(--depthLimit));
 
     for (Map.Entry<String, Map<String, String>> entry : properties.entrySet()) {
       String configType = entry.getKey();
-      Map<String, String> typeProps = new HashMap<String, String>(entry.getValue());
+      Map<String, String> typeProps = new HashMap<>(entry.getValue());
 
       if (mergedProperties.containsKey(configType)) {
         mergedProperties.get(configType).putAll(typeProps);
@@ -158,14 +237,14 @@ public class Configuration {
    */
   public Map<String, Map<String, Map<String, String>>> getFullAttributes() {
     Map<String, Map<String, Map<String, String>>> mergedAttributeMap = parentConfiguration == null ?
-        new HashMap<String, Map<String, Map<String, String>>>() :
-        new HashMap<String, Map<String, Map<String, String>>>(parentConfiguration.getFullAttributes());
+      new HashMap<>() :
+      new HashMap<>(parentConfiguration.getFullAttributes());
 
     for (Map.Entry<String, Map<String, Map<String, String>>> typeEntry : attributes.entrySet()) {
       String type = typeEntry.getKey();
-      Map<String, Map<String, String>> typeAttributes = new HashMap<String, Map<String, String>>();
+      Map<String, Map<String, String>> typeAttributes = new HashMap<>();
       for (Map.Entry<String, Map<String, String>> attributeEntry : typeEntry.getValue().entrySet()) {
-        typeAttributes.put(attributeEntry.getKey(), new HashMap<String, String>(attributeEntry.getValue()));
+        typeAttributes.put(attributeEntry.getKey(), new HashMap<>(attributeEntry.getValue()));
       }
 
       if (! mergedAttributeMap.containsKey(type)) {
@@ -245,7 +324,7 @@ public class Configuration {
     String previousValue = getPropertyValue(configType, propertyName);
     Map<String, String> typeProperties = properties.get(configType);
     if (typeProperties == null) {
-      typeProperties = new HashMap<String, String>();
+      typeProperties = new HashMap<>();
       properties.put(configType, typeProperties);
     }
     typeProperties.put(propertyName, value);
@@ -279,6 +358,42 @@ public class Configuration {
   }
 
   /**
+   * Moves the given properties from {@code sourceConfigType} to {@code targetConfigType}.
+   * If a property is already present in the target, it will be removed from the source, but not overwritten in the target.
+   *
+   * @param sourceConfigType the config type to move properties from
+   * @param targetConfigType the config type to move properties to
+   * @param propertiesToMove names of properties to be moved
+   * @return property names that were removed from the source
+   */
+  public Set<String> moveProperties(String sourceConfigType, String targetConfigType, Set<String> propertiesToMove) {
+    Set<String> moved = new HashSet<>();
+    for (String property : propertiesToMove) {
+      if (isPropertySet(sourceConfigType, property)) {
+        String value = removeProperty(sourceConfigType, property);
+        if (!isPropertySet(targetConfigType, property)) {
+          setProperty(targetConfigType, property, value);
+        }
+        moved.add(property);
+      }
+    }
+    return moved;
+  }
+
+  /**
+   * General convenience method to determine if a given property has been set in the cluster configuration
+   *
+   * @param configType the config type to check
+   * @param propertyName the property name to check
+   * @return true if the named property has been set
+   *         false if the named property has not been set
+   */
+  public boolean isPropertySet(String configType, String propertyName) {
+    return properties.containsKey(configType) && properties.get(configType).containsKey(propertyName) ||
+      parentConfiguration != null && parentConfiguration.isPropertySet(configType, propertyName);
+  }
+
+  /**
    * Set an attribute on the hierarchy.
    * The attribute will be set on this instance so it will override any value specified in
    * the parent hierarchy.
@@ -295,13 +410,13 @@ public class Configuration {
 
     Map<String, Map<String, String>> typeAttributes = attributes.get(configType);
     if (typeAttributes == null) {
-      typeAttributes = new HashMap<String, Map<String, String>>();
+      typeAttributes = new HashMap<>();
       attributes.put(configType, typeAttributes);
     }
 
     Map<String, String> attributes = typeAttributes.get(attributeName);
     if (attributes == null) {
-      attributes = new HashMap<String, String>();
+      attributes = new HashMap<>();
       typeAttributes.put(attributeName, attributes);
     }
 
@@ -315,16 +430,21 @@ public class Configuration {
    * @return collection of all represented configuration types
    */
   public Collection<String> getAllConfigTypes() {
-    Collection<String> allTypes = new HashSet<String>();
-    for (String type : getFullProperties().keySet()) {
-      allTypes.add(type);
-    }
-
-    for (String type : getFullAttributes().keySet()) {
-      allTypes.add(type);
-    }
-
+    Collection<String> allTypes = new HashSet<>();
+    allTypes.addAll(getFullProperties().keySet());
+    allTypes.addAll(getFullAttributes().keySet());
     return allTypes;
+  }
+
+  public boolean containsConfigType(String configType) {
+    return properties.containsKey(configType) || attributes.containsKey(configType) ||
+      (parentConfiguration != null && parentConfiguration.containsConfigType(configType));
+  }
+
+  public boolean containsConfig(String configType, String propertyName) {
+    return (properties.containsKey(configType) && properties.get(configType).containsKey(propertyName))
+      || (attributes.containsKey(configType) && attributes.get(configType).values().stream().filter(map -> map.containsKey(propertyName)).findAny().isPresent())
+      || (parentConfiguration != null && parentConfiguration.containsConfig(configType, propertyName));
   }
 
   /**
@@ -349,14 +469,46 @@ public class Configuration {
    * Remove all occurrences of a config type
    */
   public void removeConfigType(String configType) {
-    if (properties != null && properties.containsKey(configType)) {
+    if (properties != null) {
       properties.remove(configType);
     }
-    if (attributes != null && attributes.containsKey(configType)) {
+    if (attributes != null) {
       attributes.remove(configType);
     }
     if (parentConfiguration != null) {
       parentConfiguration.removeConfigType(configType);
     }
+  }
+
+  /**
+   * Create a new {@code Configuration} based on a pair of maps.
+   * (This is just a convenience method to be able to avoid local variables in a few places.)
+   */
+  public static Configuration of(Pair<Map<String, Map<String, String>>, Map<String, Map<String, Map<String, String>>>> propertiesAndAttributes) {
+    return new Configuration(propertiesAndAttributes.getLeft(), propertiesAndAttributes.getRight());
+  }
+
+  /**
+   * @return this configuration's properties and attributes as a pair of maps,
+   * in order to be able to pass around more easily without polluting non-topology code with the Configuration object
+   */
+  public Pair<Map<String, Map<String, String>>, Map<String, Map<String, Map<String, String>>>> asPair() {
+    return Pair.of(properties, attributes);
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj) {
+      return true;
+    }
+    if (obj == null || getClass() != obj.getClass()) {
+      return false;
+    }
+
+    Configuration other = (Configuration) obj;
+
+    return Objects.equals(properties, other.properties) &&
+      Objects.equals(attributes, other.attributes) &&
+      Objects.equals(parentConfiguration, other.parentConfiguration);
   }
 }

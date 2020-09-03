@@ -18,6 +18,7 @@
 var App = require('app');
 var string_utils = require('utils/string_utils');
 var dateUtils = require('utils/date/date');
+var chartUtils = require('utils/chart_utils');
 
 /**
  * @class
@@ -362,13 +363,8 @@ App.ChartLinearTimeView = Ember.View.extend(App.ExportMetricsMixin, {
     var fromSeconds,
       toSeconds,
       hostName = (this.get('content')) ? this.get('content.hostName') : "",
-      HDFSService = App.HDFSService.find().objectAt(0),
-      nameNodeName = "",
       YARNService = App.YARNService.find().objectAt(0),
       resourceManager = YARNService ? YARNService.get('resourceManager.hostName') : "";
-    if (HDFSService) {
-      nameNodeName = (HDFSService.get('activeNameNode')) ? HDFSService.get('activeNameNode.hostName') : HDFSService.get('nameNode.hostName');
-    }
     if (this.get('currentTimeIndex') === 8 && !Em.isNone(this.get('customStartTime')) && !Em.isNone(this.get('customEndTime'))) {
       // Custom start and end time is specified by user
       toSeconds = this.get('customEndTime') / 1000;
@@ -384,7 +380,6 @@ App.ChartLinearTimeView = Ember.View.extend(App.ExportMetricsMixin, {
       fromSeconds: fromSeconds,
       stepSeconds: 15,
       hostName: hostName,
-      nameNodeName: nameNodeName,
       resourceManager: resourceManager
     };
   },
@@ -676,7 +671,7 @@ App.ChartLinearTimeView = Ember.View.extend(App.ExportMetricsMixin, {
    */
   dataPreProcess: function (data) {
     var self = this;
-    var palette = new Rickshaw.Color.Palette({scheme: 'munin'});
+    var palette = new Rickshaw.Color.Palette({scheme: chartUtils.getColorSchemeForChart(data.length)});
     // Format series for display
     var series_min_length = 100000000;
     data.forEach(function (series) {
@@ -1512,11 +1507,9 @@ App.ChartLinearTimeView.LoadAggregator = Em.Object.create({
             }, this);
           }
         }).always(function () {
-          _request.context.set('runningRequests', _request.context.get('runningRequests').reject(function (item) {
-            return item === xhr;
-          }));
+          _request.context.set('runningRequests', Em.tryInvoke(_request.context.get('runningRequests'), 'without', [xhr]));
         });
-        _request.context.get('runningRequests').push(xhr);
+        Em.tryInvoke(_request.context.get('runningRequests'), 'push', [xhr]);
       })(bulks[id]);
     }
   },

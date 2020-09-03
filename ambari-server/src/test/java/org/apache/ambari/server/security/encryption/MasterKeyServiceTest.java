@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,11 +28,10 @@ import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 
 import org.apache.ambari.server.configuration.Configuration;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -40,6 +39,8 @@ import org.junit.runner.RunWith;
 import org.powermock.core.classloader.annotations.PowerMockIgnore;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import junit.framework.Assert;
 import junit.framework.TestCase;
@@ -51,7 +52,7 @@ public class MasterKeyServiceTest extends TestCase {
   @Rule
   public TemporaryFolder tmpFolder = new TemporaryFolder();
   private String fileDir;
-  private static final Log LOG = LogFactory.getLog
+  private static final Logger LOG = LoggerFactory.getLogger
       (MasterKeyServiceTest.class);
 
   @Override
@@ -64,9 +65,10 @@ public class MasterKeyServiceTest extends TestCase {
   @Test
   public void testInitializeMasterKey() throws Exception {
     File masterKeyFile = new File(fileDir, "master");
-    Assert.assertTrue(MasterKeyServiceImpl.initializeMasterKeyFile(masterKeyFile, "ThisisSomePassPhrase"));
+    MasterKeyServiceImpl ms = new MasterKeyServiceImpl("dummyKey");
+    Assert.assertTrue(ms.initializeMasterKeyFile(masterKeyFile, "ThisisSomePassPhrase"));
 
-    MasterKeyService ms = new MasterKeyServiceImpl(masterKeyFile);
+    ms = new MasterKeyServiceImpl(masterKeyFile);
     Assert.assertTrue(ms.isMasterKeyInitialized());
 
     Assert.assertTrue(masterKeyFile.exists());
@@ -95,12 +97,13 @@ public class MasterKeyServiceTest extends TestCase {
 
   @Test
   public void testReadFromEnvAsKey() throws Exception {
-    Map<String, String> mapRet = new HashMap<String, String>();
+    Map<String, String> mapRet = new HashMap<>();
     mapRet.put("AMBARI_SECURITY_MASTER_KEY", "ThisisSomePassPhrase");
     mockStatic(System.class);
     expect(System.getenv()).andReturn(mapRet);
     replayAll();
-    MasterKeyService ms = new MasterKeyServiceImpl();
+    Configuration configuration = new Configuration(new Properties());
+    MasterKeyService ms = new MasterKeyServiceImpl(configuration);
     verifyAll();
     Assert.assertTrue(ms.isMasterKeyInitialized());
     Assert.assertNotNull(ms.getMasterSecret());
@@ -112,23 +115,25 @@ public class MasterKeyServiceTest extends TestCase {
   public void testReadFromEnvAsPath() throws Exception {
     // Create a master key
     File masterKeyFile = new File(fileDir, "master");
-    Assert.assertTrue(MasterKeyServiceImpl.initializeMasterKeyFile(masterKeyFile, "ThisisSomePassPhrase"));
+    MasterKeyServiceImpl ms = new MasterKeyServiceImpl("dummyKey");
+    Assert.assertTrue(ms.initializeMasterKeyFile(masterKeyFile, "ThisisSomePassPhrase"));
 
-    MasterKeyService ms = new MasterKeyServiceImpl(masterKeyFile);
+    ms = new MasterKeyServiceImpl(masterKeyFile);
     Assert.assertTrue(ms.isMasterKeyInitialized());
     Assert.assertTrue(masterKeyFile.exists());
 
-    Map<String, String> mapRet = new HashMap<String, String>();
+    Map<String, String> mapRet = new HashMap<>();
     mapRet.put(Configuration.MASTER_KEY_LOCATION.getKey(), masterKeyFile.getAbsolutePath());
     mockStatic(System.class);
     expect(System.getenv()).andReturn(mapRet);
     replayAll();
-    ms = new MasterKeyServiceImpl();
+    Configuration configuration = new Configuration(new Properties());
+    ms = new MasterKeyServiceImpl(configuration);
     verifyAll();
     Assert.assertTrue(ms.isMasterKeyInitialized());
     Assert.assertNotNull(ms.getMasterSecret());
     Assert.assertEquals("ThisisSomePassPhrase", new String(ms.getMasterSecret()));
-    Assert.assertFalse(masterKeyFile.exists());
+    Assert.assertTrue(masterKeyFile.exists());
   }
 
   @Override

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,35 +18,19 @@
 
 package org.apache.ambari.server.topology;
 
-import junit.framework.Assert;
-import org.apache.ambari.server.actionmanager.HostRoleStatus;
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.controller.ClusterRequest;
-import org.apache.ambari.server.controller.ConfigurationRequest;
-import org.apache.ambari.server.controller.RequestStatusResponse;
-import org.apache.ambari.server.controller.ShortTaskStatus;
-import org.apache.ambari.server.controller.internal.HostResourceProvider;
-import org.apache.ambari.server.controller.internal.ProvisionClusterRequest;
-import org.apache.ambari.server.controller.internal.ScaleClusterRequest;
-import org.apache.ambari.server.controller.internal.Stack;
-import org.apache.ambari.server.controller.spi.ClusterController;
-import org.apache.ambari.server.controller.spi.Resource;
-import org.apache.ambari.server.controller.spi.ResourceProvider;
-import org.apache.ambari.server.events.RequestFinishedEvent;
-import org.apache.ambari.server.security.encryption.CredentialStoreService;
-import org.apache.ambari.server.stack.NoSuchStackException;
-import org.apache.ambari.server.state.SecurityType;
-import org.easymock.Capture;
-import org.easymock.EasyMock;
-import org.easymock.EasyMockRule;
-import org.easymock.EasyMockSupport;
-import org.easymock.Mock;
-import org.easymock.MockType;
-import org.easymock.TestSubject;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import static org.easymock.EasyMock.anyLong;
+import static org.easymock.EasyMock.anyObject;
+import static org.easymock.EasyMock.capture;
+import static org.easymock.EasyMock.eq;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.expectLastCall;
+import static org.easymock.EasyMock.isA;
+import static org.easymock.EasyMock.isNull;
+import static org.easymock.EasyMock.newCapture;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.reset;
+import static org.easymock.EasyMock.verify;
+import static org.powermock.api.easymock.PowerMock.mockStatic;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -61,21 +45,55 @@ import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 
-import static org.easymock.EasyMock.anyObject;
-import static org.easymock.EasyMock.capture;
-import static org.easymock.EasyMock.eq;
-import static org.easymock.EasyMock.expect;
-import static org.easymock.EasyMock.expectLastCall;
-import static org.easymock.EasyMock.isA;
-import static org.easymock.EasyMock.isNull;
-import static org.easymock.EasyMock.newCapture;
-import static org.easymock.EasyMock.replay;
-import static org.easymock.EasyMock.reset;
-import static org.easymock.EasyMock.verify;
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.actionmanager.HostRoleStatus;
+import org.apache.ambari.server.controller.ClusterRequest;
+import org.apache.ambari.server.controller.ConfigurationRequest;
+import org.apache.ambari.server.controller.RequestStatusResponse;
+import org.apache.ambari.server.controller.ShortTaskStatus;
+import org.apache.ambari.server.controller.internal.HostResourceProvider;
+import org.apache.ambari.server.controller.internal.ProvisionClusterRequest;
+import org.apache.ambari.server.controller.internal.ScaleClusterRequest;
+import org.apache.ambari.server.controller.internal.Stack;
+import org.apache.ambari.server.controller.spi.ClusterController;
+import org.apache.ambari.server.controller.spi.Resource;
+import org.apache.ambari.server.controller.spi.ResourceProvider;
+import org.apache.ambari.server.events.ClusterProvisionStartedEvent;
+import org.apache.ambari.server.events.ClusterProvisionedEvent;
+import org.apache.ambari.server.events.RequestFinishedEvent;
+import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
+import org.apache.ambari.server.orm.dao.SettingDAO;
+import org.apache.ambari.server.orm.entities.SettingEntity;
+import org.apache.ambari.server.security.authorization.AuthorizationHelper;
+import org.apache.ambari.server.security.encryption.CredentialStoreService;
+import org.apache.ambari.server.stack.NoSuchStackException;
+import org.apache.ambari.server.state.SecurityType;
+import org.apache.ambari.server.state.quicklinksprofile.QuickLinksProfile;
+import org.apache.ambari.server.topology.tasks.ConfigureClusterTask;
+import org.apache.ambari.server.topology.tasks.ConfigureClusterTaskFactory;
+import org.apache.ambari.server.topology.validators.TopologyValidatorService;
+import org.easymock.Capture;
+import org.easymock.EasyMock;
+import org.easymock.EasyMockRule;
+import org.easymock.EasyMockSupport;
+import org.easymock.Mock;
+import org.easymock.MockType;
+import org.easymock.TestSubject;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.powermock.api.easymock.PowerMock;
+import org.powermock.core.classloader.annotations.PrepareForTest;
+import org.powermock.modules.junit4.PowerMockRunner;
 
 /**
  * TopologyManager unit tests
  */
+@RunWith(PowerMockRunner.class)
+@PrepareForTest( { TopologyManager.class })
 public class TopologyManagerTest {
 
   private static final String CLUSTER_NAME = "test-cluster";
@@ -83,6 +101,9 @@ public class TopologyManagerTest {
   private static final String BLUEPRINT_NAME = "test-bp";
   private static final String STACK_NAME = "test-stack";
   private static final String STACK_VERSION = "test-stack-version";
+  private static final String SAMPLE_QUICKLINKS_PROFILE_1 = "{\"filters\":[{\"visible\":true}],\"services\":[]}";
+  private static final String SAMPLE_QUICKLINKS_PROFILE_2 =
+      "{\"filters\":[],\"services\":[{\"name\":\"HDFS\",\"components\":[],\"filters\":[{\"visible\":true}]}]}";
 
   @Rule
   public EasyMockRule mocks = new EasyMockRule(this);
@@ -101,6 +122,7 @@ public class TopologyManagerTest {
 
   @Mock(type = MockType.NICE)
   private ProvisionClusterRequest request;
+
   private final PersistedTopologyRequest persistedTopologyRequest = new PersistedTopologyRequest(1, request);
   @Mock(type = MockType.STRICT)
   private LogicalRequestFactory logicalRequestFactory;
@@ -132,41 +154,54 @@ public class TopologyManagerTest {
   private ClusterController clusterController;
   @Mock(type = MockType.STRICT)
   private ResourceProvider resourceProvider;
+  @Mock(type = MockType.STRICT)
+  private SettingDAO settingDAO;
+  @Mock(type = MockType.NICE)
+  private ClusterTopology clusterTopologyMock;
+  @Mock(type = MockType.NICE)
+  private ConfigureClusterTaskFactory configureClusterTaskFactory;
+  @Mock(type = MockType.NICE)
+  private ConfigureClusterTask configureClusterTask;
+  @Mock(type = MockType.NICE)
+  private AmbariEventPublisher eventPublisher;
 
   @Mock(type = MockType.STRICT)
   private Future mockFuture;
 
-  private final Configuration stackConfig = new Configuration(new HashMap<String, Map<String, String>>(),
-      new HashMap<String, Map<String, Map<String, String>>>());
-  private final Configuration bpConfiguration = new Configuration(new HashMap<String, Map<String, String>>(),
-      new HashMap<String, Map<String, Map<String, String>>>(), stackConfig);
-  private final Configuration topoConfiguration = new Configuration(new HashMap<String, Map<String, String>>(),
-      new HashMap<String, Map<String, Map<String, String>>>(), bpConfiguration);
-  private final Configuration bpGroup1Config = new Configuration(new HashMap<String, Map<String, String>>(),
-      new HashMap<String, Map<String, Map<String, String>>>(), bpConfiguration);
-  private final Configuration bpGroup2Config = new Configuration(new HashMap<String, Map<String, String>>(),
-      new HashMap<String, Map<String, Map<String, String>>>(), bpConfiguration);
+  @Mock
+  private TopologyValidatorService topologyValidatorService;
+
+  private final Configuration stackConfig = new Configuration(new HashMap<>(),
+    new HashMap<>());
+  private final Configuration bpConfiguration = new Configuration(new HashMap<>(),
+    new HashMap<>(), stackConfig);
+  private final Configuration topoConfiguration = new Configuration(new HashMap<>(),
+    new HashMap<>(), bpConfiguration);
+  private final Configuration bpGroup1Config = new Configuration(new HashMap<>(),
+    new HashMap<>(), bpConfiguration);
+  private final Configuration bpGroup2Config = new Configuration(new HashMap<>(),
+    new HashMap<>(), bpConfiguration);
   //todo: topo config hierarchy is wrong: bpGroupConfigs should extend topo cluster config
-  private final Configuration topoGroup1Config = new Configuration(new HashMap<String, Map<String, String>>(),
-      new HashMap<String, Map<String, Map<String, String>>>(), bpGroup1Config);
-  private final Configuration topoGroup2Config = new Configuration(new HashMap<String, Map<String, String>>(),
-      new HashMap<String, Map<String, Map<String, String>>>(), bpGroup2Config);
+  private final Configuration topoGroup1Config = new Configuration(new HashMap<>(),
+    new HashMap<>(), bpGroup1Config);
+  private final Configuration topoGroup2Config = new Configuration(new HashMap<>(),
+    new HashMap<>(), bpGroup2Config);
 
   private HostGroupInfo group1Info = new HostGroupInfo("group1");
   private HostGroupInfo group2Info = new HostGroupInfo("group2");
-  private Map<String, HostGroupInfo> groupInfoMap = new HashMap<String, HostGroupInfo>();
+  private Map<String, HostGroupInfo> groupInfoMap = new HashMap<>();
 
   private Collection<Component> group1Components = Arrays.asList(new Component("component1"), new Component("component2"), new Component("component3"));
   private Collection<Component> group2Components = Arrays.asList(new Component("component3"), new Component("component4"));
 
-  private Map<String, Collection<String>> group1ServiceComponents = new HashMap<String, Collection<String>>();
-  private Map<String, Collection<String>> group2ServiceComponents = new HashMap<String, Collection<String>>();
+  private Map<String, Collection<String>> group1ServiceComponents = new HashMap<>();
+  private Map<String, Collection<String>> group2ServiceComponents = new HashMap<>();
 
-  private Map<String, Collection<String>> serviceComponents = new HashMap<String, Collection<String>>();
+  private Map<String, Collection<String>> serviceComponents = new HashMap<>();
 
   private String predicate = "Hosts/host_name=foo";
 
-  private List<TopologyValidator> topologyValidators = new ArrayList<TopologyValidator>();
+  private List<TopologyValidator> topologyValidators = new ArrayList<>();
 
   private Capture<ClusterTopology> clusterTopologyCapture;
   private Capture<Map<String, Object>> configRequestPropertiesCapture;
@@ -188,7 +223,7 @@ public class TopologyManagerTest {
     topoConfiguration.setProperty("service2-site", "s2-prop", "s2-prop-value");
     topoConfiguration.setProperty("cluster-env", "g-prop", "g-prop-value");
 
-    //clusterRequestCapture = new Capture<ClusterRequest>();
+    //clusterRequestCapture = EasyMock.newCapture();
     // group 1 has fqdn specified
     group1Info.addHost("host1");
     group1Info.setConfiguration(topoGroup1Config);
@@ -200,7 +235,7 @@ public class TopologyManagerTest {
     groupInfoMap.put("group1", group1Info);
     groupInfoMap.put("group2", group2Info);
 
-    Map<String, HostGroup> groupMap = new HashMap<String, HostGroup>();
+    Map<String, HostGroup> groupMap = new HashMap<>();
     groupMap.put("group1", group1);
     groupMap.put("group2", group2);
 
@@ -209,8 +244,7 @@ public class TopologyManagerTest {
 
     group1ServiceComponents.put("service1", Arrays.asList("component1", "component3"));
     group1ServiceComponents.put("service2", Collections.singleton("component2"));
-    group2ServiceComponents.put("service2", Collections.singleton("component3"));
-    group2ServiceComponents.put("service2", Collections.singleton("component4"));
+    group2ServiceComponents.put("service2",  Arrays.asList("component3", "component4"));
 
     expect(blueprint.getHostGroup("group1")).andReturn(group1).anyTimes();
     expect(blueprint.getHostGroup("group2")).andReturn(group2).anyTimes();
@@ -227,6 +261,7 @@ public class TopologyManagerTest {
     expect(blueprint.getName()).andReturn(BLUEPRINT_NAME).anyTimes();
     expect(blueprint.getServices()).andReturn(Arrays.asList("service1", "service2")).anyTimes();
     expect(blueprint.getStack()).andReturn(stack).anyTimes();
+    expect(blueprint.getRepositorySettings()).andReturn(new ArrayList<>()).anyTimes();
     // don't expect toEntity()
 
     expect(stack.getAllConfigurationTypes("service1")).andReturn(Arrays.asList("service1-site", "service1-env")).anyTimes();
@@ -247,8 +282,8 @@ public class TopologyManagerTest {
     expect(stack.getConfiguration()).andReturn(stackConfig).anyTimes();
     expect(stack.getName()).andReturn(STACK_NAME).anyTimes();
     expect(stack.getVersion()).andReturn(STACK_VERSION).anyTimes();
-    expect(stack.getExcludedConfigurationTypes("service1")).andReturn(Collections.<String>emptySet()).anyTimes();
-    expect(stack.getExcludedConfigurationTypes("service2")).andReturn(Collections.<String>emptySet()).anyTimes();
+    expect(stack.getExcludedConfigurationTypes("service1")).andReturn(Collections.emptySet()).anyTimes();
+    expect(stack.getExcludedConfigurationTypes("service2")).andReturn(Collections.emptySet()).anyTimes();
 
     expect(request.getBlueprint()).andReturn(blueprint).anyTimes();
     expect(request.getClusterId()).andReturn(CLUSTER_ID).anyTimes();
@@ -256,10 +291,7 @@ public class TopologyManagerTest {
     expect(request.getDescription()).andReturn("Provision Cluster Test").anyTimes();
     expect(request.getConfiguration()).andReturn(topoConfiguration).anyTimes();
     expect(request.getHostGroupInfo()).andReturn(groupInfoMap).anyTimes();
-    expect(request.getTopologyValidators()).andReturn(topologyValidators).anyTimes();
-
     expect(request.getConfigRecommendationStrategy()).andReturn(ConfigRecommendationStrategy.NEVER_APPLY).anyTimes();
-
     expect(request.getSecurityConfiguration()).andReturn(null).anyTimes();
 
 
@@ -295,7 +327,7 @@ public class TopologyManagerTest {
 
     expect(ambariContext.getPersistedTopologyState()).andReturn(persistedState).anyTimes();
     //todo: don't ignore param
-    ambariContext.createAmbariResources(isA(ClusterTopology.class), eq(CLUSTER_NAME), (SecurityType) isNull(), (String) isNull());
+    ambariContext.createAmbariResources(isA(ClusterTopology.class), eq(CLUSTER_NAME), (SecurityType) isNull(), (String) isNull(), anyLong());
     expectLastCall().anyTimes();
     expect(ambariContext.getNextRequestId()).andReturn(1L).anyTimes();
     expect(ambariContext.isClusterKerberosEnabled(CLUSTER_ID)).andReturn(false).anyTimes();
@@ -317,14 +349,14 @@ public class TopologyManagerTest {
 
     expect(clusterController.ensureResourceProvider(anyObject(Resource.Type.class))).andReturn(resourceProvider);
 
-    expect(executor.submit(anyObject(AsyncCallableService.class))).andReturn(mockFuture);
-
-    expectLastCall().anyTimes();
+    expect(configureClusterTaskFactory.createConfigureClusterTask(anyObject(), anyObject(), anyObject())).andReturn(configureClusterTask);
+    expect(configureClusterTask.getTimeout()).andReturn(1000L);
+    expect(configureClusterTask.getRepeatDelay()).andReturn(50L);
+    expect(executor.submit(anyObject(AsyncCallableService.class))).andReturn(mockFuture).anyTimes();
 
     expect(persistedState.persistTopologyRequest(request)).andReturn(persistedTopologyRequest).anyTimes();
     persistedState.persistLogicalRequest(logicalRequest, 1);
     expectLastCall().anyTimes();
-
 
     Class clazz = TopologyManager.class;
 
@@ -344,19 +376,54 @@ public class TopologyManagerTest {
 
   @After
   public void tearDown() {
+    PowerMock.verify(System.class);
     verify(blueprint, stack, request, group1, group2, ambariContext, logicalRequestFactory,
         logicalRequest, configurationRequest, configurationRequest2, configurationRequest3,
-        requestStatusResponse, executor, persistedState, mockFuture);
+        requestStatusResponse, executor, persistedState, clusterTopologyMock, mockFuture, settingDAO, eventPublisher);
 
+    PowerMock.reset(System.class);
     reset(blueprint, stack, request, group1, group2, ambariContext, logicalRequestFactory,
         logicalRequest, configurationRequest, configurationRequest2, configurationRequest3,
-        requestStatusResponse, executor, persistedState, mockFuture);
+        requestStatusResponse, executor, persistedState, clusterTopologyMock, mockFuture, settingDAO, eventPublisher);
   }
 
   @Test
   public void testProvisionCluster() throws Exception {
-    expect(persistedState.getAllRequests()).andReturn(Collections.<ClusterTopology,
-            List<LogicalRequest>>emptyMap()).anyTimes();
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
+    replayAll();
+
+    topologyManager.provisionCluster(request);
+    //todo: assertions
+  }
+
+  @Test
+  public void testBlueprintProvisioningStateEvent() throws Exception {
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
+    eventPublisher.publish(anyObject(ClusterProvisionStartedEvent.class));
+    expectLastCall().once();
+    replayAll();
+
+    topologyManager.provisionCluster(request);
+  }
+
+  @Test
+  public void testAddKerberosClientAtTopologyInit() throws Exception {
+    Map<ClusterTopology, List<LogicalRequest>> allRequests = new HashMap<>();
+    List<LogicalRequest> requestList = new ArrayList<>();
+    requestList.add(logicalRequest);
+    expect(logicalRequest.hasPendingHostRequests()).andReturn(false).anyTimes();
+    expect(logicalRequest.isFinished()).andReturn(false).anyTimes();
+    allRequests.put(clusterTopologyMock, requestList);
+    expect(requestStatusResponse.getTasks()).andReturn(Collections.emptyList()).anyTimes();
+    expect(clusterTopologyMock.isClusterKerberosEnabled()).andReturn(true);
+    expect(clusterTopologyMock.getClusterId()).andReturn(CLUSTER_ID).anyTimes();
+    expect(clusterTopologyMock.getBlueprint()).andReturn(blueprint).anyTimes();
+    expect(persistedState.getAllRequests()).andReturn(allRequests).anyTimes();
+    expect(persistedState.getProvisionRequest(CLUSTER_ID)).andReturn(logicalRequest).anyTimes();
+    expect(ambariContext.isTopologyResolved(CLUSTER_ID)).andReturn(true).anyTimes();
+    expect(group1.addComponent("KERBEROS_CLIENT")).andReturn(true).anyTimes();
+    expect(group2.addComponent("KERBEROS_CLIENT")).andReturn(true).anyTimes();
+
     replayAll();
 
     topologyManager.provisionCluster(request);
@@ -377,9 +444,12 @@ public class TopologyManagerTest {
     tasks.add(t3);
 
     expect(requestStatusResponse.getTasks()).andReturn(tasks).anyTimes();
-    expect(persistedState.getAllRequests()).andReturn(Collections.<ClusterTopology,
-            List<LogicalRequest>>emptyMap()).anyTimes();
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
     expect(persistedState.getProvisionRequest(CLUSTER_ID)).andReturn(logicalRequest).anyTimes();
+    expect(logicalRequest.isFinished()).andReturn(true).anyTimes();
+    expect(logicalRequest.isSuccessful()).andReturn(true).anyTimes();
+    eventPublisher.publish(anyObject(ClusterProvisionedEvent.class));
+    expectLastCall().once();
     replayAll();
     topologyManager.provisionCluster(request);
     requestFinished();
@@ -400,9 +470,10 @@ public class TopologyManagerTest {
     tasks.add(t3);
 
     expect(requestStatusResponse.getTasks()).andReturn(tasks).anyTimes();
-    expect(persistedState.getAllRequests()).andReturn(Collections.<ClusterTopology,
-            List<LogicalRequest>>emptyMap()).anyTimes();
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
     expect(persistedState.getProvisionRequest(CLUSTER_ID)).andReturn(logicalRequest).anyTimes();
+    expect(logicalRequest.isFinished()).andReturn(true).anyTimes();
+    expect(logicalRequest.isSuccessful()).andReturn(false).anyTimes();
     replayAll();
     topologyManager.provisionCluster(request);
     requestFinished();
@@ -423,9 +494,9 @@ public class TopologyManagerTest {
     tasks.add(t3);
 
     expect(requestStatusResponse.getTasks()).andReturn(tasks).anyTimes();
-    expect(persistedState.getAllRequests()).andReturn(Collections.<ClusterTopology,
-            List<LogicalRequest>>emptyMap()).anyTimes();
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
     expect(persistedState.getProvisionRequest(CLUSTER_ID)).andReturn(logicalRequest).anyTimes();
+    expect(logicalRequest.isFinished()).andReturn(false).anyTimes();
     replayAll();
     topologyManager.provisionCluster(request);
     requestFinished();
@@ -464,7 +535,9 @@ public class TopologyManagerTest {
     allRequests.put(clusterTopologyMock, logicalRequests);
     expect(persistedState.getAllRequests()).andReturn(allRequests).anyTimes();
     expect(persistedState.getProvisionRequest(CLUSTER_ID)).andReturn(logicalRequest).anyTimes();
-    expect(logicalRequest.hasCompleted()).andReturn(true).anyTimes();
+    expect(logicalRequest.hasPendingHostRequests()).andReturn(true).anyTimes();
+    expect(logicalRequest.getCompletedHostRequests()).andReturn(Collections.EMPTY_LIST).anyTimes();
+    expect(logicalRequest.isFinished()).andReturn(true).anyTimes();
     expect(requestStatusResponse.getTasks()).andReturn(tasks).anyTimes();
     replayAll();
     EasyMock.replay(clusterTopologyMock);
@@ -479,16 +552,17 @@ public class TopologyManagerTest {
   private void replayAll() {
     replay(blueprint, stack, request, group1, group2, ambariContext, logicalRequestFactory,
             configurationRequest, configurationRequest2, configurationRequest3, executor,
-            persistedState, securityConfigurationFactory, credentialStoreService, clusterController, resourceProvider,
-            mockFuture, requestStatusResponse, logicalRequest);
+            persistedState, clusterTopologyMock, securityConfigurationFactory, credentialStoreService,
+            clusterController, resourceProvider, mockFuture, requestStatusResponse, logicalRequest, settingDAO,
+            configureClusterTaskFactory, configureClusterTask, eventPublisher);
   }
 
   @Test(expected = InvalidTopologyException.class)
   public void testScaleHosts__alreadyExistingHost() throws InvalidTopologyTemplateException, InvalidTopologyException, AmbariException, NoSuchStackException {
     HashSet<Map<String, Object>> propertySet = new HashSet<>();
     Map<String,Object> properties = new TreeMap<>();
-    properties.put(HostResourceProvider.HOST_NAME_PROPERTY_ID, "host1");
-    properties.put(HostResourceProvider.HOSTGROUP_PROPERTY_ID, "group1");
+    properties.put(HostResourceProvider.HOST_HOST_NAME_PROPERTY_ID, "host1");
+    properties.put(HostResourceProvider.HOST_GROUP_PROPERTY_ID, "group1");
     properties.put(HostResourceProvider.HOST_CLUSTER_NAME_PROPERTY_ID, CLUSTER_NAME);
     properties.put(HostResourceProvider.BLUEPRINT_PROPERTY_ID, BLUEPRINT_NAME);
     propertySet.add(properties);
@@ -496,11 +570,68 @@ public class TopologyManagerTest {
     EasyMock.expect(bpfMock.getBlueprint(BLUEPRINT_NAME)).andReturn(blueprint).anyTimes();
     ScaleClusterRequest.init(bpfMock);
     replay(bpfMock);
-    expect(persistedState.getAllRequests()).andReturn(Collections.<ClusterTopology,
-      List<LogicalRequest>>emptyMap()).anyTimes();
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
     replayAll();
     topologyManager.provisionCluster(request);
     topologyManager.scaleHosts(new ScaleClusterRequest(propertySet));
     Assert.fail("InvalidTopologyException should have been thrown");
+  }
+
+  @Test
+  public void testProvisionCluster_QuickLinkProfileIsSavedTheFirstTime() throws Exception {
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
+
+    // request has a quicklinks profile
+    expect(request.getQuickLinksProfileJson()).andReturn(SAMPLE_QUICKLINKS_PROFILE_1).anyTimes();
+
+    // this means no quicklinks profile exists before calling provisionCluster()
+    expect(settingDAO.findByName(QuickLinksProfile.SETTING_NAME_QUICKLINKS_PROFILE)).andReturn(null);
+
+    // expect that settingsDao saves the quick links profile with the right content
+    final long timeStamp = System.currentTimeMillis();
+    mockStatic(System.class);
+    expect(System.currentTimeMillis()).andReturn(timeStamp);
+    PowerMock.replay(System.class);
+    final SettingEntity quickLinksProfile = createQuickLinksSettingEntity(SAMPLE_QUICKLINKS_PROFILE_1, timeStamp);
+    settingDAO.create(eq(quickLinksProfile));
+
+    replayAll();
+
+    topologyManager.provisionCluster(request);
+  }
+
+  @Test
+  public void testProvisionCluster_ExistingQuickLinkProfileIsOverwritten() throws Exception {
+    expect(persistedState.getAllRequests()).andReturn(Collections.emptyMap()).anyTimes();
+
+    // request has a quicklinks profile
+    expect(request.getQuickLinksProfileJson()).andReturn(SAMPLE_QUICKLINKS_PROFILE_2).anyTimes();
+
+    // existing quick links profile returned by dao
+    final long timeStamp1 = System.currentTimeMillis();
+    SettingEntity originalProfile = createQuickLinksSettingEntity(SAMPLE_QUICKLINKS_PROFILE_1, timeStamp1);
+    expect(settingDAO.findByName(QuickLinksProfile.SETTING_NAME_QUICKLINKS_PROFILE)).andReturn(originalProfile);
+
+    // expect that settingsDao overwrites the quick links profile with the new content
+    mockStatic(System.class);
+    final long timeStamp2 = timeStamp1 + 100;
+    expect(System.currentTimeMillis()).andReturn(timeStamp2);
+    PowerMock.replay(System.class);
+    final SettingEntity newProfile = createQuickLinksSettingEntity(SAMPLE_QUICKLINKS_PROFILE_2, timeStamp2);
+    expect(settingDAO.merge(newProfile)).andReturn(newProfile);
+
+    replayAll();
+
+    topologyManager.provisionCluster(request);
+  }
+
+  private SettingEntity createQuickLinksSettingEntity(String content, long timeStamp) {
+    SettingEntity settingEntity = new SettingEntity();
+    settingEntity.setName(QuickLinksProfile.SETTING_NAME_QUICKLINKS_PROFILE);
+    settingEntity.setSettingType(QuickLinksProfile.SETTING_TYPE_AMBARI_SERVER);
+    settingEntity.setContent(content);
+    settingEntity.setUpdatedBy(AuthorizationHelper.getAuthenticatedName());
+    settingEntity.setUpdateTimestamp(timeStamp);
+    return settingEntity;
   }
 }

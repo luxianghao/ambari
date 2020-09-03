@@ -18,8 +18,12 @@
 
 package org.apache.ambari.server.security.encryption;
 
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
+import java.io.File;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.security.SecurePasswordHelper;
@@ -27,11 +31,8 @@ import org.apache.ambari.server.security.credential.Credential;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 @Singleton
 public class CredentialStoreServiceImpl implements CredentialStoreService {
@@ -50,8 +51,6 @@ public class CredentialStoreServiceImpl implements CredentialStoreService {
     this.securePasswordHelper = securePasswordHelper;
 
     if (configuration != null) {
-      File masterKeyLocation = configuration.getMasterKeyLocation();
-
       try {
         initializeTemporaryCredentialStore(configuration.getTemporaryKeyStoreRetentionMinutes(),
             TimeUnit.MINUTES,
@@ -62,15 +61,9 @@ public class CredentialStoreServiceImpl implements CredentialStoreService {
         LOG.error("Failed to initialize the temporary credential store.  Storage of temporary credentials will fail.", e);
       }
 
-
       // If the MasterKeyService is initialized, assume that we should be initializing the persistent
       // CredentialStore; else do not initialize it.
-      MasterKeyService masterKeyService = null;
-      if(masterKeyLocation.exists()) {
-        masterKeyService = new MasterKeyServiceImpl(masterKeyLocation);
-      } else {
-        masterKeyService = new MasterKeyServiceImpl();
-      }
+      MasterKeyService masterKeyService = new MasterKeyServiceImpl(configuration);
       if (masterKeyService.isMasterKeyInitialized()) {
         try {
           initializePersistedCredentialStore(configuration.getMasterKeyStoreLocation(), masterKeyService);
@@ -200,7 +193,7 @@ public class CredentialStoreServiceImpl implements CredentialStoreService {
         ? temporaryCredentialStore.listCredentials()
         : null;
 
-    Map<String, CredentialStoreType> map = new HashMap<String, CredentialStoreType>();
+    Map<String, CredentialStoreType> map = new HashMap<>();
 
     if (persistedAliases != null) {
       for (String alias : persistedAliases) {

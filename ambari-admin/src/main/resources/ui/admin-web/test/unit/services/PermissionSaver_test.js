@@ -40,6 +40,7 @@ describe('PermissionSaver Service', function () {
               PermissionInfo: {
                 permission_name: 'CLUSTER.ADMINISTRATOR'
               },
+              ROLE: {},
               USER: ['u0', 'u1', 'g0'],
               GROUP: ['g0', 'g1', 'u0']
             },
@@ -47,6 +48,7 @@ describe('PermissionSaver Service', function () {
               PermissionInfo: {
                 permission_name: 'CLUSTER.OPERATOR'
               },
+              ROLE: {},
               USER: ['g1'],
               GROUP: ['u1']
             }
@@ -118,6 +120,7 @@ describe('PermissionSaver Service', function () {
               PermissionInfo: {
                 permission_name: 'CLUSTER.ADMINISTRATOR'
               },
+              ROLE: {},
               USER: ['u0', 'u1'],
               GROUP: ['g0', 'g1']
             },
@@ -125,6 +128,7 @@ describe('PermissionSaver Service', function () {
               PermissionInfo: {
                 permission_name: 'CLUSTER.OPERATOR'
               },
+              ROLE: {},
               USER: ['u0'],
               GROUP: ['g2']
             },
@@ -132,6 +136,7 @@ describe('PermissionSaver Service', function () {
               PermissionInfo: {
                 permission_name: 'CLUSTER.USER'
               },
+              ROLE: {},
               USER: ['u2'],
               GROUP: ['g0']
             }
@@ -146,12 +151,12 @@ describe('PermissionSaver Service', function () {
       describe(item.title, function () {
 
         beforeEach(function () {
-          spyOn($Cluster, 'updatePrivileges').andCallFake(angular.noop);
+          spyOn($Cluster, 'updatePrivileges').and.callFake(angular.noop);
           PermissionSaver.saveClusterPermissions(item.permissions, params);
         });
 
         it('updatePrivileges call', function () {
-          expect($Cluster.updatePrivileges.callCount).toEqual(item.updatePrivilegesCallCount);
+          expect($Cluster.updatePrivileges.calls.count()).toEqual(item.updatePrivilegesCallCount);
         });
 
         if (item.updatePrivilegesCallCount) {
@@ -242,12 +247,12 @@ describe('PermissionSaver Service', function () {
       ];
 
     beforeEach(function () {
-      spyOn($View, 'updatePrivileges').andCallFake(angular.noop);
+      spyOn($View, 'updatePrivileges').and.callFake(angular.noop);
       PermissionSaver.saveViewPermissions(permissions, params);
     });
 
       it('should update privileges', function () {
-        expect($View.updatePrivileges.callCount).toEqual(1);
+        expect($View.updatePrivileges.calls.count()).toEqual(1);
       });
 
       it('updatePrivileges arguments', function () {

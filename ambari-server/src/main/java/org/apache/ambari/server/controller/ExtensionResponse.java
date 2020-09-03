@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -41,7 +41,7 @@ public class ExtensionResponse {
 
   @Override
   public int hashCode() {
-    int result = 1;
+    int result;
     result = 31 + getExtensionName().hashCode();
     return result;
   }

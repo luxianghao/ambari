@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,12 +19,8 @@
 package org.apache.ambari.server.controller.spi;
 
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
  * The resource object represents a requested resource.  The resource
@@ -94,6 +90,7 @@ public interface Resource {
     User,
     Group,
     Member,
+    Mpack,
     Stack,
     StackVersion,
     ExtensionLink,
@@ -114,6 +111,7 @@ public interface Resource {
     TaskAttempt,
     RootService,
     RootServiceComponent,
+    RootServiceComponentConfiguration,
     RootServiceHostComponent,
     View,
     ViewURL,
@@ -138,6 +136,7 @@ public interface Resource {
     StackLevelConfiguration,
     LdapSyncEvent,
     UserPrivilege,
+    UserAuthenticationSource,
     GroupPrivilege,
     RepositoryVersion,
     CompatibleRepositoryVersion,
@@ -189,7 +188,7 @@ public interface Resource {
     /**
      * Map of all registered types.
      */
-    private static Map<String, Type> types = new ConcurrentHashMap<String, Type>();
+    private static Map<String, Type> types = new ConcurrentHashMap<>();
 
     /**
      * Ordinal number counter for registering external types.
@@ -215,6 +214,7 @@ public interface Resource {
     public static final Type User = InternalType.User.getType();
     public static final Type Group = InternalType.Group.getType();
     public static final Type Member = InternalType.Member.getType();
+    public static final Type Mpack = InternalType.Mpack.getType();
     public static final Type Stack = InternalType.Stack.getType();
     public static final Type StackVersion = InternalType.StackVersion.getType();
     public static final Type ExtensionLink = InternalType.ExtensionLink.getType();
@@ -235,6 +235,7 @@ public interface Resource {
     public static final Type TaskAttempt = InternalType.TaskAttempt.getType();
     public static final Type RootService = InternalType.RootService.getType();
     public static final Type RootServiceComponent = InternalType.RootServiceComponent.getType();
+    public static final Type RootServiceComponentConfiguration = InternalType.RootServiceComponentConfiguration.getType();
     public static final Type RootServiceHostComponent = InternalType.RootServiceHostComponent.getType();
     public static final Type View = InternalType.View.getType();
     public static final Type ViewURL = InternalType.ViewURL.getType();
@@ -259,6 +260,7 @@ public interface Resource {
     public static final Type StackLevelConfiguration = InternalType.StackLevelConfiguration.getType();
     public static final Type LdapSyncEvent = InternalType.LdapSyncEvent.getType();
     public static final Type UserPrivilege = InternalType.UserPrivilege.getType();
+    public static final Type UserAuthenticationSource = InternalType.UserAuthenticationSource.getType();
     public static final Type GroupPrivilege = InternalType.GroupPrivilege.getType();
     public static final Type RepositoryVersion = InternalType.RepositoryVersion.getType();
     public static final Type CompatibleRepositoryVersion = InternalType.CompatibleRepositoryVersion.getType();
@@ -286,6 +288,7 @@ public interface Resource {
     public static final Type ClusterKerberosDescriptor = InternalType.ClusterKerberosDescriptor.getType();
     public static final Type LoggingQuery = InternalType.LoggingQuery.getType();
     public static final Type RemoteCluster = InternalType.RemoteCluster.getType();
+
 
     /**
      * The type name.

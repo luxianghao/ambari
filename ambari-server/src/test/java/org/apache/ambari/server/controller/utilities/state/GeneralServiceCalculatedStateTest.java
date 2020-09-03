@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,11 +18,16 @@
 
 package org.apache.ambari.server.controller.utilities.state;
 
-  import java.util.Map;
+import java.sql.SQLException;
+import java.util.Map;
 
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.actionmanager.ActionManager;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
+import org.apache.ambari.server.orm.OrmTestHelper;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Service;
@@ -41,7 +46,6 @@ import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Module;
-import com.google.inject.persist.PersistService;
 import com.google.inject.util.Modules;
 
 public abstract class GeneralServiceCalculatedStateTest {
@@ -57,10 +61,13 @@ public abstract class GeneralServiceCalculatedStateTest {
   @Inject
   protected Clusters clusters;
 
+  @Inject
+  private OrmTestHelper ormTestHelper;
 
   @Before
   public void setup() throws Exception {
     final StackId stack211 = new StackId("HDP-2.1.1");
+    final String version = "2.1.1-1234";
 
     injector = Guice.createInjector(Modules.override(
       new InMemoryDefaultTestModule()).with(new Module() {
@@ -73,11 +80,13 @@ public abstract class GeneralServiceCalculatedStateTest {
     injector.getInstance(GuiceJpaInitializer.class);
     injector.injectMembers(this);
 
+    RepositoryVersionEntity repositoryVersion = ormTestHelper.getOrCreateRepositoryVersion(stack211,
+        version);
+
     clusters.addCluster(clusterName, stack211);
     cluster = clusters.getCluster(clusterName);
 
-    service = cluster.addService(getServiceName());
-    service.setDesiredStackVersion(cluster.getDesiredStackVersion());
+    service = cluster.addService(getServiceName(), repositoryVersion);
 
     createComponentsAndHosts();
 
@@ -107,8 +116,8 @@ public abstract class GeneralServiceCalculatedStateTest {
 
 
   @After
-  public void after() {
-    injector.getInstance(PersistService.class).stop();
+  public void after() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
     injector = null;
   }
 

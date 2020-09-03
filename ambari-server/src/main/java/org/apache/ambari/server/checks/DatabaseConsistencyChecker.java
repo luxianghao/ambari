@@ -22,6 +22,7 @@ import java.util.Enumeration;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.audit.AuditLoggerModule;
 import org.apache.ambari.server.controller.ControllerModule;
+import org.apache.ambari.server.ldap.LdapModule;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.utils.EventBusSynchronizer;
 import org.apache.log4j.FileAppender;
@@ -98,12 +99,12 @@ public class DatabaseConsistencyChecker {
     DatabaseConsistencyChecker databaseConsistencyChecker = null;
     try {
 
-      Injector injector = Guice.createInjector(new CheckHelperControllerModule(), new CheckHelperAuditModule());
+      Injector injector = Guice.createInjector(new CheckHelperControllerModule(), new CheckHelperAuditModule(), new LdapModule());
       databaseConsistencyChecker = injector.getInstance(DatabaseConsistencyChecker.class);
 
       databaseConsistencyChecker.startPersistenceService();
 
-      DatabaseConsistencyCheckHelper.runAllDBChecks();
+      DatabaseConsistencyCheckHelper.runAllDBChecks(false);
       DatabaseConsistencyCheckHelper.checkHostComponentStates();
 
       DatabaseConsistencyCheckHelper.checkServiceConfigs();
@@ -120,7 +121,7 @@ public class DatabaseConsistencyChecker {
       }
     } finally {
         DatabaseConsistencyCheckHelper.closeConnection();
-        if (DatabaseConsistencyCheckHelper.ifErrorsFound() || DatabaseConsistencyCheckHelper.ifWarningsFound()) {
+        if (DatabaseConsistencyCheckHelper.getLastCheckResult().isErrorOrWarning()) {
           String ambariDBConsistencyCheckLog = "ambari-server-check-database.log";
           if (LOG instanceof Log4jLoggerAdapter) {
             org.apache.log4j.Logger dbConsistencyCheckHelperLogger = org.apache.log4j.Logger.getLogger(DatabaseConsistencyCheckHelper.class);
@@ -135,8 +136,9 @@ public class DatabaseConsistencyChecker {
           }
           ambariDBConsistencyCheckLog = ambariDBConsistencyCheckLog.replace("//", "/");
 
-          if (DatabaseConsistencyCheckHelper.ifErrorsFound()) {
+          if (DatabaseConsistencyCheckHelper.getLastCheckResult().isError()) {
             System.out.print(String.format("DB configs consistency check failed. Run \"ambari-server start --skip-database-check\" to skip. " +
+                  "You may try --auto-fix-database flag to attempt to fix issues automatically. " +
                   "If you use this \"--skip-database-check\" option, do not make any changes to your cluster topology " +
                   "or perform a cluster upgrade until you correct the database consistency issues. See \"%s\" " +
                   "for more details on the consistency issues.", ambariDBConsistencyCheckLog));

@@ -20,8 +20,7 @@ package org.apache.ambari.server.checks;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.ambari.server.configuration.Configuration;
-import org.apache.ambari.server.controller.PrereqCheckRequest;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Host;
@@ -29,9 +28,14 @@ import org.apache.ambari.server.state.HostHealthStatus;
 import org.apache.ambari.server.state.HostHealthStatus.HealthStatus;
 import org.apache.ambari.server.state.MaintenanceState;
 import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.state.stack.PrereqCheckStatus;
-import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.spi.ClusterInformation;
+import org.apache.ambari.spi.RepositoryType;
+import org.apache.ambari.spi.upgrade.UpgradeCheckRequest;
+import org.apache.ambari.spi.upgrade.UpgradeCheckResult;
+import org.apache.ambari.spi.upgrade.UpgradeCheckStatus;
+import org.apache.ambari.spi.upgrade.UpgradeType;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
 
@@ -44,17 +48,16 @@ import com.google.inject.Provider;
 public class HostsHeartbeatCheckTest {
   private final Clusters clusters = Mockito.mock(Clusters.class);
 
-  @Test
-  public void testIsApplicable() throws Exception {
-    PrereqCheckRequest checkRequest = new PrereqCheckRequest("c1");
-    checkRequest.setRepositoryVersion("HDP-2.2.0.0");
-    checkRequest.setSourceStackId(new StackId("HDP", "2.2"));
-    checkRequest.setTargetStackId(new StackId("HDP", "2.2"));
-    HostsHeartbeatCheck hhc = new HostsHeartbeatCheck();
-    Configuration config = Mockito.mock(Configuration.class);
-    hhc.config = config;
+  final RepositoryVersionEntity m_repositoryVersion = Mockito.mock(RepositoryVersionEntity.class);
 
-    Assert.assertTrue(hhc.isApplicable(checkRequest));
+  /**
+   *
+   */
+  @Before
+  public void setup() throws Exception {
+    Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("2.2.0.0-1234");
+    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(new StackId("HDP", "2.2"));
   }
 
   /**
@@ -103,21 +106,26 @@ public class HostsHeartbeatCheckTest {
 
     Mockito.when(cluster.getHosts()).thenReturn(hosts);
 
-    PrerequisiteCheck check = new PrerequisiteCheck(null, null);
-    hostHeartbeatCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    ClusterInformation clusterInformation = new ClusterInformation("cluster", false, null, null, null);
+    UpgradeCheckRequest request = new UpgradeCheckRequest(clusterInformation, UpgradeType.ROLLING, null, null, null);
+
+    UpgradeCheckResult check = hostHeartbeatCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.FAIL, check.getStatus());
+    Assert.assertFalse(check.getFailedDetail().isEmpty());
 
     // put the unhealthy host into MM which will allow this check to pass
-    check = new PrerequisiteCheck(null, null);
+    check = new UpgradeCheckResult(null, null);
     Mockito.when(host3.getMaintenanceState(1L)).thenReturn(MaintenanceState.ON);
-    hostHeartbeatCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+    check = hostHeartbeatCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.PASS, check.getStatus());
+    Assert.assertTrue(check.getFailedDetail().isEmpty());
 
     // make the host healthy and take it out of MM to produce a PASS result
     Mockito.when(status3.getHealthStatus()).thenReturn(HealthStatus.HEALTHY);
-    check = new PrerequisiteCheck(null, null);
+    check = new UpgradeCheckResult(null, null);
     Mockito.when(host3.getMaintenanceState(1L)).thenReturn(MaintenanceState.OFF);
-    hostHeartbeatCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+    check =hostHeartbeatCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.PASS, check.getStatus());
+    Assert.assertTrue(check.getFailedDetail().isEmpty());
   }
 }

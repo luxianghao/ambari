@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,8 +21,9 @@ import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlElement;
 
-import org.apache.ambari.server.state.RepositoryType;
-import org.apache.commons.lang.StringUtils;
+import org.apache.ambari.spi.RepositoryType;
+import org.apache.ambari.spi.stack.StackReleaseInfo;
+import org.apache.ambari.spi.stack.StackReleaseVersion;
 
 /**
  * Release information for a repository.
@@ -43,7 +44,7 @@ public class Release {
   public String stackId;
 
   /**
-   * The stack version.
+   * The stack-based release version.
    */
   @XmlElement(name="version")
   public String version;
@@ -53,6 +54,12 @@ public class Release {
    */
   @XmlElement(name="build")
   public String build;
+
+  /**
+   * The hotfix number.
+   */
+  @XmlElement(name="hotfix")
+  public String hotfix;
 
   /**
    * The compatability regex.  This is used to relate the release to another release.
@@ -75,14 +82,16 @@ public class Release {
   /**
    * @return the full version
    */
-  public String getFullVersion() {
-    StringBuilder sb = new StringBuilder(version);
+  public String getFullVersion(StackReleaseVersion stackVersion) {
+    return stackVersion.getFullVersion(new StackReleaseInfo(
+        version, hotfix, build));
+  }
 
-    if (StringUtils.isNotBlank(build)) {
-      sb.append('-').append(StringUtils.trim(build));
-    }
-
-    return sb.toString();
+  /**
+   * @return the release info for the VDF
+   */
+  public StackReleaseInfo getReleaseInfo() {
+    return new StackReleaseInfo(version, hotfix, build);
   }
 
 }

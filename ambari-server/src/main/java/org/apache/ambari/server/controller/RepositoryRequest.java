@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,10 +25,12 @@ public class RepositoryRequest extends OperatingSystemRequest {
   private String mirrorsList;
   private boolean verify = true;
   private Long clusterVersionId = null;
+  private String repoName = null;
 
-  public RepositoryRequest(String stackName, String stackVersion, String osType, String repoId) {
+  public RepositoryRequest(String stackName, String stackVersion, String osType, String repoId, String repoName) {
     super(stackName, stackVersion, osType);
     setRepoId(repoId);
+    setRepoName(repoName);
   }
 
   public String getRepoId() {
@@ -85,14 +87,30 @@ public class RepositoryRequest extends OperatingSystemRequest {
     return clusterVersionId;
   }
 
+  /**
+   * @return name of the repository (without version identifier)
+   */
+  public String getRepoName() {
+    return repoName;
+  }
+
+  /**
+   * @param repoName name of the repository (without version identifier)
+   */
+  public void setRepoName(String repoName) {
+    this.repoName = repoName;
+  }
+
   @Override
   public String toString() {
     return "RepositoryRequest [repoId=" + repoId + ", baseUrl=" + baseUrl
         + ", verify=" + verify + ", getOsType()=" + getOsType()
         + ", getRepositoryVersionId()=" + getRepositoryVersionId()
         + ", getStackVersion()=" + getStackVersion() + ", getStackName()="
-        + getStackName() + "]";
+        + getStackName() + ", getRepoName()=" + getRepoName() + "]";
   }
+
+
 
   /**
    * Gets the mirrors list for the repo.

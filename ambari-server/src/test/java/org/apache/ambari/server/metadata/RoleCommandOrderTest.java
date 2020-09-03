@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,17 +18,29 @@
 
 package org.apache.ambari.server.metadata;
 
+import static junit.framework.Assert.assertEquals;
+import static junit.framework.Assert.assertFalse;
+import static junit.framework.Assert.assertNotNull;
+import static junit.framework.Assert.assertTrue;
+import static org.easymock.EasyMock.createMock;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.replay;
+import static org.easymock.EasyMock.verify;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.Role;
 import org.apache.ambari.server.RoleCommand;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
@@ -48,19 +60,11 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 
 import junit.framework.Assert;
-import static junit.framework.Assert.assertEquals;
-import static junit.framework.Assert.assertFalse;
-import static junit.framework.Assert.assertNotNull;
-import static junit.framework.Assert.assertTrue;
-import static org.easymock.EasyMock.createMock;
-import static org.easymock.EasyMock.expect;
-import static org.easymock.EasyMock.replay;
-import static org.easymock.EasyMock.verify;
 
 public class RoleCommandOrderTest {
 
@@ -77,8 +81,8 @@ public class RoleCommandOrderTest {
   }
 
   @After
-  public void teardown() {
-    injector.getInstance(PersistService.class).stop();
+  public void teardown() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
 
@@ -89,21 +93,26 @@ public class RoleCommandOrderTest {
   @Test
   public void testInitializeAtGLUSTERFSCluster() throws AmbariException {
 
-
+    StackId stackId = new StackId("HDP", "2.0.6");
     ClusterImpl cluster = createMock(ClusterImpl.class);
     Service service = createMock(Service.class);
+    expect(service.getDesiredStackId()).andReturn(stackId);
     expect(cluster.getClusterId()).andReturn(1L);
-    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
     expect(cluster.getService("GLUSTERFS")).andReturn(service);
     expect(cluster.getService("HDFS")).andReturn(null);
     expect(cluster.getService("YARN")).andReturn(null);
-    replay(cluster);
+
+    expect(cluster.getServices()).andReturn(ImmutableMap.<String, Service>builder()
+        .put("GLUSTERFS", service)
+        .build()).atLeastOnce();
+
+    replay(cluster, service);
 
     RoleCommandOrder rco = roleCommandOrderProvider.getRoleCommandOrder(cluster);
 
     Map<RoleCommandPair, Set<RoleCommandPair>> deps = rco.getDependencies();
     assertTrue("Dependencies are loaded after initialization", deps.size() > 0);
-    verify(cluster);
+    verify(cluster, service);
 	// Check that HDFS components are not present in dependencies
     // Checking blocked roles
     assertFalse(dependenciesContainBlockedRole(deps, Role.DATANODE));
@@ -141,10 +150,13 @@ public class RoleCommandOrderTest {
     expect(cluster.getService("HDFS")).andReturn(hdfsService).atLeastOnce();
     expect(cluster.getService("YARN")).andReturn(null).atLeastOnce();
     expect(hdfsService.getServiceComponent("JOURNALNODE")).andReturn(null);
-    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+    expect(hdfsService.getDesiredStackId()).andReturn(new StackId("HDP", "2.0.6"));
+//    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+    expect(cluster.getServices()).andReturn(ImmutableMap.<String, Service>builder()
+        .put("HDFS", hdfsService)
+        .build()).anyTimes();
 
-    replay(cluster);
-    replay(hdfsService);
+    replay(cluster, hdfsService);
 
     RoleCommandOrder rco = roleCommandOrderProvider.getRoleCommandOrder(cluster);
     Map<RoleCommandPair, Set<RoleCommandPair>> deps = rco.getDependencies();
@@ -185,10 +197,13 @@ public class RoleCommandOrderTest {
     expect(cluster.getService("HDFS")).andReturn(hdfsService).atLeastOnce();
     expect(cluster.getService("YARN")).andReturn(null);
     expect(hdfsService.getServiceComponent("JOURNALNODE")).andReturn(journalnodeSC);
-    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+    expect(hdfsService.getDesiredStackId()).andReturn(new StackId("HDP", "2.0.6"));
+//    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+    expect(cluster.getServices()).andReturn(ImmutableMap.<String, Service>builder()
+        .put("HDFS", hdfsService)
+        .build()).anyTimes();
 
-    replay(cluster);
-    replay(hdfsService);
+    replay(cluster, hdfsService);
 
     RoleCommandOrder rco = roleCommandOrderProvider.getRoleCommandOrder(cluster);
     Map<RoleCommandPair, Set<RoleCommandPair>> deps = rco.getDependencies();
@@ -221,7 +236,7 @@ public class RoleCommandOrderTest {
     expect(cluster.getService("GLUSTERFS")).andReturn(null);
     expect(cluster.getClusterId()).andReturn(1L);
 
-    Map<String, ServiceComponentHost> hostComponents = new HashMap<String, ServiceComponentHost>();
+    Map<String, ServiceComponentHost> hostComponents = new HashMap<>();
     hostComponents.put("1",sch1);
     hostComponents.put("2",sch2);
 
@@ -232,7 +247,11 @@ public class RoleCommandOrderTest {
     expect(cluster.getService("HDFS")).andReturn(null);
     expect(yarnService.getServiceComponent("RESOURCEMANAGER")).andReturn(resourcemanagerSC).anyTimes();
     expect(resourcemanagerSC.getServiceComponentHosts()).andReturn(hostComponents).anyTimes();
-    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+//    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+    expect(yarnService.getDesiredStackId()).andReturn(new StackId("HDP", "2.0.6"));
+    expect(cluster.getServices()).andReturn(ImmutableMap.<String, Service>builder()
+        .put("YARN", yarnService)
+        .build()).anyTimes();
 
     replay(cluster, yarnService, sch1, sch2, resourcemanagerSC);
 
@@ -283,8 +302,12 @@ public class RoleCommandOrderTest {
     expect(cluster.getService("YARN")).andReturn(yarnService).atLeastOnce();
     expect(cluster.getService("HDFS")).andReturn(null);
     expect(yarnService.getServiceComponent("RESOURCEMANAGER")).andReturn(resourcemanagerSC).anyTimes();
+    expect(yarnService.getDesiredStackId()).andReturn(new StackId("HDP", "2.0.6")).anyTimes();
     expect(resourcemanagerSC.getServiceComponentHosts()).andReturn(hostComponents).anyTimes();
-    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+//    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.6"));
+    expect(cluster.getServices()).andReturn(ImmutableMap.<String, Service>builder()
+        .put("YARN", yarnService)
+        .build()).anyTimes();
 
     replay(cluster, yarnService, sch1, sch2, resourcemanagerSC);
 
@@ -377,7 +400,11 @@ public class RoleCommandOrderTest {
     expect(cluster.getService("YARN")).andReturn(null);
     expect(hdfsService.getServiceComponent("JOURNALNODE")).andReturn(null);
     //There is no rco file in this stack, should use default
-    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.5"));
+//    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.5"));
+    expect(hdfsService.getDesiredStackId()).andReturn(new StackId("HDP", "2.0.5"));
+    expect(cluster.getServices()).andReturn(ImmutableMap.<String, Service>builder()
+        .put("HDFS", hdfsService)
+        .build()).anyTimes();
 
     replay(cluster);
     replay(hdfsService);
@@ -412,17 +439,18 @@ public class RoleCommandOrderTest {
         "HBASE_MASTER", hbaseMaster);
     expect(hbaseService.getServiceComponents()).andReturn(hbaseComponents).anyTimes();
 
-    Map<String, Service> installedServices = new HashMap<String, Service>();
+    Map<String, Service> installedServices = new HashMap<>();
     installedServices.put("HDFS", hdfsService);
     installedServices.put("HBASE", hbaseService);
     expect(cluster.getServices()).andReturn(installedServices).atLeastOnce();
-
 
     expect(cluster.getService("HDFS")).andReturn(hdfsService).atLeastOnce();
     expect(cluster.getService("GLUSTERFS")).andReturn(null);
     expect(cluster.getService("YARN")).andReturn(null);
     expect(hdfsService.getServiceComponent("JOURNALNODE")).andReturn(null);
-    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.5"));
+//    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.0.5"));
+    expect(hdfsService.getDesiredStackId()).andReturn(new StackId("HDP", "2.0.5"));
+    expect(hbaseService.getDesiredStackId()).andReturn(new StackId("HDP", "2.0.5"));
 
     //replay
     replay(cluster, hdfsService, hbaseService, hbaseMaster, namenode);
@@ -437,6 +465,72 @@ public class RoleCommandOrderTest {
     Assert.assertFalse(transitiveServices.isEmpty());
     Assert.assertEquals(1, transitiveServices.size());
     Assert.assertTrue(transitiveServices.contains(hdfsService));
+  }
+
+  /**
+   * Tests the ability to override any previous mapping by using the
+   * {@code -OVERRIDE} placeholder. For example:
+   *
+   * <pre>
+   * "host_ordered_upgrade" : {
+   *   "DATANODE-START-OVERRIDE" : ["NAMENODE-START"],
+   *   "NODEMANAGER-START-OVERRIDE": ["RESOURCEMANAGER-START"],
+   *   "RESOURCEMANAGER-START-OVERRIDE": ["NAMENODE-START"]
+   * }
+   * </pre>
+   *
+   * @throws IOException
+   */
+  @Test
+  public void testOverride() throws Exception {
+    ClusterImpl cluster = createMock(ClusterImpl.class);
+    expect(cluster.getService("GLUSTERFS")).andReturn(null).atLeastOnce();
+    expect(cluster.getClusterId()).andReturn(1L).atLeastOnce();
+    Service hdfsService = createMock(Service.class);
+
+    expect(cluster.getService("HDFS")).andReturn(hdfsService).atLeastOnce();
+    expect(cluster.getService("YARN")).andReturn(null).atLeastOnce();
+    expect(hdfsService.getServiceComponent("JOURNALNODE")).andReturn(null);
+    expect(hdfsService.getDesiredStackId()).andReturn(new StackId("HDP", "2.2.0")).anyTimes();
+    expect(cluster.getServices()).andReturn(ImmutableMap.<String, Service>builder()
+        .put("HDFS", hdfsService)
+        .build()).anyTimes();
+
+    // There is no rco file in this stack, should use default
+//    expect(cluster.getCurrentStackVersion()).andReturn(new StackId("HDP", "2.2.0")).atLeastOnce();
+
+    replay(cluster, hdfsService);
+
+    RoleCommandOrder rco = roleCommandOrderProvider.getRoleCommandOrder(cluster);
+
+    // create command pairs
+    RoleCommandPair startDN = new RoleCommandPair(Role.DATANODE, RoleCommand.START);
+    RoleCommandPair startNM = new RoleCommandPair(Role.NODEMANAGER, RoleCommand.START);
+    RoleCommandPair startNN = new RoleCommandPair(Role.NAMENODE, RoleCommand.START);
+    RoleCommandPair startRM = new RoleCommandPair(Role.RESOURCEMANAGER, RoleCommand.START);
+
+    Set<RoleCommandPair> startDNDeps = rco.getDependencies().get(startDN);
+    Set<RoleCommandPair> startNMDeps = rco.getDependencies().get(startNM);
+
+    Assert.assertNull(startDNDeps);
+    Assert.assertTrue(startNMDeps.contains(startDN));
+
+    rco = (RoleCommandOrder) rco.clone();
+    LinkedHashSet<String> keys = rco.getSectionKeys();
+    keys.add("host_ordered_upgrade");
+    rco.initialize(cluster, keys);
+
+    startDNDeps = rco.getDependencies().get(startDN);
+    startNMDeps = rco.getDependencies().get(startNM);
+
+    // now ensure that the role orders have been modified correctly
+    Assert.assertTrue(startDNDeps.contains(startNN));
+    Assert.assertTrue(startNMDeps.contains(startRM));
+    Assert.assertFalse(startNMDeps.contains(startDN));
+    Assert.assertEquals(2, startNMDeps.size());
+
+    verify(cluster);
+    verify(hdfsService);
   }
 
   private boolean dependenciesContainBlockedRole(Map<RoleCommandPair,

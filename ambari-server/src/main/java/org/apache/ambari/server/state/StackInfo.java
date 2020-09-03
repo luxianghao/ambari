@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,6 +19,7 @@
 package org.apache.ambari.server.state;
 
 import java.io.File;
+import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -28,22 +29,33 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
 
 import org.apache.ambari.server.controller.StackVersionResponse;
 import org.apache.ambari.server.stack.Validable;
+import org.apache.ambari.server.stack.upgrade.ConfigUpgradePack;
+import org.apache.ambari.server.stack.upgrade.UpgradePack;
+import org.apache.ambari.server.state.repository.DefaultStackVersion;
 import org.apache.ambari.server.state.repository.VersionDefinitionXml;
-import org.apache.ambari.server.state.stack.ConfigUpgradePack;
+import org.apache.ambari.server.state.stack.LatestRepoCallable;
 import org.apache.ambari.server.state.stack.RepositoryXml;
 import org.apache.ambari.server.state.stack.StackRoleCommandOrder;
-import org.apache.ambari.server.state.stack.UpgradePack;
+import org.apache.ambari.server.utils.VersionUtils;
+import org.apache.ambari.spi.stack.StackReleaseVersion;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import com.google.common.collect.Collections2;
 import com.google.common.collect.ListMultimap;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Multimaps;
 import com.google.common.io.Files;
+import com.google.inject.Injector;
 
-public class StackInfo implements Comparable<StackInfo>, Validable{
+public class StackInfo implements Comparable<StackInfo>, Validable {
+  private static final Logger LOG = LoggerFactory.getLogger(StackInfo.class);
+
   private String minJdk;
   private String maxJdk;
   private String name;
@@ -51,8 +63,7 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   private String minUpgradeVersion;
   private boolean active;
   private String rcoFileLocation;
-  private String kerberosDescriptorFileLocation;
-  private String widgetsDescriptorFileLocation;
+  private String kerberosDescriptorPreConfigurationFileLocation;
   private List<RepositoryInfo> repositories;
   private Collection<ServiceInfo> services;
   private Collection<ExtensionInfo> extensions;
@@ -67,16 +78,33 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   private Map<String, Map<PropertyInfo.PropertyType, Set<String>>> propertiesTypesCache =
       Collections.synchronizedMap(new HashMap<String, Map<PropertyInfo.PropertyType, Set<String>>>());
   private Map<String, Map<String, Map<String, String>>> configPropertyAttributes =  null;
-  /**
-   * Meaning: stores subpath from stack root to exact hooks folder for stack. These hooks are
-   * applied to all commands for services in current stack.
-   */
-  private String stackHooksFolder;
   private String upgradesFolder = null;
   private volatile Map<String, PropertyInfo> requiredProperties;
   private Map<String, VersionDefinitionXml> versionDefinitions = new ConcurrentHashMap<>();
-  private Set<String> errorSet = new HashSet<String>();
+  private Set<String> errorSet = new HashSet<>();
   private RepositoryXml repoXml = null;
+
+  private VersionDefinitionXml latestVersion = null;
+
+  private String releaseVersionClass = null;
+
+  /**
+   * A {@link ClassLoader} for any JARs discovered in the stack's library
+   * folder.
+   */
+  private URLClassLoader libraryClassLoader = null;
+
+  /**
+   * List of services removed from current stack
+   * */
+  private List<String> removedServices = new ArrayList<>();
+
+  /**
+  * List of services withnot configurations
+  * */
+  private List<String> servicesWithNoConfigs = new ArrayList<>();
+
+  private RefreshCommandConfiguration refreshCommandConfiguration = new RefreshCommandConfiguration();
 
   public String getMinJdk() {
     return minJdk;
@@ -92,6 +120,10 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
 
   public void setMaxJdk(String maxJdk) {
     this.maxJdk = maxJdk;
+  }
+
+  public void setReleaseVersionClass(String className) {
+    releaseVersionClass = className;
   }
 
   /**
@@ -124,7 +156,7 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
 
   @Override
   public void addErrors(Collection<String> errors) {
-    this.errorSet.addAll(errors);
+    errorSet.addAll(errors);
   }
 
   public String getName() {
@@ -144,7 +176,9 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   }
 
   public List<RepositoryInfo> getRepositories() {
-    if( repositories == null ) repositories = new ArrayList<RepositoryInfo>();
+    if( repositories == null ) {
+      repositories = new ArrayList<>();
+    }
     return repositories;
   }
 
@@ -156,7 +190,9 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   }
 
   public synchronized Collection<ServiceInfo> getServices() {
-    if (services == null) services = new ArrayList<ServiceInfo>();
+    if (services == null) {
+      services = new ArrayList<>();
+    }
     return services;
   }
 
@@ -176,7 +212,9 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   }
 
   public synchronized Collection<ExtensionInfo> getExtensions() {
-    if (extensions == null) extensions = new ArrayList<ExtensionInfo>();
+    if (extensions == null) {
+      extensions = new ArrayList<>();
+    }
     return extensions;
   }
 
@@ -194,17 +232,37 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   public ExtensionInfo getExtensionByService(String serviceName) {
     Collection<ExtensionInfo> extensions = getExtensions();
     for (ExtensionInfo extension : extensions) {
+      Collection<ServiceInfo> services = extension.getServices();
       for (ServiceInfo service : services) {
-        if (service.getName().equals(serviceName))
+        if (service.getName().equals(serviceName)) {
           return extension;
+        }
       }
     }
     //todo: exception?
     return null;
   }
 
+  public void addExtension(ExtensionInfo extension) {
+    Collection<ExtensionInfo> extensions = getExtensions();
+    extensions.add(extension);
+    Collection<ServiceInfo> services = getServices();
+    services.addAll(extension.getServices());
+  }
+
+  public void removeExtension(ExtensionInfo extension) {
+    Collection<ExtensionInfo> extensions = getExtensions();
+    extensions.remove(extension);
+    Collection<ServiceInfo> services = getServices();
+    for (ServiceInfo service : extension.getServices()) {
+      services.remove(service);
+    }
+  }
+
   public List<PropertyInfo> getProperties() {
-    if (properties == null) properties = new ArrayList<PropertyInfo>();
+    if (properties == null) {
+      properties = new ArrayList<>();
+    }
     return properties;
   }
 
@@ -219,7 +277,7 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
    */
   public synchronized Map<String, Map<String, Map<String, String>>> getConfigTypeAttributes() {
     return configTypes == null ?
-        Collections.<String, Map<String, Map<String, String>>>emptyMap() :
+        Collections.emptyMap() :
         Collections.unmodifiableMap(configTypes);
   }
 
@@ -231,8 +289,8 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
    * @param typeAttributes  attributes associated with the type
    */
   public synchronized void setConfigTypeAttributes(String type, Map<String, Map<String, String>> typeAttributes) {
-    if (this.configTypes == null) {
-      configTypes = new HashMap<String, Map<String, Map<String, String>>>();
+    if (configTypes == null) {
+      configTypes = new HashMap<>();
     }
     // todo: no exclusion mechanism for stack config types
     configTypes.put(type, typeAttributes);
@@ -245,7 +303,7 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
    * @param types map of type attributes
    */
   public synchronized void setAllConfigAttributes(Map<String, Map<String, Map<String, String>>> types) {
-    configTypes = new HashMap<String, Map<String, Map<String, String>>>();
+    configTypes = new HashMap<>();
     for (Map.Entry<String, Map<String, Map<String, String>>> entry : types.entrySet()) {
       setConfigTypeAttributes(entry.getKey(), entry.getValue());
     }
@@ -267,7 +325,7 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
       sb.append("\n\t\tRepositories:");
       for (RepositoryInfo repository : repositories) {
         sb.append("\t\t");
-        sb.append(repository.toString());
+        sb.append(repository);
       }
     }
 
@@ -294,15 +352,12 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
 
   public StackVersionResponse convertToResponse() {
 
-    // Get the stack-level Kerberos descriptor file path
-    String stackDescriptorFileFilePath = getKerberosDescriptorFileLocation();
-
     // Collect the services' Kerberos descriptor files
     Collection<ServiceInfo> serviceInfos = getServices();
     // The collection of service descriptor files. A Set is being used because some Kerberos descriptor
     // files contain multiple services, therefore the same File may be encountered more than once.
     // For example the YARN directory may contain YARN and MAPREDUCE2 services.
-    Collection<File> serviceDescriptorFiles = new HashSet<File>();
+    Collection<File> serviceDescriptorFiles = new HashSet<>();
     if (serviceInfos != null) {
       for (ServiceInfo serviceInfo : serviceInfos) {
         File file = serviceInfo.getKerberosDescriptorFile();
@@ -312,20 +367,11 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
       }
     }
 
-    return new StackVersionResponse(getVersion(), getMinUpgradeVersion(),
+    return new StackVersionResponse(getVersion(),
         isActive(), getParentStackVersion(), getConfigTypeAttributes(),
-        (stackDescriptorFileFilePath == null) ? null : new File(stackDescriptorFileFilePath),
         serviceDescriptorFiles,
-        null == upgradePacks ? Collections.<String>emptySet() : upgradePacks.keySet(),
+        null == upgradePacks ? Collections.emptySet() : upgradePacks.keySet(),
         isValid(), getErrors(), getMinJdk(), getMaxJdk());
-  }
-
-  public String getMinUpgradeVersion() {
-    return minUpgradeVersion;
-  }
-
-  public void setMinUpgradeVersion(String minUpgradeVersion) {
-    this.minUpgradeVersion = minUpgradeVersion;
   }
 
   public boolean isActive() {
@@ -361,38 +407,22 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
   }
 
   /**
-   * Gets the path to the stack-level Kerberos descriptor file
+   * Gets the path to the stack-level Kerberos descriptor pre-configuration file
    *
-   * @return a String containing the path to the stack-level Kerberos descriptor file
+   * @return a String containing the path to the stack-level Kerberos descriptor pre-configuration file
    */
-  public String getKerberosDescriptorFileLocation() {
-    return kerberosDescriptorFileLocation;
+  public String getKerberosDescriptorPreConfigurationFileLocation() {
+    return kerberosDescriptorPreConfigurationFileLocation;
   }
 
   /**
    * Sets the path to the stack-level Kerberos descriptor file
    *
-   * @param kerberosDescriptorFileLocation a String containing the path to the stack-level Kerberos
-   *                                       descriptor file
+   * @param kerberosDescriptorPreConfigurationFileLocation a String containing the path to the stack-level Kerberos
+   *                                                       descriptor file
    */
-  public void setKerberosDescriptorFileLocation(String kerberosDescriptorFileLocation) {
-    this.kerberosDescriptorFileLocation = kerberosDescriptorFileLocation;
-  }
-
-  public String getWidgetsDescriptorFileLocation() {
-    return widgetsDescriptorFileLocation;
-  }
-
-  public void setWidgetsDescriptorFileLocation(String widgetsDescriptorFileLocation) {
-    this.widgetsDescriptorFileLocation = widgetsDescriptorFileLocation;
-  }
-
-  public String getStackHooksFolder() {
-    return stackHooksFolder;
-  }
-
-  public void setStackHooksFolder(String stackHooksFolder) {
-    this.stackHooksFolder = stackHooksFolder;
+  public void setKerberosDescriptorPreConfigurationFileLocation(String kerberosDescriptorPreConfigurationFileLocation) {
+    this.kerberosDescriptorPreConfigurationFileLocation = kerberosDescriptorPreConfigurationFileLocation;
   }
 
   /**
@@ -428,6 +458,11 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
    * @param upgradePacks map of upgrade packs
    */
   public void setUpgradePacks(Map<String, UpgradePack> upgradePacks) {
+    if (null != upgradePacks) {
+      upgradePacks.values().forEach(pack -> {
+        pack.setOwnerStackId(new StackId(this));
+      });
+    }
     this.upgradePacks = upgradePacks;
   }
 
@@ -451,9 +486,10 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
 
   @Override
   public int compareTo(StackInfo o) {
-    String myId = name + "-" + version;
-    String oId = o.name + "-" + o.version;
-    return myId.compareTo(oId);
+    if (name.equals(o.name)) {
+      return VersionUtils.compareVersions(version, o.version);
+    }
+    return name.compareTo(o.name);
   }
 
   //todo: ensure that required properties are never modified...
@@ -463,7 +499,7 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
       synchronized(this) {
         result = requiredProperties;
         if (result == null) {
-          requiredProperties = result = new HashMap<String, PropertyInfo>();
+          requiredProperties = result = new HashMap<>();
           List<PropertyInfo> properties = getProperties();
           for (PropertyInfo propertyInfo : properties) {
             if (propertyInfo.isRequireInput()) {
@@ -485,8 +521,9 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
           if (propertyInfo.getFilename().contains(configType) && !propertyInfo.getPropertyTypes().isEmpty()) {
             Set<PropertyInfo.PropertyType> types = propertyInfo.getPropertyTypes();
             for (PropertyInfo.PropertyType propertyType : types) {
-              if (!propertiesTypes.containsKey(propertyType))
-                propertiesTypes.put(propertyType, new HashSet<String>());
+              if (!propertiesTypes.containsKey(propertyType)) {
+                propertiesTypes.put(propertyType, new HashSet<>());
+              }
               propertiesTypes.get(propertyType).add(propertyInfo.getName());
             }
           }
@@ -522,10 +559,10 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
         String hidden = pi.getPropertyValueAttributes().getHidden();
         if(hidden != null){
           if(!result.containsKey(propertyConfigType)){
-            result.put(propertyConfigType, new HashMap<String, Map<String, String>>());
+            result.put(propertyConfigType, new HashMap<>());
           }
           if(!result.get(propertyConfigType).containsKey("hidden")){
-            result.get(propertyConfigType).put("hidden", new HashMap<String, String>());
+            result.get(propertyConfigType).put("hidden", new HashMap<>());
           }
           result.get(propertyConfigType).get("hidden").put(propertyName, hidden);
         }
@@ -561,6 +598,133 @@ public class StackInfo implements Comparable<StackInfo>, Validable{
    */
   public RepositoryXml getRepositoryXml() {
     return repoXml;
+  }
+
+  public List<String> getRemovedServices() {
+    return removedServices;
+  }
+
+  public void setRemovedServices(List<String> removedServices) {
+    this.removedServices = removedServices;
+  }
+
+  public List<String> getServicesWithNoConfigs() {
+    return servicesWithNoConfigs;
+  }
+
+  public void setServicesWithNoConfigs(List<String> servicesWithNoConfigs) {
+    this.servicesWithNoConfigs = servicesWithNoConfigs;
+  }
+
+  /**
+   * @param xml the version definition parsed from {@link LatestRepoCallable}
+   */
+  public void setLatestVersionDefinition(VersionDefinitionXml xml) {
+    latestVersion = xml;
+  }
+
+  /**
+   * @param xml the version definition parsed from {@link LatestRepoCallable}
+   */
+  public VersionDefinitionXml getLatestVersionDefinition() {
+    return latestVersion;
+  }
+
+  public RefreshCommandConfiguration getRefreshCommandConfiguration() {
+    return refreshCommandConfiguration;
+  }
+
+  public void setRefreshCommandConfiguration(RefreshCommandConfiguration refreshCommandConfiguration) {
+    this.refreshCommandConfiguration = refreshCommandConfiguration;
+  }
+
+  /**
+   * @return names of each service in the stack
+   */
+  public Set<String> getServiceNames() {
+    return getServices().stream().map(ServiceInfo::getName).collect(Collectors.toSet());
+  }
+
+  /**
+   * Gets the instance of the {@code StackReleaseVersion}.  If not specified
+   * or there is an error instantiating the class, return a default implementation.
+   *
+   * @return the stack release information.
+   */
+  public StackReleaseVersion getReleaseVersion() {
+
+    if (StringUtils.isNotEmpty(releaseVersionClass)) {
+      try {
+        return getLibraryInstance(releaseVersionClass);
+      } catch (Exception e) {
+        LOG.error("Could not create stack release instance.  Using default. {}", e.getMessage());
+        return new DefaultStackVersion();
+      }
+    } else {
+      return new DefaultStackVersion();
+    }
+  }
+
+  /**
+   * Gets the {@link ClassLoader} that can be used to load classes found in JARs
+   * in the stack's library folder.
+   *
+   * @return the class loader for 3rd party JARs supplied by the stack or
+   *         {@code null} if there are no libraries for this stack.
+   */
+  public @Nullable URLClassLoader getLibraryClassLoader() {
+    return libraryClassLoader;
+  }
+
+  /**
+   * Sets the {@link ClassLoader} that can be used to load classes found in JARs
+   * in the stack's library folder.
+   *
+   * @param libraryClassLoader
+   *          the class loader.
+   */
+  public void setLibraryClassLoader(URLClassLoader libraryClassLoader) {
+    this.libraryClassLoader = libraryClassLoader;
+  }
+
+  /**
+   * Loads an instance of the class from the stack classloader, if available.
+   *
+   * @param className
+   *          the name of the class to get an instance
+   * @return
+   *          the instance of the class
+   * @throws Exception
+   *          when the class cannot be loaded or instantiated
+   */
+  public <T> T getLibraryInstance(String className) throws Exception {
+    return getLibraryInstance(null, className);
+  }
+
+  /**
+   * Loads an instance of the class from the stack classloader, if available.
+   *
+   * @param injector
+   *          the injector to use, or {@code null} to invoke the default, no-arg
+   *          constructor
+   * @param className
+   *          the name of the class to get an instance
+   * @return
+   *          the instance of the class
+   * @throws Exception
+   *          when the class cannot be loaded or instantiated
+   */
+  @SuppressWarnings("unchecked")
+  public <T> T getLibraryInstance(Injector injector, String className) throws Exception {
+    Class<? extends T> clazz;
+
+    if (null != libraryClassLoader) {
+      clazz = (Class<? extends T>) libraryClassLoader.loadClass(className);
+    } else {
+      clazz = (Class<? extends T>) Class.forName(className);
+    }
+
+    return (null == injector) ? clazz.newInstance() : injector.getInstance(clazz);
   }
 
 }

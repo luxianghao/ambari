@@ -18,14 +18,14 @@
 
 
 var App = require('app');
-var stringUtils = require('utils/string_utils');
 
 App.ReassignMasterWizardStep5View = Em.View.extend({
 
   templateName: require('templates/main/service/reassign/step5'),
 
   manualCommands: function () {
-    if (!this.get('controller.content.componentsWithManualCommands').contains(this.get('controller.content.reassign.component_name'))) {
+    const componentName = this.get('controller.content.reassign.component_name');
+    if (!this.get('controller.content.componentsWithManualCommands').contains(componentName)) {
       return '';
     }
     var
@@ -37,14 +37,14 @@ App.ReassignMasterWizardStep5View = Em.View.extend({
       ha = '',
       user = this.get('controller.content.hdfsUser'), path;
 
-    if (this.get('controller.content.reassign.component_name') === 'NAMENODE' && App.get('isHaEnabled')) {
+    if (componentName === 'NAMENODE' && App.get('isHaEnabled')) {
       ha = '_ha';
       var nnStartedHost = this.get('controller.content.masterComponentHosts').filterProperty('component', 'NAMENODE').mapProperty('hostName').without(sourceHost).without(targetHost);
     }
 
     if (this.get('controller.content.reassign.component_name') === 'APP_TIMELINE_SERVER') {
-      user = this.get('controller.content.serviceProperties.yarn-env.yarn_user');
-      path = this.get('controller.content.serviceProperties.yarn-site')['yarn.timeline-service.leveldb-timeline-store.path'];
+      user = this.get('controller.content.configs.yarn-env.yarn_user');
+      path = this.get('controller.content.configs.yarn-site')['yarn.timeline-service.leveldb-timeline-store.path'];
     }
 
     return Em.I18n.t('services.reassign.step5.body.' + this.get('controller.content.reassign.component_name').toLowerCase() + ha).

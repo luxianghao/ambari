@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,18 +18,19 @@
 
 package org.apache.ambari.server.utils;
 
-import junit.framework.Assert;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import junit.framework.Assert;
 
 public class TestShellCommandUtil {
 
@@ -213,4 +214,39 @@ public class TestShellCommandUtil {
     Assert.assertTrue(destFile.length() > 0);
     Assert.assertEquals(destFile.length(), srcFile.length());
   }
+
+  @Test
+  public void deleteExistingFile() throws Exception {
+    File file = temp.newFile();
+
+    ShellCommandUtil.Result result = ShellCommandUtil.delete(file.getAbsolutePath(), false, false);
+
+    Assert.assertTrue(result.getStderr(), result.isSuccessful());
+    Assert.assertFalse(file.exists());
+  }
+
+  @Test
+  public void deleteNonexistentFile() throws Exception {
+    File file = temp.newFile();
+
+    if (file.delete()) {
+      ShellCommandUtil.Result result = ShellCommandUtil.delete(file.getAbsolutePath(), false, false);
+
+      Assert.assertFalse(result.getStderr(), result.isSuccessful());
+      Assert.assertFalse(file.exists());
+    }
+  }
+
+  @Test
+  public void forceDeleteNonexistentFile() throws Exception {
+    File file = temp.newFile();
+
+    if (file.delete()) {
+      ShellCommandUtil.Result result = ShellCommandUtil.delete(file.getAbsolutePath(), true, false);
+
+      Assert.assertTrue(result.getStderr(), result.isSuccessful());
+      Assert.assertFalse(file.exists());
+    }
+  }
+
 }

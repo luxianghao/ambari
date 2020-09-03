@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,6 +17,9 @@
  */
 package org.apache.ambari.server.orm.entities;
 
+import java.util.List;
+import java.util.Objects;
+
 import javax.persistence.Basic;
 import javax.persistence.CascadeType;
 import javax.persistence.Column;
@@ -33,7 +36,6 @@ import javax.persistence.NamedQuery;
 import javax.persistence.OneToMany;
 import javax.persistence.Table;
 import javax.persistence.TableGenerator;
-import java.util.List;
 
 @Entity
 @Table(name = "widget")
@@ -111,6 +113,9 @@ public class WidgetEntity {
 
   @Column(name = "cluster_id", nullable = false)
   private Long clusterId;
+
+  @Column(name = "tag", length = 255)
+  private String tag;
 
   @ManyToOne
   @JoinColumn(name = "cluster_id", referencedColumnName = "cluster_id", nullable = false, updatable = false, insertable = false)
@@ -223,6 +228,20 @@ public class WidgetEntity {
     this.clusterId = clusterId;
   }
 
+  /**
+   * Gets the Tag used by the ui to store additional info e.g.:Name Service
+   */
+  public String getTag() {
+    return tag;
+  }
+
+  /**
+   * Sets the Tag used by the ui to store additional info e.g.:Name Service
+   */
+  public void setTag(String tag) {
+    this.tag = tag;
+  }
+
   public List<WidgetLayoutUserWidgetEntity> getListWidgetLayoutUserWidgetEntity() {
     return listWidgetLayoutUserWidgetEntity;
   }
@@ -238,15 +257,12 @@ public class WidgetEntity {
 
     WidgetEntity that = (WidgetEntity) o;
 
-    if (id != that.id) return false;
-
-    return true;
+    return Objects.equals(id, that.id);
   }
 
   @Override
   public int hashCode() {
-    int result = null != id ? id.hashCode() : 0;
-    return result;
+    return Objects.hashCode(id);
   }
 
 }

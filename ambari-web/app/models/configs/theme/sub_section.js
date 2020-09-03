@@ -28,6 +28,11 @@ App.SubSection = DS.Model.extend({
   name: DS.attr('string'),
 
   /**
+   * theme from which this is coming from , eg: default, database, credentials, etc.
+   */
+  themeName: DS.attr('string'),
+
+  /**
    * @type {string}
    */
   displayName: DS.attr('string'),
@@ -181,7 +186,7 @@ App.SubSection = DS.Model.extend({
     var configs = this.get('configs').filter(function(c) {
       return !c.get('hiddenBySection') && c.get('isVisible');
     });
-    return configs.length ? configs.everyProperty('isHiddenByFilter', true) : false;
+    return configs.length ? configs.everyProperty('isHiddenByFilter', true) && !this.get('someSubSectionTabIsVisible'): false;
   }.property('configs.@each.isHiddenByFilter'),
 
   /**

@@ -48,8 +48,8 @@ describe('MainConfigHistoryController', function () {
 
     beforeEach(function () {
       sinon.stub(controller, 'updateTotalCounter', Em.K);
-      sinon.stub(controller, 'loadConfigVersionsToModel').returns({done: Em.K});
-      controller.load();
+      sinon.stub(controller, 'loadConfigVersionsToModel').returns({done: Em.clb});
+      controller.load(true);
     });
 
     afterEach(function () {
@@ -131,28 +131,128 @@ describe('MainConfigHistoryController', function () {
     });
   });
 
-  describe('#doPolling()', function () {
-    beforeEach(function () {
-      sinon.stub(controller, 'load', function(){
-        return {done: Em.K};
+  describe('#subscribeToUpdates', function() {
+    beforeEach(function() {
+      sinon.stub(App.StompClient, 'addHandler');
+    });
+    afterEach(function() {
+      App.StompClient.addHandler.restore();
+    });
+
+    it('App.StompClient.subscribe should be called', function() {
+      controller.subscribeToUpdates();
+      expect(App.StompClient.addHandler.calledWith('/events/configs', 'history')).to.be.true;
+    });
+  });
+
+  describe('#unsubscribeOfUpdates', function() {
+    beforeEach(function() {
+      sinon.stub(App.StompClient, 'removeHandler');
+    });
+    afterEach(function() {
+      App.StompClient.removeHandler.restore();
+    });
+
+    it('App.StompClient.subscribe should be called', function() {
+      controller.unsubscribeOfUpdates();
+      expect(App.StompClient.removeHandler.calledWith('/events/configs', 'history')).to.be.true;
+    });
+  });
+  
+  describe('#colPropAssoc', function() {
+    
+    it('should return associations', function() {
+      expect(controller.get('colPropAssoc')[1]).to.be.equal('serviceVersion');
+      expect(controller.get('colPropAssoc')[2]).to.be.equal('configGroup');
+      expect(controller.get('colPropAssoc')[3]).to.be.equal('createTime');
+      expect(controller.get('colPropAssoc')[4]).to.be.equal('author');
+      expect(controller.get('colPropAssoc')[5]).to.be.equal('notes');
+    });
+  });
+  
+  describe('#getSortProps', function() {
+    beforeEach(function() {
+      sinon.stub(App.db, 'getSortingStatuses').returns([
+        {
+          name: 'serviceVersion',
+          status: 'sorting_asc'
+        },
+        {
+          name: 'configGroup',
+          status: 'sorting_desc'
+        },
+        {
+          name: 's3',
+          status: 'sorting_asc'
+        }
+      ]);
+    });
+    afterEach(function() {
+      App.db.getSortingStatuses.restore();
+    });
+    
+    it('should return sort properties', function() {
+      controller.set('sortProps', [
+        {
+          name: 'serviceVersion'
+        },
+        {
+          name: 'configGroup'
+        },
+        {
+          name: 's3'
+        }
+      ]);
+      expect(controller.getSortProps()).to.be.eql([
+        {
+          "key": "service_name.asc,service_config_version",
+          "name": "serviceVersion",
+          "type": "SORT",
+          "value": "desc"
+      
+        },
+        {
+          "key": "group_name.desc,service_config_version",
+          "name": "configGroup",
+          "type": "SORT",
+          "value": "desc"
+        },
+        {
+          "name": "s3",
+          "type": "SORT",
+          "value": "asc"
+        }
+      ]);
+    });
+  });
+  
+  describe('#getSearchBoxSuggestions', function() {
+  
+    beforeEach(function() {
+      App.ajax.send.restore();
+      sinon.stub(App.ajax, 'send').returns({
+        done: function(callback) {
+          callback({items: [{'name1': '1'}]});
+          return {
+            fail: Em.clb
+          }
+        }
       });
-      this.clock = sinon.useFakeTimers();
     });
-    afterEach(function () {
-      this.clock.restore();
-      controller.load.restore();
-    });
-    it('isPolling false', function () {
-      controller.set('isPolling', false);
-      controller.doPolling();
-      this.clock.tick(App.componentsUpdateInterval);
-      expect(controller.load.called).to.be.false;
-    });
-    it('isPolling true', function () {
-      controller.set('isPolling', true);
-      controller.doPolling();
-      this.clock.tick(App.componentsUpdateInterval);
-      expect(controller.load.calledOnce).to.be.true;
+    
+    it('request should be sent', function() {
+      controller.set('filterProps', [{
+        name: 'name1',
+        key: 'key1'
+      }]);
+      controller.getSearchBoxSuggestions('name1');
+      expect(testHelpers.findAjaxRequest('name', 'service.serviceConfigVersions.get.suggestions')[0]).to.be.eql({
+        name: 'service.serviceConfigVersions.get.suggestions',
+        sender: controller,
+        data: {
+          'key': 'key1'
+        }
+      });
     });
   });
 });

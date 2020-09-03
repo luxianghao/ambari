@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,14 +17,14 @@
  */
 package org.apache.ambari.server.audit;
 
+import static org.hamcrest.core.IsEqual.equalTo;
+import static org.junit.Assert.assertThat;
+
 import org.apache.ambari.server.audit.event.LoginAuditEvent;
 import org.apache.ambari.server.audit.event.request.StartOperationRequestAuditEvent;
 import org.junit.Test;
 
 import nl.jqno.equalsverifier.EqualsVerifier;
-
-import static org.hamcrest.core.IsEqual.equalTo;
-import static org.junit.Assert.assertThat;
 
 public class StartOperationRequestAuditEventTest {
 
@@ -36,10 +36,13 @@ public class StartOperationRequestAuditEventTest {
     String testRequestDetails = "{ \"key\": \"value\"}";
     Long testRequestId = 100L;
 
+    String testProxyUserName = "PROXYUSER1";
+
     StartOperationRequestAuditEvent evnt = StartOperationRequestAuditEvent.builder()
       .withTimestamp(System.currentTimeMillis())
       .withRemoteIp(testRemoteIp)
       .withUserName(testUserName)
+      .withProxyUserName(null)
       .withOperation(testRequestDetails)
       .withRequestId(testRequestId.toString())
       .build();
@@ -52,6 +55,22 @@ public class StartOperationRequestAuditEventTest {
 
     assertThat(actualAuditMessage, equalTo(expectedAuditMessage));
 
+    evnt = StartOperationRequestAuditEvent.builder()
+        .withTimestamp(System.currentTimeMillis())
+        .withRemoteIp(testRemoteIp)
+        .withUserName(testUserName)
+        .withProxyUserName(testProxyUserName)
+        .withOperation(testRequestDetails)
+        .withRequestId(testRequestId.toString())
+        .build();
+
+    // When
+    actualAuditMessage = evnt.getAuditMessage();
+
+    // Then
+    expectedAuditMessage = String.format("User(%s), RemoteIp(%s), ProxyUser(%s), Operation(%s), RequestId(%d), Status(Successfully queued)", testUserName, testRemoteIp, testProxyUserName, testRequestDetails, testRequestId);
+
+    assertThat(actualAuditMessage, equalTo(expectedAuditMessage));
   }
 
   @Test

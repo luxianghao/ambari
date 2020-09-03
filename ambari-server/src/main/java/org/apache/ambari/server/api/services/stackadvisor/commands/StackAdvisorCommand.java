@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,6 +22,7 @@ import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
 import java.lang.reflect.ParameterizedType;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -45,24 +46,24 @@ import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorException;
 import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorRequest;
 import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorResponse;
 import org.apache.ambari.server.api.services.stackadvisor.StackAdvisorRunner;
+import org.apache.ambari.server.controller.RootComponent;
+import org.apache.ambari.server.controller.RootService;
+import org.apache.ambari.server.controller.internal.AmbariServerConfigurationHandler;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.state.ServiceInfo;
 import org.apache.ambari.server.utils.DateUtils;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.filefilter.AgeFileFilter;
-import org.apache.commons.io.filefilter.FalseFileFilter;
-import org.apache.commons.io.filefilter.TrueFileFilter;
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.derby.iapi.util.StringUtil;
 import org.codehaus.jackson.JsonNode;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.map.SerializationConfig;
 import org.codehaus.jackson.node.ArrayNode;
+import org.codehaus.jackson.node.JsonNodeFactory;
 import org.codehaus.jackson.node.ObjectNode;
 import org.codehaus.jackson.node.TextNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Parent for all commands.
@@ -71,23 +72,26 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
 
   /**
    * Type of response object provided by extending classes when
-   * {@link #invoke(StackAdvisorRequest)} is called.
+   * {@link #invoke(StackAdvisorRequest, ServiceInfo.ServiceAdvisorType)} is called.
    */
   private Class<T> type;
 
-  protected static Log LOG = LogFactory.getLog(StackAdvisorCommand.class);
+  private static final Logger LOG = LoggerFactory.getLogger(StackAdvisorCommand.class);
 
   private static final String GET_HOSTS_INFO_URI = "/api/v1/hosts"
       + "?fields=Hosts/*&Hosts/host_name.in(%s)";
+
   private static final String GET_SERVICES_INFO_URI = "/api/v1/stacks/%s/versions/%s/"
       + "?fields=Versions/stack_name,Versions/stack_version,Versions/parent_stack_version"
       + ",services/StackServices/service_name,services/StackServices/service_version"
-      + ",services/components/StackServiceComponents,services/components/dependencies,services/components/auto_deploy"
+      + ",services/components/StackServiceComponents,services/components/dependencies/Dependencies/scope"
+      + ",services/components/dependencies/Dependencies/type"
+      + ",services/components/dependencies/Dependencies/conditions,services/components/auto_deploy"
       + ",services/configurations/StackConfigurations/property_depends_on"
       + ",services/configurations/dependencies/StackConfigurationDependency/dependency_name"
-      + ",services/configurations/dependencies/StackConfigurationDependency/dependency_type"
-      + ",services/configurations/StackConfigurations/type"
+      + ",services/configurations/dependencies/StackConfigurationDependency/dependency_type,services/configurations/StackConfigurations/type"
       + "&services/StackServices/service_name.in(%s)";
+
   private static final String SERVICES_PROPERTY = "services";
   private static final String SERVICES_COMPONENTS_PROPERTY = "components";
   private static final String CONFIG_GROUPS_PROPERTY = "config-groups";
@@ -97,11 +101,16 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
   private static final String COMPONENT_HOSTNAMES_PROPERTY = "hostnames";
   private static final String CONFIGURATIONS_PROPERTY = "configurations";
   private static final String CHANGED_CONFIGURATIONS_PROPERTY = "changed-configurations";
-  private static final String AMBARI_SERVER_CONFIGURATIONS_PROPERTY = "ambari-server-properties";
+  private static final String USER_CONTEXT_PROPERTY = "user-context";
+  private static final String GPL_LICENSE_ACCEPTED = "gpl-license-accepted";
+  private static final String AMBARI_SERVER_PROPERTIES_PROPERTY = "ambari-server-properties";
+  private static final String AMBARI_SERVER_CONFIGURATIONS_PROPERTY = "ambari-server-configuration";
+
+  private final Map<String, JsonNode> hostInfoCache;
 
   private File recommendationsDir;
   private String recommendationsArtifactsLifetime;
-  private String stackAdvisorScript;
+  private ServiceInfo.ServiceAdvisorType serviceAdvisorType;
 
   private int requestId;
   private File requestDirectory;
@@ -111,9 +120,12 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
 
   private final AmbariMetaInfo metaInfo;
 
+  private final AmbariServerConfigurationHandler ambariServerConfigurationHandler;
+
   @SuppressWarnings("unchecked")
-  public StackAdvisorCommand(File recommendationsDir, String recommendationsArtifactsLifetime, String stackAdvisorScript, int requestId,
-      StackAdvisorRunner saRunner, AmbariMetaInfo metaInfo) {
+  public StackAdvisorCommand(File recommendationsDir, String recommendationsArtifactsLifetime, ServiceInfo.ServiceAdvisorType serviceAdvisorType, int requestId,
+                             StackAdvisorRunner saRunner, AmbariMetaInfo metaInfo, AmbariServerConfigurationHandler ambariServerConfigurationHandler,
+                             Map<String, JsonNode> hostInfoCache) {
     this.type = (Class<T>) ((ParameterizedType) getClass().getGenericSuperclass())
         .getActualTypeArguments()[0];
 
@@ -122,10 +134,17 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
 
     this.recommendationsDir = recommendationsDir;
     this.recommendationsArtifactsLifetime = recommendationsArtifactsLifetime;
-    this.stackAdvisorScript = stackAdvisorScript;
+    this.serviceAdvisorType = serviceAdvisorType;
     this.requestId = requestId;
     this.saRunner = saRunner;
     this.metaInfo = metaInfo;
+    this.ambariServerConfigurationHandler = ambariServerConfigurationHandler;
+    this.hostInfoCache = hostInfoCache;
+  }
+  public StackAdvisorCommand(File recommendationsDir, String recommendationsArtifactsLifetime, ServiceInfo.ServiceAdvisorType serviceAdvisorType, int requestId,
+                             StackAdvisorRunner saRunner, AmbariMetaInfo metaInfo, AmbariServerConfigurationHandler ambariServerConfigurationHandler) {
+    this(recommendationsDir, recommendationsArtifactsLifetime, serviceAdvisorType, requestId, saRunner, metaInfo,
+        ambariServerConfigurationHandler, null);
   }
 
   protected abstract StackAdvisorCommandType getCommandType();
@@ -163,6 +182,7 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
       populateConfigurations(root, request);
       populateConfigGroups(root, request);
       populateAmbariServerInfo(root);
+      populateAmbariConfiguration(root);
       data.servicesJSON = mapper.writeValueAsString(root);
     } catch (Exception e) {
       // should not happen
@@ -174,19 +194,28 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
     return data;
   }
 
-  protected void populateAmbariServerInfo(ObjectNode root) throws StackAdvisorException {
+  /**
+   * Retrieves the Ambari configuration if exists and adds it to services.json
+   *
+   * @param root The JSON document that will become service.json when passed to the stack advisor engine
+   */
+  void populateAmbariConfiguration(ObjectNode root) {
+    root.put(AMBARI_SERVER_CONFIGURATIONS_PROPERTY, mapper.valueToTree(ambariServerConfigurationHandler.getConfigurations()));
+  }
+
+  protected void populateAmbariServerInfo(ObjectNode root) {
     Map<String, String> serverProperties = metaInfo.getAmbariServerProperties();
 
     if (serverProperties != null && !serverProperties.isEmpty()) {
       JsonNode serverPropertiesNode = mapper.convertValue(serverProperties, JsonNode.class);
-      root.put(AMBARI_SERVER_CONFIGURATIONS_PROPERTY, serverPropertiesNode);
+      root.put(AMBARI_SERVER_PROPERTIES_PROPERTY, serverPropertiesNode);
     }
   }
 
   private void populateConfigurations(ObjectNode root,
                                       StackAdvisorRequest request) {
     Map<String, Map<String, Map<String, String>>> configurations =
-      request.getConfigurations();
+        request.getConfigurations();
     ObjectNode configurationsNode = root.putObject(CONFIGURATIONS_PROPERTY);
     for (String siteName : configurations.keySet()) {
       ObjectNode siteNode = configurationsNode.putObject(siteName);
@@ -205,12 +234,16 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
 
     JsonNode changedConfigs = mapper.valueToTree(request.getChangedConfigurations());
     root.put(CHANGED_CONFIGURATIONS_PROPERTY, changedConfigs);
+
+    JsonNode userContext = mapper.valueToTree(request.getUserContext());
+    root.put(USER_CONTEXT_PROPERTY, userContext);
+    root.put(GPL_LICENSE_ACCEPTED, request.getGplLicenseAccepted());
   }
 
   private void populateConfigGroups(ObjectNode root,
                                     StackAdvisorRequest request) {
     if (request.getConfigGroups() != null &&
-      !request.getConfigGroups().isEmpty()) {
+        !request.getConfigGroups().isEmpty()) {
       JsonNode configGroups = mapper.valueToTree(request.getConfigGroups());
       root.put(CONFIG_GROUPS_PROPERTY, configGroups);
     }
@@ -271,14 +304,13 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
           serviceVersion.put("advisor_name", serviceInfo.getAdvisorName());
           serviceVersion.put("advisor_path", serviceInfo.getAdvisorFile().getAbsolutePath());
         }
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
         LOG.error("Error adding service advisor information to services.json", e);
       }
     }
   }
 
-  public synchronized T invoke(StackAdvisorRequest request) throws StackAdvisorException {
+  public synchronized T invoke(StackAdvisorRequest request, ServiceInfo.ServiceAdvisorType serviceAdvisorType) throws StackAdvisorException {
     validate(request);
     String hostsJSON = getHostsInformation(request);
     String servicesJSON = getServicesInformation(request);
@@ -288,12 +320,15 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
     try {
       createRequestDirectory();
 
-      FileUtils.writeStringToFile(new File(requestDirectory, "hosts.json"), adjusted.hostsJSON);
-      FileUtils.writeStringToFile(new File(requestDirectory, "services.json"),
-          adjusted.servicesJSON);
+      FileUtils.writeStringToFile(new File(requestDirectory, "hosts.json"), adjusted.hostsJSON,
+              Charset.defaultCharset());
+      FileUtils
+              .writeStringToFile(new File(requestDirectory, "services.json"), adjusted.servicesJSON,
+                      Charset.defaultCharset());
 
-      saRunner.runScript(stackAdvisorScript, getCommandType(), requestDirectory);
-      String result = FileUtils.readFileToString(new File(requestDirectory, getResultFileName()));
+      saRunner.runScript(serviceAdvisorType, getCommandType(), requestDirectory);
+      String result = FileUtils.readFileToString(new File(requestDirectory, getResultFileName()),
+              Charset.defaultCharset());
 
       T response = this.mapper.readValue(result, this.type);
       return updateResponse(request, setRequestId(response));
@@ -348,33 +383,82 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
         return file.isDirectory() && !FileUtils.isFileNewer(file, cutoffDate);
       }
     });
-    
-    if(oldDirectories.length > 0) {
+
+    if (oldDirectories.length > 0) {
       LOG.info(String.format("Deleting old directories %s from %s", StringUtils.join(oldDirectories, ", "), recommendationsDir));
     }
-    
-    for(String oldDirectory:oldDirectories) {
-      FileUtils.deleteDirectory(new File(recommendationsDir, oldDirectory));
+
+    for (String oldDirectory : oldDirectories) {
+      FileUtils.deleteQuietly(new File(recommendationsDir, oldDirectory));
     }
   }
 
   String getHostsInformation(StackAdvisorRequest request) throws StackAdvisorException {
-    String hostsURI = String.format(GET_HOSTS_INFO_URI, request.getHostsCommaSeparated());
+    List<String> hostNames = new ArrayList<>(request.getHosts());
 
-    Response response = handleRequest(null, null, new LocalUriInfo(hostsURI), Request.Type.GET,
-        createHostResource());
+    // retrieve cached info
+    List<JsonNode> resultInfos = new ArrayList<>();
+    if (hostInfoCache != null && !hostInfoCache.isEmpty()) {
+      Iterator<String> hostNamesIterator = hostNames.iterator();
+      while(hostNamesIterator.hasNext()) {
+        String hostName = hostNamesIterator.next();
+        JsonNode node = hostInfoCache.get(hostName);
+        if (node != null) {
+          resultInfos.add(node);
+          hostNamesIterator.remove();
+        }
+      }
+    }
+    String hostsJSON = null;
 
-    if (response.getStatus() != Status.OK.getStatusCode()) {
-      String message = String.format(
-          "Error occured during hosts information retrieving, status=%s, response=%s",
-          response.getStatus(), (String) response.getEntity());
-      LOG.warn(message);
-      throw new StackAdvisorException(message);
+    // get hosts info for not cached hosts only
+    if (!hostNames.isEmpty()) {
+      LOG.info(String.format("Fire host info request for hosts: " + hostNames.toString()));
+      String hostsURI = String.format(GET_HOSTS_INFO_URI, String.join(",", hostNames));
+
+      Response response = handleRequest(null, null, new LocalUriInfo(hostsURI), Request.Type.GET,
+          createHostResource());
+
+      if (response.getStatus() != Status.OK.getStatusCode()) {
+        String message = String.format(
+            "Error occured during hosts information retrieving, status=%s, response=%s",
+            response.getStatus(), (String) response.getEntity());
+        LOG.warn(message);
+        throw new StackAdvisorException(message);
+      }
+
+      hostsJSON = (String) response.getEntity();
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Hosts information: {}", hostsJSON);
+      }
     }
 
-    String hostsJSON = (String) response.getEntity();
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Hosts information: " + hostsJSON);
+    // when cache is used we should merge cached info with just got
+    if (hostInfoCache != null) {
+      if (hostsJSON != null && !hostsJSON.isEmpty()) {
+        try {
+          JsonNode root = mapper.readTree(hostsJSON);
+          Iterator<JsonNode> iterator = root.get("items").getElements();
+          while (iterator.hasNext()) {
+            JsonNode next = iterator.next();
+            String hostName = next.get("Hosts").get("host_name").getTextValue();
+            hostInfoCache.put(hostName, next);
+            resultInfos.add(next);
+          }
+        } catch (IOException e) {
+          throw new StackAdvisorException("Error occured during parsing result host infos", e);
+        }
+      }
+
+      String fullHostsURI = String.format(GET_HOSTS_INFO_URI, request.getHostsCommaSeparated());
+      JsonNodeFactory f = JsonNodeFactory.instance;
+      ObjectNode resultRoot = f.objectNode();
+      resultRoot.put("href", fullHostsURI);
+      ArrayNode resultArray = resultRoot.putArray("items");
+      resultArray.addAll(resultInfos);
+
+      hostsJSON = resultRoot.toString();
+
     }
 
     Collection<String> unregistered = getUnregisteredHosts(hostsJSON, request.getHosts());
@@ -391,8 +475,7 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
   @SuppressWarnings("unchecked")
   private Collection<String> getUnregisteredHosts(String hostsJSON, List<String> hosts)
       throws StackAdvisorException {
-    ObjectMapper mapper = new ObjectMapper();
-    List<String> registeredHosts = new ArrayList<String>();
+    List<String> registeredHosts = new ArrayList<>();
 
     try {
       JsonNode root = mapper.readTree(hostsJSON);
@@ -428,18 +511,27 @@ public abstract class StackAdvisorCommand<T extends StackAdvisorResponse> extend
 
     String servicesJSON = (String) response.getEntity();
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Services information: " + servicesJSON);
+      LOG.debug("Services information: {}", servicesJSON);
     }
     return servicesJSON;
   }
 
   private ResourceInstance createHostResource() {
-    Map<Resource.Type, String> mapIds = new HashMap<Resource.Type, String>();
+    Map<Resource.Type, String> mapIds = new HashMap<>();
     return createResource(Resource.Type.Host, mapIds);
   }
 
+  private ResourceInstance createConfigResource() {
+    Map<Resource.Type, String> mapIds = new HashMap<>();
+    mapIds.put(Resource.Type.RootService, RootService.AMBARI.name());
+    mapIds.put(Resource.Type.RootServiceComponent, RootComponent.AMBARI_SERVER.name());
+
+    return createResource(Resource.Type.RootServiceComponentConfiguration, mapIds);
+  }
+
+
   private ResourceInstance createStackVersionResource(String stackName, String stackVersion) {
-    Map<Resource.Type, String> mapIds = new HashMap<Resource.Type, String>();
+    Map<Resource.Type, String> mapIds = new HashMap<>();
     mapIds.put(Resource.Type.Stack, stackName);
     mapIds.put(Resource.Type.StackVersion, stackVersion);
 

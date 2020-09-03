@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,12 +18,12 @@
 
 package org.apache.ambari.server.controller;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import org.apache.ambari.server.orm.entities.LdapSyncSpecEntity;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.HashSet;
-import java.util.Set;
 
 /**
  * LdapSyncRequest tests.
@@ -31,12 +31,12 @@ import java.util.Set;
 public class LdapSyncRequestTest {
   @Test
   public void testAddPrincipalNames() throws Exception {
-    Set<String> names = new HashSet<String>();
+    Set<String> names = new HashSet<>();
     names.add("name1");
 
-    LdapSyncRequest request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC,names);
+    LdapSyncRequest request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC,names, false);
 
-    names = new HashSet<String>();
+    names = new HashSet<>();
     names.add("name2");
     names.add("name3");
 
@@ -51,12 +51,12 @@ public class LdapSyncRequestTest {
 
   @Test
   public void testGetPrincipalNames() throws Exception {
-    Set<String> names = new HashSet<String>();
+    Set<String> names = new HashSet<>();
     names.add("name1");
     names.add("name2");
     names.add("name3");
 
-    LdapSyncRequest request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC,names);
+    LdapSyncRequest request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC,names, false);
 
     Set<String> principalNames = request.getPrincipalNames();
     Assert.assertEquals(3, principalNames.size());
@@ -67,18 +67,48 @@ public class LdapSyncRequestTest {
 
   @Test
   public void testGetType() throws Exception {
-    Set<String> names = new HashSet<String>();
+    Set<String> names = new HashSet<>();
 
-    LdapSyncRequest request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC, names);
+    LdapSyncRequest request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC, names, false);
 
     Assert.assertEquals(LdapSyncSpecEntity.SyncType.SPECIFIC, request.getType());
 
-    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.ALL);
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.ALL, false);
 
     Assert.assertEquals(LdapSyncSpecEntity.SyncType.ALL, request.getType());
 
-    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.EXISTING);
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.EXISTING, false);
 
     Assert.assertEquals(LdapSyncSpecEntity.SyncType.EXISTING, request.getType());
   }
-}
+
+  @Test
+  public void testGetPostProcessExistingUsers() throws Exception {
+    Set<String> names = new HashSet<>();
+
+    LdapSyncRequest request;
+
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC, names, false);
+
+    Assert.assertFalse(request.getPostProcessExistingUsers());
+
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.SPECIFIC, names, true);
+
+    Assert.assertTrue(request.getPostProcessExistingUsers());
+
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.ALL, false);
+
+    Assert.assertFalse(request.getPostProcessExistingUsers());
+
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.ALL, true);
+
+    Assert.assertTrue(request.getPostProcessExistingUsers());
+
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.EXISTING, false);
+
+    Assert.assertFalse(request.getPostProcessExistingUsers());
+
+    request = new LdapSyncRequest(LdapSyncSpecEntity.SyncType.EXISTING, true);
+
+    Assert.assertTrue(request.getPostProcessExistingUsers());
+  }}

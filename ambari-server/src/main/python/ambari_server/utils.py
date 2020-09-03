@@ -24,17 +24,22 @@ import socket
 import sys
 import time
 import glob
-import subprocess
+from ambari_commons import subprocess32
 import logging
+import platform
+import xml.etree.ElementTree as ET
+
 from ambari_commons import OSConst,OSCheck
 from ambari_commons.logging_utils import print_error_msg
 from ambari_commons.exceptions import FatalException
+from ambari_commons.os_utils import get_ambari_repo_file_full_name
 
 logger = logging.getLogger(__name__)
 
 # PostgreSQL settings
 PG_STATUS_RUNNING_DEFAULT = "running"
 PG_HBA_ROOT_DEFAULT = "/var/lib/pgsql/data"
+PG_HBA_ROOT_DEFAULT_VERSIONED = "/var/lib/pgsql/*/data"
 
 #Environment
 ENV_PATH_DEFAULT = ['/bin', '/usr/bin', '/sbin', '/usr/sbin']  # default search path
@@ -121,23 +126,27 @@ def save_pid(pid, pidfile):
 
 def save_main_pid_ex(pids, pidfile, exclude_list=[], skip_daemonize=False):
   """
-    Save pid which is not included to exclude_list to pidfile.
+    Saves and returns the first (and supposingly only) pid from the list of pids
+    which is not included in the exclude_list.
+
+    pidfile is the name of the file to save the pid to
 
     exclude_list contains list of full executable paths which should be excluded
   """
   pid_saved = False
   try:
-    pfile = open(pidfile, "w")
-    for item in pids:
-      if pid_exists(item["pid"]) and (item["exe"] not in exclude_list):
-        pfile.write("%s\n" % item["pid"])
-        pid_saved = True
-        logger.info("Ambari server started with PID " + str(item["pid"]))
-      if pid_exists(item["pid"]) and (item["exe"] in exclude_list) and not skip_daemonize:
-        try:
-          os.kill(int(item["pid"]), signal.SIGKILL)
-        except:
-          pass
+    if pids:
+      pfile = open(pidfile, "w")
+      for item in pids:
+        if pid_exists(item["pid"]) and (item["exe"] not in exclude_list):
+          pfile.write("%s\n" % item["pid"])
+          pid_saved = item["pid"]
+          logger.info("Ambari server started with PID " + str(item["pid"]))
+        if pid_exists(item["pid"]) and (item["exe"] in exclude_list) and not skip_daemonize:
+          try:
+            os.kill(int(item["pid"]), signal.SIGKILL)
+          except:
+            pass
   except IOError as e:
     logger.error("Failed to write PID to " + pidfile + " due to " + str(e))
     pass
@@ -155,7 +164,7 @@ def get_live_pids_count(pids):
   """
   return len([pid for pid in pids if pid_exists(pid)])
 
-def wait_for_ui_start(ambari_server_ui_port, timeout=1):
+def wait_for_ui_start(ambari_server_ui_port, pid, timeout=1):
 
   tstart = time.time()
   while int(time.time()-tstart) <= timeout:
@@ -171,7 +180,10 @@ def wait_for_ui_start(ambari_server_ui_port, timeout=1):
 
     sys.stdout.write('.')
     sys.stdout.flush()
-    time.sleep(1)
+    if pid_exists(pid):
+      time.sleep(1)
+    else:
+      break
 
   return False
 
@@ -251,9 +263,7 @@ def get_postgre_hba_dir(OS_FAMILY):
     # Like: /etc/postgresql/9.1/main/
     return os.path.join(get_pg_hba_init_files(), get_ubuntu_pg_version(),
                         "main")
-  elif not glob.glob(get_pg_hba_init_files() + '*'): # this happens when the service file is of new format (/usr/lib/systemd/system/postgresql.service)
-    return PG_HBA_ROOT_DEFAULT
-  else:
+  elif glob.glob(get_pg_hba_init_files() + '*'): # this happens when the service file is of old format (not like /usr/lib/systemd/system/postgresql.service)
     if not os.path.isfile(get_pg_hba_init_files()):
       # Link: /etc/init.d/postgresql --> /etc/init.d/postgresql-9.1
       os.symlink(glob.glob(get_pg_hba_init_files() + '*')[0],
@@ -262,17 +272,22 @@ def get_postgre_hba_dir(OS_FAMILY):
     pg_hba_init_basename = os.path.basename(get_pg_hba_init_files())
     # Get postgres_data location (default: /var/lib/pgsql/data)
     cmd = "alias basename='echo {0}; true' ; alias exit=return; source {1} status &>/dev/null; echo $PGDATA".format(pg_hba_init_basename, get_pg_hba_init_files())
-    p = subprocess.Popen(cmd,
-                         stdout=subprocess.PIPE,
-                         stdin=subprocess.PIPE,
-                         stderr=subprocess.PIPE,
+    p = subprocess32.Popen(cmd,
+                         stdout=subprocess32.PIPE,
+                         stdin=subprocess32.PIPE,
+                         stderr=subprocess32.PIPE,
                          shell=True)
     (PG_HBA_ROOT, err) = p.communicate()
 
     if PG_HBA_ROOT and len(PG_HBA_ROOT.strip()) > 0:
       return PG_HBA_ROOT.strip()
-    else:
-      return PG_HBA_ROOT_DEFAULT
+
+  if not os.path.exists(PG_HBA_ROOT_DEFAULT):
+    versioned_dirs = glob.glob(PG_HBA_ROOT_DEFAULT_VERSIONED)
+    if versioned_dirs:
+      return versioned_dirs[0]
+
+  return PG_HBA_ROOT_DEFAULT
 
 
 def get_postgre_running_status():
@@ -322,3 +337,66 @@ def check_reverse_lookup():
   except socket.error:
     pass
   return False
+
+def on_powerpc():
+  """ True if we are running on a Power PC platform."""
+  return platform.processor() == 'powerpc' or \
+         platform.machine().startswith('ppc')
+
+
+XML_HEADER = """<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+"""
+
+
+# Go though all stacks and update the repoinfo.xml files
+# replace <latest> tag with the passed url
+def update_latest_in_repoinfos_for_stacks(stacks_root, json_url_string, predicate=lambda stack_name: stack_name == 'HDP'):
+  for stack_name in os.walk(stacks_root).next()[1]:
+    if predicate(stack_name):
+      for stack_version in os.walk(os.path.join(stacks_root, stack_name)).next()[1]:
+        repoinfo_xml_path = os.path.join(stacks_root, stack_name, stack_version, "repos", "repoinfo.xml")
+        if os.path.exists(repoinfo_xml_path):
+          replace_latest(repoinfo_xml_path, json_url_string)
+
+
+# replace <latest> tag in the file with the passed url
+def replace_latest(repoinfo_xml_path, json_url_string):
+  tree = ET.parse(repoinfo_xml_path)
+  root = tree.getroot()
+  latest_tag = root.find("latest")
+  if latest_tag is not None:
+    latest_tag.text = json_url_string
+
+  with open(repoinfo_xml_path, "w") as out:
+    out.write(XML_HEADER)
+    tree.write(out)
+
+
+# parse ambari repo file and get the value of '#json.url = http://...'
+def get_json_url_from_repo_file():
+  repo_file_path = get_ambari_repo_file_full_name()
+  if os.path.exists(repo_file_path):
+    with open(repo_file_path, 'r') as repo_file:
+      for line in repo_file:
+        line = line.rstrip()
+        if "json.url" in line:
+          json_url_string = line.split("=", 1)[1].strip()
+          return json_url_string
+
+  return None

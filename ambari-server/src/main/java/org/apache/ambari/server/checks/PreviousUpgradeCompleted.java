@@ -17,128 +17,82 @@
  */
 package org.apache.ambari.server.checks;
 
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.actionmanager.HostRoleStatus;
-import org.apache.ambari.server.controller.PrereqCheckRequest;
-import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
-import org.apache.ambari.server.orm.dao.RequestDAO;
-import org.apache.ambari.server.orm.entities.ClusterVersionEntity;
-import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
-import org.apache.ambari.server.orm.entities.HostVersionEntity;
-import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
-import org.apache.ambari.server.orm.entities.RequestEntity;
-import org.apache.ambari.server.orm.entities.UpgradeEntity;
-import org.apache.ambari.server.state.Cluster;
-import org.apache.ambari.server.state.Host;
-import org.apache.ambari.server.state.MaintenanceState;
-import org.apache.ambari.server.state.RepositoryVersionState;
-import org.apache.ambari.server.state.StackId;
-import org.apache.ambari.server.state.stack.PrereqCheckStatus;
-import org.apache.ambari.server.state.stack.PrerequisiteCheck;
-import org.apache.ambari.server.state.stack.upgrade.Direction;
-import org.apache.commons.lang.StringUtils;
-
-import javax.inject.Provider;
 import java.text.MessageFormat;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+
+import org.apache.ambari.annotations.UpgradeCheckInfo;
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.orm.entities.UpgradeEntity;
+import org.apache.ambari.server.stack.upgrade.Direction;
+import org.apache.ambari.server.state.Cluster;
+import org.apache.ambari.spi.upgrade.UpgradeCheckDescription;
+import org.apache.ambari.spi.upgrade.UpgradeCheckGroup;
+import org.apache.ambari.spi.upgrade.UpgradeCheckRequest;
+import org.apache.ambari.spi.upgrade.UpgradeCheckResult;
+import org.apache.ambari.spi.upgrade.UpgradeCheckStatus;
+import org.apache.ambari.spi.upgrade.UpgradeCheckType;
+import org.apache.ambari.spi.upgrade.UpgradeType;
+
+import com.google.common.collect.ImmutableMap;
+import com.google.inject.Singleton;
 
 /**
- * Checks if Install Packages needs to be re-run
+ * The {@link PreviousUpgradeCompleted} class is used to determine if there is a
+ * prior upgrade or downgrade which has not completed. If the most recent
+ * upgrade/downgrade is in a non-completed state, then this check will fail.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.DEFAULT, order = 4.0f, required = true)
-public class PreviousUpgradeCompleted extends AbstractCheckDescriptor {
+@UpgradeCheckInfo(
+    group = UpgradeCheckGroup.DEFAULT,
+    order = 4.0f,
+    required = { UpgradeType.ROLLING, UpgradeType.NON_ROLLING, UpgradeType.HOST_ORDERED })
+public class PreviousUpgradeCompleted extends ClusterCheck {
+
+  static final UpgradeCheckDescription PREVIOUS_UPGRADE_COMPLETED = new UpgradeCheckDescription("PREVIOUS_UPGRADE_COMPLETED",
+      UpgradeCheckType.CLUSTER,
+      "A previous upgrade did not complete.",
+      new ImmutableMap.Builder<String, String>()
+        .put(UpgradeCheckDescription.DEFAULT,
+            "The last upgrade attempt did not complete. {{fails}}").build());
 
   /**
-   * If this ever changes, we will need to keep the historic name.
+   * The message displayed as part of this pre-upgrade check.
    */
-  public static final String FINALIZE_ACTION_CLASS_NAME = "org.apache.ambari.server.serveraction.upgrades.FinalizeUpgradeAction";
-  public static final String SET_CURRENT_COMMAND = "ambari-server set-current --cluster-name=$CLUSTERNAME --version-display-name=$VERSION_NAME";
-
-  @Inject
-  Provider<RequestDAO> requestDaoProvider;
-
-  @Inject
-  Provider<HostRoleCommandDAO> hostRoleCommandDaoProvider;
+  public static final String ERROR_MESSAGE = "There is an existing {0} {1} {2} which has not completed. This {3} must be completed before a new upgrade or downgrade can begin.";
 
   /**
    * Constructor.
    */
   public PreviousUpgradeCompleted() {
-    super(CheckDescription.PREVIOUS_UPGRADE_COMPLETED);
+    super(PREVIOUS_UPGRADE_COMPLETED);
   }
 
   @Override
-  public void perform(PrerequisiteCheck prerequisiteCheck, PrereqCheckRequest request) throws AmbariException {
+  public UpgradeCheckResult perform(UpgradeCheckRequest request) throws AmbariException {
+    UpgradeCheckResult result = new UpgradeCheckResult(this);
+
     final String clusterName = request.getClusterName();
     final Cluster cluster = clustersProvider.get().getCluster(clusterName);
 
     String errorMessage = null;
+    UpgradeEntity upgradeInProgress = cluster.getUpgradeInProgress();
+    if (null != upgradeInProgress) {
+      Direction direction = upgradeInProgress.getDirection();
+      String directionText = direction.getText(false);
+      String prepositionText = direction.getPreposition();
 
-    List<UpgradeEntity> upgrades= upgradeDaoProvider.get().findAll();
-    if (upgrades != null) {
-      Long lastStartTime = 0L;
-      UpgradeEntity mostRecentUpgrade = null;
-      UpgradeEntity correspondingDowngrade = null;
-      for (UpgradeEntity upgrade : upgrades) {
-        // Find the most recent upgrade for this cluster
-        if (upgrade.getClusterId() == cluster.getClusterId() && upgrade.getDirection() == Direction.UPGRADE) {
-          Long requestId = upgrade.getRequestId();
-          RequestEntity upgradeRequest = requestDaoProvider.get().findByPK(requestId);
-          if (upgradeRequest != null && upgradeRequest.getStartTime() > lastStartTime) {
-            mostRecentUpgrade = upgrade;
-            lastStartTime = upgradeRequest.getStartTime();
-          }
-        }
-      }
-
-      // Check for the corresponding downgrade.
-      if (mostRecentUpgrade != null) {
-        for (UpgradeEntity downgrade : upgrades) {
-          // Surprisingly, a Downgrade's from and to version are identical.
-          if (downgrade.getClusterId() == cluster.getClusterId() && downgrade.getDirection() == Direction.DOWNGRADE &&
-              downgrade.getFromVersion().equals(mostRecentUpgrade.getFromVersion())) {
-            correspondingDowngrade = downgrade;
-            break;
-          }
-        }
-
-        // If it has no downgrade, then the "Save Cluster State" step should have COMPLETED.
-        if (correspondingDowngrade == null) {
-          // Should have only 1 element.
-          List<HostRoleCommandEntity> finalizeCommandList = hostRoleCommandDaoProvider.get().
-              findSortedCommandsByRequestIdAndCustomCommandName(mostRecentUpgrade.getRequestId(), FINALIZE_ACTION_CLASS_NAME);
-  
-          // If the action is not COMPLETED, then something went wrong.
-          if (finalizeCommandList != null) {
-            for (HostRoleCommandEntity command : finalizeCommandList) {
-              if (command.getStatus() != HostRoleStatus.COMPLETED) {
-                errorMessage = MessageFormat.format("Upgrade attempt (id: {0}, request id: {1}, from version: {2}, " +
-                    "to version: {3}) did not complete task with id {4} since its state is {5} instead of COMPLETED.",
-                    mostRecentUpgrade.getId(), mostRecentUpgrade.getRequestId(), mostRecentUpgrade.getFromVersion(),
-                    mostRecentUpgrade.getToVersion(), command.getTaskId(), command.getStatus());
-                errorMessage += " Please ensure that you called:\n" + SET_CURRENT_COMMAND;
-                errorMessage += MessageFormat.format("\nFurther, change the status of host_role_command with " +
-                    "id {0} to COMPLETED", mostRecentUpgrade.getId());
-                break;
-              }
-            }
-          }
-        }
-      }
+      errorMessage = MessageFormat.format(ERROR_MESSAGE, directionText, prepositionText,
+          upgradeInProgress.getRepositoryVersion().getVersion(), directionText);
     }
 
     if (null != errorMessage) {
-      LinkedHashSet<String> failedOn = new LinkedHashSet<String>();
+      LinkedHashSet<String> failedOn = new LinkedHashSet<>();
       failedOn.add(cluster.getClusterName());
-      prerequisiteCheck.setFailedOn(failedOn);
-      prerequisiteCheck.setStatus(PrereqCheckStatus.FAIL);
-      prerequisiteCheck.setFailReason(errorMessage);
+      result.setFailedOn(failedOn);
+      result.setStatus(UpgradeCheckStatus.FAIL);
+      result.setFailReason(errorMessage);
     }
+
+    return result;
   }
 }

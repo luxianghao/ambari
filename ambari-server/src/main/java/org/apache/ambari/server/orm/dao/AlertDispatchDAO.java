@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,10 +19,11 @@ package org.apache.ambari.server.orm.dao;
 
 import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 import javax.persistence.EntityManager;
 import javax.persistence.TypedQuery;
@@ -31,12 +32,16 @@ import javax.persistence.criteria.Order;
 import javax.persistence.metamodel.SingularAttribute;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.agent.stomp.dto.AlertGroupUpdate;
 import org.apache.ambari.server.api.query.JpaPredicateVisitor;
 import org.apache.ambari.server.api.query.JpaSortBuilder;
 import org.apache.ambari.server.controller.AlertNoticeRequest;
-import org.apache.ambari.server.controller.RootServiceResponseFactory.Services;
+import org.apache.ambari.server.controller.RootService;
 import org.apache.ambari.server.controller.spi.Predicate;
 import org.apache.ambari.server.controller.utilities.PredicateHelper;
+import org.apache.ambari.server.events.AlertGroupsUpdateEvent;
+import org.apache.ambari.server.events.UpdateEventType;
+import org.apache.ambari.server.events.publishers.STOMPUpdatePublisher;
 import org.apache.ambari.server.orm.RequiresSession;
 import org.apache.ambari.server.orm.entities.AlertDefinitionEntity;
 import org.apache.ambari.server.orm.entities.AlertGroupEntity;
@@ -52,6 +57,7 @@ import org.eclipse.persistence.config.QueryHints;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.util.concurrent.Striped;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -82,11 +88,15 @@ public class AlertDispatchDAO {
   @Inject
   private Provider<Clusters> m_clusters;
 
+  @Inject
+  private STOMPUpdatePublisher STOMPUpdatePublisher;
+
   /**
-   * A lock that ensures that group writes are protected. This is useful since
-   * groups can be created through different events/threads in the system.
+   * Used for ensuring that the concurrent nature of the event handler methods
+   * don't collide when attempting to creation alert groups for the same
+   * service.
    */
-  private final Lock m_groupLock = new ReentrantLock();
+  private Striped<Lock> m_locksByService = Striped.lazyWeakLock(20);
 
   private static final Logger LOG = LoggerFactory.getLogger(AlertDispatchDAO.class);
 
@@ -192,24 +202,6 @@ public class AlertDispatchDAO {
 
     query.setParameter("notifyState", NotificationState.PENDING);
     return daoUtils.selectList(query);
-  }
-
-  /**
-   * Gets an alert group with the specified name across all clusters. Alert
-   * group names are unique within a cluster.
-   *
-   * @param groupName
-   *          the name of the group (not {@code null}).
-   * @return the alert group or {@code null} if none exists.
-   */
-  @RequiresSession
-  public AlertGroupEntity findGroupByName(String groupName) {
-    TypedQuery<AlertGroupEntity> query = entityManagerProvider.get().createNamedQuery(
-        "AlertGroupEntity.findByName", AlertGroupEntity.class);
-
-    query.setParameter("groupName", groupName);
-
-    return daoUtils.selectSingle(query);
   }
 
   /**
@@ -390,7 +382,7 @@ public class AlertDispatchDAO {
     }
 
     // sorting
-    JpaSortBuilder<AlertNoticeEntity> sortBuilder = new JpaSortBuilder<AlertNoticeEntity>();
+    JpaSortBuilder<AlertNoticeEntity> sortBuilder = new JpaSortBuilder<>();
     List<Order> sortOrders = sortBuilder.buildSortOrders(request.Sort, visitor);
     query.orderBy(sortOrders);
 
@@ -429,9 +421,14 @@ public class AlertDispatchDAO {
       return;
     }
 
+    List<AlertGroupUpdate> alertGroupUpdates = new ArrayList<>(entities.size());
     for (AlertGroupEntity entity : entities) {
-      create(entity);
+      create(entity, false);
+      alertGroupUpdates.add(new AlertGroupUpdate(entity));
     }
+    AlertGroupsUpdateEvent alertGroupsUpdateEvent = new AlertGroupsUpdateEvent(alertGroupUpdates,
+        UpdateEventType.CREATE);
+    STOMPUpdatePublisher.publish(alertGroupsUpdateEvent);
   }
 
   /**
@@ -442,6 +439,18 @@ public class AlertDispatchDAO {
    */
   @Transactional
   public void create(AlertGroupEntity group) {
+    create(group, true);
+  }
+
+  /**
+   * Persists a new alert group.
+   *
+   * @param group the group to persist (not {@code null}).
+   * @param fireEvent should alert group update event to be fired
+   */
+  @Transactional
+  public void create(AlertGroupEntity group, boolean fireEvent) {
+
     entityManagerProvider.get().persist(group);
 
     // associate the group with all alert targets
@@ -451,6 +460,12 @@ public class AlertDispatchDAO {
         group.addAlertTarget(target);
       }
       entityManagerProvider.get().merge(group);
+    }
+    if (fireEvent) {
+      AlertGroupsUpdateEvent alertGroupsUpdateEvent = new AlertGroupsUpdateEvent(
+          Collections.singletonList(new AlertGroupUpdate(group)),
+          UpdateEventType.CREATE);
+      STOMPUpdatePublisher.publish(alertGroupsUpdateEvent);
     }
   }
 
@@ -466,9 +481,10 @@ public class AlertDispatchDAO {
   @Transactional
   public AlertGroupEntity createDefaultGroup(long clusterId, String serviceName)
       throws AmbariException {
+
     // AMBARI is a special service that we let through, otherwise we need to
     // verify that the service exists before we create the default group
-    String ambariServiceName = Services.AMBARI.name();
+    String ambariServiceName = RootService.AMBARI.name();
     if (!ambariServiceName.equals(serviceName)) {
       Cluster cluster = m_clusters.get().getClusterById(clusterId);
       Map<String, Service> services = cluster.getServices();
@@ -481,21 +497,26 @@ public class AlertDispatchDAO {
       }
     }
 
-    AlertGroupEntity group = new AlertGroupEntity();
+    Lock lock = m_locksByService.get(serviceName);
+    lock.lock();
 
-    m_groupLock.lock();
     try {
+      AlertGroupEntity group = findDefaultServiceGroup(clusterId, serviceName);
+      if (null != group) {
+        return group;
+      }
+
+      group = new AlertGroupEntity();
       group.setClusterId(clusterId);
       group.setDefault(true);
       group.setGroupName(serviceName);
       group.setServiceName(serviceName);
 
       create(group);
+      return group;
     } finally {
-      m_groupLock.unlock();
+      lock.unlock();
     }
-
-    return group;
   }
 
   /**
@@ -529,7 +550,23 @@ public class AlertDispatchDAO {
    */
   @Transactional
   public void remove(AlertGroupEntity alertGroup) {
+    remove(alertGroup, true);
+  }
+
+  /**
+   * Removes the specified alert group from the database.
+   *
+   * @param alertGroup the group to remove.
+   * @param fireEvent should alert group update event to be fired.
+   */
+  @Transactional
+  public void remove(AlertGroupEntity alertGroup, boolean fireEvent) {
     entityManagerProvider.get().remove(merge(alertGroup));
+    if (fireEvent) {
+      AlertGroupsUpdateEvent alertGroupsUpdateEvent = AlertGroupsUpdateEvent.deleteAlertGroupsUpdateEvent(
+          Collections.singletonList(alertGroup.getGroupId()));
+      STOMPUpdatePublisher.publish(alertGroupsUpdateEvent);
+    }
   }
 
   /**
@@ -543,8 +580,11 @@ public class AlertDispatchDAO {
   public void removeAllGroups(long clusterId) {
     List<AlertGroupEntity> groups = findAllGroups(clusterId);
     for (AlertGroupEntity group : groups) {
-      remove(group);
+      remove(group, false);
     }
+    AlertGroupsUpdateEvent alertGroupsUpdateEvent = AlertGroupsUpdateEvent.deleteAlertGroupsUpdateEvent(
+        groups.stream().map(AlertGroupEntity::getGroupId).collect(Collectors.toList()));
+    STOMPUpdatePublisher.publish(alertGroupsUpdateEvent);
   }
 
   /**
@@ -605,6 +645,10 @@ public class AlertDispatchDAO {
       for (AlertGroupEntity group : groups) {
         group.addAlertTarget(alertTarget);
         merge(group);
+        AlertGroupsUpdateEvent alertGroupsUpdateEvent = new AlertGroupsUpdateEvent(Collections.singletonList(
+            new AlertGroupUpdate(group)),
+            UpdateEventType.UPDATE);
+        STOMPUpdatePublisher.publish(alertGroupsUpdateEvent);
       }
     }
   }
@@ -640,6 +684,13 @@ public class AlertDispatchDAO {
    */
   @Transactional
   public void remove(AlertTargetEntity alertTarget) {
+    List<AlertGroupUpdate> alertGroupUpdates = new ArrayList<>();
+    for (AlertGroupEntity alertGroupEntity : alertTarget.getAlertGroups()) {
+      AlertGroupUpdate alertGroupUpdate = new AlertGroupUpdate(alertGroupEntity);
+      alertGroupUpdate.getTargets().remove(alertTarget.getTargetId());
+      alertGroupUpdates.add(alertGroupUpdate);
+    }
+    STOMPUpdatePublisher.publish(new AlertGroupsUpdateEvent(alertGroupUpdates, UpdateEventType.UPDATE));
     entityManagerProvider.get().remove(alertTarget);
   }
 

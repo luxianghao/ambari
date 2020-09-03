@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +19,11 @@
 
 package org.apache.ambari.server.controller.internal;
 
-import com.google.inject.Inject;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.StaticallyInject;
 import org.apache.ambari.server.controller.AmbariManagementController;
@@ -36,11 +40,9 @@ import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
 import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptorFactory;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Sets;
+import com.google.inject.Inject;
 
 
 @StaticallyInject
@@ -70,6 +72,9 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
   private static final String SELECTION_PROPERTY_ID = PropertyHelper.getPropertyId(
       "StackServices", "selection");
 
+  private static final String MAINTAINER_PROPERTY_ID = PropertyHelper.getPropertyId(
+          "StackServices", "maintainer");
+
   private static final String VERSION_PROPERTY_ID = PropertyHelper.getPropertyId(
       "StackServices", "service_version");
 
@@ -86,17 +91,68 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
       "StackServices", "custom_commands");
 
   private static final String SERVICE_PROPERTIES_PROPERTY_ID = PropertyHelper.getPropertyId(
-    "StackServices", "properties");
+      "StackServices", "properties");
 
   private static final String CREDENTIAL_STORE_SUPPORTED = PropertyHelper.getPropertyId(
-          "StackServices", "credential_store_supported");
+      "StackServices", "credential_store_supported");
+
+  private static final String CREDENTIAL_STORE_REQUIRED = PropertyHelper.getPropertyId(
+      "StackServices", "credential_store_required");
 
   private static final String CREDENTIAL_STORE_ENABLED = PropertyHelper.getPropertyId(
-          "StackServices", "credential_store_enabled");
+      "StackServices", "credential_store_enabled");
 
-  private static Set<String> pkPropertyIds = new HashSet<String>(
-      Arrays.asList(new String[]{STACK_NAME_PROPERTY_ID,
-        STACK_VERSION_PROPERTY_ID, SERVICE_NAME_PROPERTY_ID}));
+  private static final String SUPPORT_DELETE_VIA_UI = PropertyHelper.getPropertyId(
+      "StackServices", "support_delete_via_ui");
+
+  private static final String SSO_INTEGRATION_SUPPORTED_PROPERTY_ID = PropertyHelper.getPropertyId(
+    "StackServices", "sso_integration_supported");
+
+  private static final String SSO_INTEGRATION_REQUIRES_KERBEROS_PROPERTY_ID = PropertyHelper.getPropertyId(
+    "StackServices", "sso_integration_requires_kerberos");
+
+  private static final String LDAP_INTEGRATION_SUPPORTED_PROPERTY_ID = PropertyHelper.getPropertyId(
+      "StackServices", "ldap_integration_supported");
+
+  private static final String ROLLING_RESTART_SUPPORTED_PROPERTY_ID = PropertyHelper.getPropertyId(
+      "StackServices", "rolling_restart_supported");
+
+  /**
+   * The key property ids for a StackVersion resource.
+   */
+  private static final Map<Resource.Type, String> keyPropertyIds = ImmutableMap.<Resource.Type, String>builder()
+      .put(Type.Stack, STACK_NAME_PROPERTY_ID)
+      .put(Type.StackVersion, STACK_VERSION_PROPERTY_ID)
+      .put(Type.StackService, SERVICE_NAME_PROPERTY_ID)
+      .build();
+
+  /**
+   * The property ids for a StackVersion resource.
+   */
+  private static final Set<String> propertyIds = Sets.newHashSet(
+      SERVICE_NAME_PROPERTY_ID,
+      SERVICE_TYPE_PROPERTY_ID,
+      STACK_NAME_PROPERTY_ID,
+      STACK_VERSION_PROPERTY_ID,
+      SERVICE_DISPLAY_NAME_PROPERTY_ID,
+      USER_NAME_PROPERTY_ID,
+      COMMENTS_PROPERTY_ID,
+      SELECTION_PROPERTY_ID,
+      MAINTAINER_PROPERTY_ID,
+      VERSION_PROPERTY_ID,
+      CONFIG_TYPES,
+      REQUIRED_SERVICES_ID,
+      SERVICE_CHECK_SUPPORTED_PROPERTY_ID,
+      CUSTOM_COMMANDS_PROPERTY_ID,
+      SERVICE_PROPERTIES_PROPERTY_ID,
+      CREDENTIAL_STORE_SUPPORTED,
+      CREDENTIAL_STORE_REQUIRED,
+      CREDENTIAL_STORE_ENABLED,
+      SUPPORT_DELETE_VIA_UI,
+      SSO_INTEGRATION_SUPPORTED_PROPERTY_ID,
+      SSO_INTEGRATION_REQUIRES_KERBEROS_PROPERTY_ID,
+      LDAP_INTEGRATION_SUPPORTED_PROPERTY_ID,
+      ROLLING_RESTART_SUPPORTED_PROPERTY_ID);
 
   /**
    * KerberosServiceDescriptorFactory used to create KerberosServiceDescriptor instances
@@ -104,10 +160,8 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
   @Inject
   private static KerberosServiceDescriptorFactory kerberosServiceDescriptorFactory;
 
-  protected StackServiceResourceProvider(Set<String> propertyIds,
-      Map<Type, String> keyPropertyIds,
-      AmbariManagementController managementController) {
-    super(propertyIds, keyPropertyIds, managementController);
+  protected StackServiceResourceProvider(AmbariManagementController managementController) {
+    super(Type.StackService, propertyIds, keyPropertyIds, managementController);
   }
 
   @Override
@@ -115,10 +169,10 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
       throws SystemException, UnsupportedPropertyException,
     NoSuchResourceException, NoSuchParentResourceException {
 
-    final Set<StackServiceRequest> requests = new HashSet<StackServiceRequest>();
+    final Set<StackServiceRequest> requests = new HashSet<>();
 
     if (predicate == null) {
-      requests.add(getRequest(Collections.<String, Object>emptyMap()));
+      requests.add(getRequest(Collections.emptyMap()));
     } else {
       for (Map<String, Object> propertyMap : getPropertyMaps(predicate)) {
         requests.add(getRequest(propertyMap));
@@ -134,7 +188,7 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
       }
     });
 
-    Set<Resource> resources = new HashSet<Resource>();
+    Set<Resource> resources = new HashSet<>();
 
     for (StackServiceResponse response : responses) {
       Resource resource = createResource(response, requestedIds);
@@ -178,6 +232,9 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
     setResourceProperty(resource, SELECTION_PROPERTY_ID,
         response.getSelection(), requestedIds);
 
+    setResourceProperty(resource, MAINTAINER_PROPERTY_ID,
+        response.getMaintainer(), requestedIds);
+
     setResourceProperty(resource, CONFIG_TYPES,
         response.getConfigTypes(), requestedIds);
 
@@ -191,13 +248,27 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
         response.getCustomCommands(), requestedIds);
 
     setResourceProperty(resource, SERVICE_PROPERTIES_PROPERTY_ID,
-      response.getServiceProperties(), requestedIds);
+        response.getServiceProperties(), requestedIds);
 
     setResourceProperty(resource, CREDENTIAL_STORE_SUPPORTED,
-      response.isCredentialStoreSupported(), requestedIds);
+        response.isCredentialStoreSupported(), requestedIds);
+
+    setResourceProperty(resource, CREDENTIAL_STORE_REQUIRED,
+        response.isCredentialStoreRequired(), requestedIds);
 
     setResourceProperty(resource, CREDENTIAL_STORE_ENABLED,
-      response.isCredentialStoreEnabled(), requestedIds);
+        response.isCredentialStoreEnabled(), requestedIds);
+
+    setResourceProperty(resource, SUPPORT_DELETE_VIA_UI,
+        response.isSupportDeleteViaUI(), requestedIds);
+
+    setResourceProperty(resource, ROLLING_RESTART_SUPPORTED_PROPERTY_ID,
+        response.isRollingRestartSupported(),  requestedIds);
+
+
+    setResourceProperty(resource, SSO_INTEGRATION_SUPPORTED_PROPERTY_ID, response.isSsoIntegrationSupported(), requestedIds);
+    setResourceProperty(resource, SSO_INTEGRATION_REQUIRES_KERBEROS_PROPERTY_ID, response.isSsoIntegrationRequiresKerberos(), requestedIds);
+    setResourceProperty(resource, LDAP_INTEGRATION_SUPPORTED_PROPERTY_ID, response.isLdapIntegrationSupported(), requestedIds);
 
     return resource;
   }
@@ -213,7 +284,7 @@ public class StackServiceResourceProvider extends ReadOnlyResourceProvider {
 
   @Override
   protected Set<String> getPKPropertyIds() {
-    return pkPropertyIds;
+    return new HashSet<>(keyPropertyIds.values());
   }
 
 }

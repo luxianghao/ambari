@@ -18,6 +18,9 @@
 
 package org.apache.ambari.server.controller.internal;
 
+import static org.easymock.EasyMock.anyObject;
+import static org.easymock.EasyMock.expect;
+
 import java.lang.reflect.Field;
 import java.util.Collection;
 import java.util.Collections;
@@ -29,8 +32,11 @@ import javax.persistence.EntityManager;
 
 import org.apache.ambari.server.actionmanager.ActionDBAccessor;
 import org.apache.ambari.server.actionmanager.ActionManager;
+import org.apache.ambari.server.actionmanager.HostRoleCommandFactory;
+import org.apache.ambari.server.actionmanager.HostRoleCommandFactoryImpl;
 import org.apache.ambari.server.actionmanager.StageFactory;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.configuration.AmbariServerConfiguration;
 import org.apache.ambari.server.controller.AbstractRootServiceResponseFactory;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.AmbariManagementControllerImpl;
@@ -43,10 +49,13 @@ import org.apache.ambari.server.controller.spi.ResourceProvider;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.utilities.PredicateBuilder;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.events.AgentConfigsUpdateEvent;
 import org.apache.ambari.server.hooks.HookContextFactory;
 import org.apache.ambari.server.hooks.HookService;
+import org.apache.ambari.server.ldap.service.AmbariLdapConfigurationProvider;
 import org.apache.ambari.server.metadata.CachedRoleCommandOrderProvider;
 import org.apache.ambari.server.metadata.RoleCommandOrderProvider;
+import org.apache.ambari.server.mpack.MpackManagerFactory;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
 import org.apache.ambari.server.orm.dao.PermissionDAO;
@@ -61,7 +70,9 @@ import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.security.authorization.Users;
 import org.apache.ambari.server.security.encryption.CredentialStoreService;
 import org.apache.ambari.server.security.encryption.CredentialStoreServiceImpl;
+import org.apache.ambari.server.security.encryption.Encryptor;
 import org.apache.ambari.server.stack.StackManagerFactory;
+import org.apache.ambari.server.stack.upgrade.orchestrate.UpgradeContextFactory;
 import org.apache.ambari.server.stageplanner.RoleGraphFactory;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.ConfigFactory;
@@ -71,6 +82,9 @@ import org.apache.ambari.server.state.ServiceFactory;
 import org.apache.ambari.server.state.configgroup.ConfigGroupFactory;
 import org.apache.ambari.server.state.scheduler.RequestExecutionFactory;
 import org.apache.ambari.server.state.stack.OsFamily;
+import org.apache.ambari.server.topology.PersistedState;
+import org.apache.ambari.server.topology.PersistedStateImpl;
+import org.apache.ambari.server.topology.tasks.ConfigureClusterTaskFactory;
 import org.easymock.EasyMockSupport;
 import org.junit.After;
 import org.junit.Assert;
@@ -83,10 +97,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.google.inject.TypeLiteral;
 import com.google.inject.assistedinject.FactoryModuleBuilder;
-
-import static org.easymock.EasyMock.anyObject;
-import static org.easymock.EasyMock.expect;
+import com.google.inject.name.Names;
 
 
 /**
@@ -162,67 +175,67 @@ public class UserAuthorizationResourceProviderTest extends EasyMockSupport {
     Injector injector = createInjector();
 
     Resource clusterResource = createMock(Resource.class);
-    expect(clusterResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_PERMISSION_NAME_PROPERTY_ID))
+    expect(clusterResource.getPropertyValue(UserPrivilegeResourceProvider.PERMISSION_NAME))
         .andReturn("CLUSTER.DO_SOMETHING")
         .anyTimes();
-    expect(clusterResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_TYPE_PROPERTY_ID))
+    expect(clusterResource.getPropertyValue(UserPrivilegeResourceProvider.TYPE))
         .andReturn("CLUSTER")
         .anyTimes();
-    expect(clusterResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_CLUSTER_NAME_PROPERTY_ID))
+    expect(clusterResource.getPropertyValue(UserPrivilegeResourceProvider.CLUSTER_NAME))
         .andReturn("Cluster Name")
         .anyTimes();
 
     Resource viewResource = createMock(Resource.class);
-    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_PERMISSION_NAME_PROPERTY_ID))
+    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.PERMISSION_NAME))
         .andReturn("VIEW.DO_SOMETHING")
         .anyTimes();
-    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_TYPE_PROPERTY_ID))
+    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.TYPE))
         .andReturn("VIEW")
         .anyTimes();
-    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_VIEW_NAME_PROPERTY_ID))
+    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.VIEW_NAME))
         .andReturn("View Name")
         .anyTimes();
-    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_VIEW_VERSION_PROPERTY_ID))
+    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.VIEW_VERSION))
         .andReturn("View Version")
         .anyTimes();
-    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_INSTANCE_NAME_PROPERTY_ID))
+    expect(viewResource.getPropertyValue(UserPrivilegeResourceProvider.INSTANCE_NAME))
         .andReturn("View Instance Name")
         .anyTimes();
 
     Resource adminResource = createMock(Resource.class);
-    expect(adminResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_PERMISSION_NAME_PROPERTY_ID))
+    expect(adminResource.getPropertyValue(UserPrivilegeResourceProvider.PERMISSION_NAME))
         .andReturn("ADMIN.DO_SOMETHING")
         .anyTimes();
-    expect(adminResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_TYPE_PROPERTY_ID))
+    expect(adminResource.getPropertyValue(UserPrivilegeResourceProvider.TYPE))
         .andReturn("ADMIN")
         .anyTimes();
-    expect(adminResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_CLUSTER_NAME_PROPERTY_ID))
+    expect(adminResource.getPropertyValue(UserPrivilegeResourceProvider.CLUSTER_NAME))
         .andReturn(null)
         .anyTimes();
 
     Resource emptyResource = createMock(Resource.class);
-    expect(emptyResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_PERMISSION_NAME_PROPERTY_ID))
+    expect(emptyResource.getPropertyValue(UserPrivilegeResourceProvider.PERMISSION_NAME))
         .andReturn("EMPTY.DO_SOMETHING")
         .anyTimes();
-    expect(emptyResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_TYPE_PROPERTY_ID))
+    expect(emptyResource.getPropertyValue(UserPrivilegeResourceProvider.TYPE))
         .andReturn("ADMIN")
         .anyTimes();
-    expect(emptyResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_CLUSTER_NAME_PROPERTY_ID))
+    expect(emptyResource.getPropertyValue(UserPrivilegeResourceProvider.CLUSTER_NAME))
         .andReturn(null)
         .anyTimes();
 
     Resource nullResource = createMock(Resource.class);
-    expect(nullResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_PERMISSION_NAME_PROPERTY_ID))
+    expect(nullResource.getPropertyValue(UserPrivilegeResourceProvider.PERMISSION_NAME))
         .andReturn("NULL.DO_SOMETHING")
         .anyTimes();
-    expect(nullResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_TYPE_PROPERTY_ID))
+    expect(nullResource.getPropertyValue(UserPrivilegeResourceProvider.TYPE))
         .andReturn("ADMIN")
         .anyTimes();
-    expect(nullResource.getPropertyValue(UserPrivilegeResourceProvider.PRIVILEGE_CLUSTER_NAME_PROPERTY_ID))
+    expect(nullResource.getPropertyValue(UserPrivilegeResourceProvider.CLUSTER_NAME))
         .andReturn(null)
         .anyTimes();
 
-    Set<Resource> userPrivilegeResources = new HashSet<Resource>();
+    Set<Resource> userPrivilegeResources = new HashSet<>();
     userPrivilegeResources.add(clusterResource);
     userPrivilegeResources.add(viewResource);
     userPrivilegeResources.add(adminResource);
@@ -285,7 +298,7 @@ public class UserAuthorizationResourceProviderTest extends EasyMockSupport {
 
     PermissionEntity emptyPermissionEntity = createMock(PermissionEntity.class);
     expect(emptyPermissionEntity.getAuthorizations())
-        .andReturn(Collections.<RoleAuthorizationEntity>emptyList())
+        .andReturn(Collections.emptyList())
         .anyTimes();
 
     PermissionEntity nullPermissionEntity = createMock(PermissionEntity.class);
@@ -332,7 +345,7 @@ public class UserAuthorizationResourceProviderTest extends EasyMockSupport {
 
     Assert.assertEquals(3, resources.size());
 
-    LinkedList<String> expectedIds = new LinkedList<String>();
+    LinkedList<String> expectedIds = new LinkedList<>();
     expectedIds.add("CLUSTER.DO_SOMETHING");
     expectedIds.add("VIEW.DO_SOMETHING");
     expectedIds.add("ADMIN.DO_SOMETHING");
@@ -386,6 +399,10 @@ public class UserAuthorizationResourceProviderTest extends EasyMockSupport {
     return Guice.createInjector(new AbstractModule() {
       @Override
       protected void configure() {
+        install(new FactoryModuleBuilder().build(UpgradeContextFactory.class));
+        install(new FactoryModuleBuilder().build(RoleGraphFactory.class));
+        install(new FactoryModuleBuilder().build(ConfigureClusterTaskFactory.class));
+
         bind(EntityManager.class).toInstance(createNiceMock(EntityManager.class));
         bind(DBAccessor.class).toInstance(createNiceMock(DBAccessor.class));
         bind(ActionDBAccessor.class).toInstance(createNiceMock(ActionDBAccessor.class));
@@ -396,7 +413,6 @@ public class UserAuthorizationResourceProviderTest extends EasyMockSupport {
         bind(org.apache.ambari.server.actionmanager.RequestFactory.class).toInstance(createNiceMock(org.apache.ambari.server.actionmanager.RequestFactory.class));
         bind(RequestExecutionFactory.class).toInstance(createNiceMock(RequestExecutionFactory.class));
         bind(StageFactory.class).toInstance(createNiceMock(StageFactory.class));
-        install(new FactoryModuleBuilder().build(RoleGraphFactory.class));
         bind(Clusters.class).toInstance(createNiceMock(Clusters.class));
         bind(AbstractRootServiceResponseFactory.class).toInstance(createNiceMock(AbstractRootServiceResponseFactory.class));
         bind(StackManagerFactory.class).toInstance(createNiceMock(StackManagerFactory.class));
@@ -417,6 +433,13 @@ public class UserAuthorizationResourceProviderTest extends EasyMockSupport {
         bind(HostRoleCommandDAO.class).toInstance(createMock(HostRoleCommandDAO.class));
         bind(HookContextFactory.class).toInstance(createMock(HookContextFactory.class));
         bind(HookService.class).toInstance(createMock(HookService.class));
+        bind(HostRoleCommandFactory.class).to(HostRoleCommandFactoryImpl.class);
+        bind(PersistedState.class).to(PersistedStateImpl.class);
+        bind(MpackManagerFactory.class).toInstance(createNiceMock(MpackManagerFactory.class));
+        bind(AmbariLdapConfigurationProvider.class).toInstance(createMock(AmbariLdapConfigurationProvider.class));
+
+        bind(new TypeLiteral<Encryptor<AgentConfigsUpdateEvent>>() {}).annotatedWith(Names.named("AgentConfigEncryptor")).toInstance(Encryptor.NONE);
+        bind(new TypeLiteral<Encryptor<AmbariServerConfiguration>>() {}).annotatedWith(Names.named("AmbariServerConfigurationEncryptor")).toInstance(Encryptor.NONE);
       }
     });
   }

@@ -19,7 +19,7 @@ limitations under the License.
 '''
 
 import sys
-sys.path.append("/usr/lib/python2.6/site-packages/") # this file can be run with python2.7 that why we need this
+sys.path.append("/usr/lib/ambari-server/lib/") # this file can be run with python2.7 that why we need this
 
 # On Linux, the bootstrap process is supposed to run on hosts that may have installed Python 2.4 and above (CentOS 5).
 # Hence, the whole bootstrap code needs to comply with Python 2.4 instead of Python 2.6. Most notably, @-decorators and
@@ -29,7 +29,7 @@ import time
 import logging
 import pprint
 import os
-import subprocess
+from ambari_commons import subprocess32
 import threading
 import traceback
 import re
@@ -54,6 +54,8 @@ DEFAULT_AGENT_DATA_FOLDER = "/var/lib/ambari-agent/data"
 DEFAULT_AGENT_LIB_FOLDER = "/var/lib/ambari-agent"
 PYTHON_ENV="env PYTHONPATH=$PYTHONPATH:" + DEFAULT_AGENT_TEMP_FOLDER
 SERVER_AMBARI_SUDO = os.getenv('ROOT','/').rstrip('/') + "/var/lib/ambari-server/ambari-sudo.sh"
+CREATE_PYTHON_WRAP_SCRIPT = os.getenv('ROOT','/').rstrip('/') + "/var/lib/ambari-server/create-python-wrap.sh"
+REMOTE_CREATE_PYTHON_WRAP_SCRIPT = os.path.join(DEFAULT_AGENT_TEMP_FOLDER, 'create-python-wrap.sh')
 AMBARI_SUDO = os.path.join(DEFAULT_AGENT_TEMP_FOLDER, 'ambari-sudo.sh')
 
 class HostLog:
@@ -102,8 +104,8 @@ class SCP:
       self.host_log.write("Running scp command " + ' '.join(scpcommand))
     self.host_log.write("==========================")
     self.host_log.write("\nCommand start time " + datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    scpstat = subprocess.Popen(scpcommand, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE)
+    scpstat = subprocess32.Popen(scpcommand, stdout=subprocess32.PIPE,
+                               stderr=subprocess32.PIPE)
     log = scpstat.communicate()
     errorMsg = log[1]
     log = log[0] + "\n" + log[1]
@@ -140,8 +142,8 @@ class SSH:
       self.host_log.write("Running ssh command " + ' '.join(sshcommand))
     self.host_log.write("==========================")
     self.host_log.write("\nCommand start time " + datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    sshstat = subprocess.Popen(sshcommand, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE)
+    sshstat = subprocess32.Popen(sshcommand, stdout=subprocess32.PIPE,
+                               stderr=subprocess32.PIPE)
     log = sshstat.communicate()
     errorMsg = log[1]
     if self.errorMessage and sshstat.returncode != 0:
@@ -401,7 +403,7 @@ class BootstrapWindows(Bootstrap):
 
 @OsFamilyImpl(os_family=OsFamilyImpl.DEFAULT)
 class BootstrapDefault(Bootstrap):
-  ambari_commons="/usr/lib/python2.6/site-packages/ambari_commons"
+  ambari_commons="/usr/lib/ambari-server/lib/ambari_commons"
   TEMP_FOLDER = DEFAULT_AGENT_TEMP_FOLDER
   OS_CHECK_SCRIPT_FILENAME = "os_check_type.py"
   PASSWORD_FILENAME = "host_pass"
@@ -460,6 +462,19 @@ class BootstrapDefault(Bootstrap):
     params = self.shared_state
     self.host_log.write("==========================\n")
     self.host_log.write("Copying ambari sudo script...")
+    scp = SCP(params.user, params.sshPort, params.sshkey_file, self.host, fileToCopy,
+              target, params.bootdir, self.host_log)
+    result = scp.run()
+    self.host_log.write("\n")
+    return result
+
+  def copyCreatePythonWrapScript(self):
+    # Copying the script which will create python wrap
+    fileToCopy = CREATE_PYTHON_WRAP_SCRIPT
+    target = self.TEMP_FOLDER
+    params = self.shared_state
+    self.host_log.write("==========================\n")
+    self.host_log.write("Copying create-python-wrap script...")
     scp = SCP(params.user, params.sshPort, params.sshkey_file, self.host, fileToCopy,
               target, params.bootdir, self.host_log)
     result = scp.run()
@@ -610,6 +625,19 @@ class BootstrapDefault(Bootstrap):
            " " + str(passphrase) + " " + str(server)+ " " + quote_bash_args(str(user_run_as)) + " " + str(version) + \
            " " + str(port)
 
+  def runCreatePythonWrapScript(self):
+    params = self.shared_state
+    self.host_log.write("==========================\n")
+    self.host_log.write("Running create-python-wrap script...")
+
+    command = "chmod a+x {script} && {sudo} {script}".format(sudo=AMBARI_SUDO, script=REMOTE_CREATE_PYTHON_WRAP_SCRIPT)
+
+    ssh = SSH(params.user, params.sshPort, params.sshkey_file, self.host, command,
+              params.bootdir, self.host_log)
+    retcode = ssh.run()
+    self.host_log.write("\n")
+    return retcode
+
   def runOsCheckScript(self):
     params = self.shared_state
     self.host_log.write("==========================\n")
@@ -725,7 +753,9 @@ class BootstrapDefault(Bootstrap):
     action_queue = [self.createTargetDir,
                     self.copyAmbariSudo,
                     self.copyCommonFunctions,
+                    self.copyCreatePythonWrapScript,
                     self.copyOsCheckScript,
+                    self.runCreatePythonWrapScript,
                     self.runOsCheckScript,
                     self.checkSudoPackage
     ]
@@ -861,10 +891,10 @@ def main(argv=None):
 
   if not OSCheck.is_windows_family():
     # ssh doesn't like open files
-    subprocess.Popen(["chmod", "600", sshkey_file], stdout=subprocess.PIPE)
+    subprocess32.Popen(["chmod", "600", sshkey_file], stdout=subprocess32.PIPE)
 
     if passwordFile is not None and passwordFile != 'null':
-      subprocess.Popen(["chmod", "600", passwordFile], stdout=subprocess.PIPE)
+      subprocess32.Popen(["chmod", "600", passwordFile], stdout=subprocess32.PIPE)
 
   logging.info("BootStrapping hosts " + pprint.pformat(hostList) +
                " using " + scriptDir + " cluster primary OS: " + cluster_os_type +

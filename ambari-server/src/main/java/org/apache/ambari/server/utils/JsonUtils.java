@@ -17,16 +17,17 @@
  */
 package org.apache.ambari.server.utils;
 
+import org.apache.commons.lang.StringUtils;
+
 import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
-import org.apache.commons.lang.StringUtils;
 
 /**
  * Static Helper methods for Json processing.
  */
 public class JsonUtils {
 
-  public static JsonParser jsonParser = new JsonParser();
+  public static final JsonParser jsonParser = new JsonParser();
 
   /**
    * Checks if an input string is in valid JSON format

@@ -23,7 +23,9 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
 
   name: 'manageJournalNodeWizardController',
 
-  totalSteps: 8,
+  totalSteps: 7,
+
+  displayName: Em.I18n.t('admin.manageJournalNode.wizard.header'),
 
   /**
    * Used for hiding back button in wizard
@@ -39,9 +41,9 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
     masterComponentHosts: null,
     serviceConfigProperties: [],
     serviceName: 'MISC',
-    hdfsUser:"hdfs",
+    hdfsUser: "hdfs",
     nameServiceId: '',
-    failedTask : null,
+    failedTask: null,
     requestIds: null
   }),
 
@@ -59,7 +61,7 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
    * return new object extended from clusterStatusTemplate
    * @return Object
    */
-  getCluster: function(){
+  getCluster: function () {
     return jQuery.extend({}, this.get('clusterStatusTemplate'), {name: App.router.getClusterName()});
   },
 
@@ -98,7 +100,7 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
         }
       }
     ],
-    2 : [
+    2: [
       {
         type: 'sync',
         callback: function () {
@@ -120,28 +122,39 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
   },
 
   getJournalNodesToAdd: function () {
-    return this.get('content.masterComponentHosts').filterProperty('component', 'JOURNALNODE')
-      .filterProperty('isInstalled', false).mapProperty('hostName');
+    var result = [];
+    var masterComponentHosts = this.get('content.masterComponentHosts');
+    if (masterComponentHosts) {
+      result = masterComponentHosts
+        .filterProperty('component', 'JOURNALNODE')
+        .filterProperty('isInstalled', false)
+        .mapProperty('hostName');
+    }
+    return result;
   },
 
   getJournalNodesToDelete: function () {
-    var existingHosts = App.HostComponent.find().filterProperty('componentName', 'JOURNALNODE').mapProperty('hostName');
-    var currentJNs = this.get('content.masterComponentHosts').filterProperty('component', 'JOURNALNODE');
-    var removed = existingHosts.filter(function(host) {
-      return currentJNs.filterProperty('hostName', host).length == 0;
-    });
-    return removed;
+    var result = [];
+    var masterComponentHosts = this.get('content.masterComponentHosts');
+    if (masterComponentHosts) {
+      var currentJNs = masterComponentHosts.filterProperty('component', 'JOURNALNODE');
+      var existingHosts = App.HostComponent.find().filterProperty('componentName', 'JOURNALNODE').mapProperty('hostName');
+      result = existingHosts.filter(function (host) {
+        return currentJNs.filterProperty('hostName', host).length === 0;
+      });
+    }
+    return result;
   },
 
   isDeleteOnly: function () {
-    return this.getJournalNodesToAdd().length == 0 && this.getJournalNodesToDelete().length > 0;
-  },
+    return this.get('currentStep') > 1 && this.getJournalNodesToAdd().length === 0 && this.getJournalNodesToDelete().length > 0;
+  }.property('content.masterComponentHosts', 'App.router.clusterController.isHostsLoaded', 'currentStep'),
 
   /**
    * Save config properties
    * @param stepController ManageJournalNodeWizardStep3Controller
    */
-  saveServiceConfigProperties: function(stepController) {
+  saveServiceConfigProperties: function (stepController) {
     var serviceConfigProperties = [];
     var data = stepController.get('serverConfigData');
 
@@ -160,12 +173,11 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
    * Load serviceConfigProperties to model
    */
   loadServiceConfigProperties: function () {
-    var serviceConfigProperties = this.getDBProperty('serviceConfigProperties');
-    this.set('content.serviceConfigProperties', serviceConfigProperties);
+    this.set('content.serviceConfigProperties', this.getDBProperty('serviceConfigProperties'));
   },
 
 
-  saveNNs: function(activeNN, standByNN) {
+  saveNNs: function () {
     var activeNN = App.HostComponent.find().findProperty('displayNameAdvanced', 'Active NameNode');
     var standByNN = App.HostComponent.find().findProperty('displayNameAdvanced', 'Standby NameNode');
     this.set('content.activeNN', activeNN);
@@ -174,7 +186,7 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
     this.setDBProperty('standByNN', standByNN);
   },
 
-  loadNNs: function() {
+  loadNNs: function () {
     var activeNN = this.getDBProperty('activeNN');
     var standByNN = this.getDBProperty('standByNN');
     this.set('content.activeNN', activeNN);
@@ -182,23 +194,23 @@ App.ManageJournalNodeWizardController = App.WizardController.extend({
   },
 
 
-  saveConfigTag: function(tag){
+  saveConfigTag: function (tag) {
     App.db.setManageJournalNodeWizardConfigTag(tag);
-    this.set('content.'+[tag.name], tag.value);
-  },
-  
-  
-  loadConfigTag: function(tag){
-    var tagVal = App.db.getManageJournalNodeWizardConfigTag(tag);
-    this.set('content.'+tag, tagVal);
+    this.set('content.' + tag.name, tag.value);
   },
 
-  saveNameServiceId: function(nameServiceId){
+
+  loadConfigTag: function (tag) {
+    var tagVal = App.db.getManageJournalNodeWizardConfigTag(tag);
+    this.set('content.' + tag, tagVal);
+  },
+
+  saveNameServiceId: function (nameServiceId) {
     this.setDBProperty('nameServiceId', nameServiceId);
     this.set('content.nameServiceId', nameServiceId);
   },
 
-  loadNameServiceId: function(){
+  loadNameServiceId: function () {
     var nameServiceId = this.getDBProperty('nameServiceId');
     this.set('content.nameServiceId', nameServiceId);
   },

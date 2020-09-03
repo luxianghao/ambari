@@ -136,18 +136,16 @@ describe('App.ConfigsSaverMixin', function() {
     });
 
     it('generates config without properties', function() {
-      expect(mixin.createDesiredConfig('type1', 'version1')).to.eql({
+      expect(mixin.createDesiredConfig('type1')).to.eql({
         "type": 'type1',
-        "tag": 'version1',
         "properties": {},
         "service_config_version_note": ""
       })
     });
 
     it('generates config with properties', function() {
-      expect(mixin.createDesiredConfig('type1', 'version1', [Em.Object.create({name: 'p1', value: 'v1', isRequiredByAgent: true}), Em.Object.create({name: 'p2', value: 'v2', isRequiredByAgent: true})], "note")).to.eql({
+      expect(mixin.createDesiredConfig('type1', [Em.Object.create({name: 'p1', value: 'v1', isRequiredByAgent: true}), Em.Object.create({name: 'p2', value: 'v2', isRequiredByAgent: true})], "note")).to.eql({
         "type": 'type1',
-        "tag": 'version1',
         "properties": {
           "p1": 'v1',
           "p2": 'v2'
@@ -157,9 +155,8 @@ describe('App.ConfigsSaverMixin', function() {
     });
 
     it('generates config with properties and skip isRequiredByAgent', function() {
-      expect(mixin.createDesiredConfig('type1', 'version1', [Em.Object.create({name: 'p1', value: 'v1', isRequiredByAgent: true}), Em.Object.create({name: 'p2', value: 'v2', isRequiredByAgent: false})], "note")).to.eql({
+      expect(mixin.createDesiredConfig('type1', [Em.Object.create({name: 'p1', value: 'v1', isRequiredByAgent: true}), Em.Object.create({name: 'p2', value: 'v2', isRequiredByAgent: false})], "note")).to.eql({
         "type": 'type1',
-        "tag": 'version1',
         "properties": {
           p1: 'v1'
         },
@@ -168,9 +165,8 @@ describe('App.ConfigsSaverMixin', function() {
     });
 
     it('generates config with properties and skip service_config_version_note', function() {
-      expect(mixin.createDesiredConfig('type1', 'version1', [Em.Object.create({name: 'p1', value: 'v1', isRequiredByAgent: true})], "note", true)).to.eql({
+      expect(mixin.createDesiredConfig('type1', [Em.Object.create({name: 'p1', value: 'v1', isRequiredByAgent: true})], "note", true)).to.eql({
         "type": 'type1',
-        "tag": 'version1',
         "properties": {
           p1: 'v1'
         }
@@ -178,7 +174,7 @@ describe('App.ConfigsSaverMixin', function() {
     });
 
     it('generates config with final, password, user, group, text, additional_user_property, not_managed_hdfs_path, value_from_property_file', function() {
-      expect(mixin.createDesiredConfig('type1', 'version1', [
+      expect(mixin.createDesiredConfig('type1', [
           Em.Object.create({name: 'p1', value: 'v1', isFinal: true, isRequiredByAgent: true}),
           Em.Object.create({name: 'p2', value: 'v2', isRequiredByAgent: true}),
           Em.Object.create({name: 'p3', value: 'v3', isRequiredByAgent: true, propertyType: ["PASSWORD", "USER", "GROUP"]}),
@@ -188,7 +184,6 @@ describe('App.ConfigsSaverMixin', function() {
           Em.Object.create({name: 'p7', value: 'v7', isRequiredByAgent: true, propertyType: ["PASSWORD"]})
         ], "note")).to.eql({
         "type": 'type1',
-        "tag": 'version1',
         "properties": {
           p1: 'v1',
           p2: 'v2',
@@ -395,12 +390,14 @@ describe('App.ConfigsSaverMixin', function() {
       this.mockGroup = sinon.stub(mixin, 'getGroupFromModel');
       this.mockConfigs = sinon.stub(mixin, 'getConfigsForGroup');
       sinon.stub(mixin, 'saveGroup');
+      sinon.stub(mixin, 'isOverriddenConfigsModified').returns(true);
     });
 
     afterEach(function() {
       this.mockGroup.restore();
       this.mockConfigs.restore();
       mixin.saveGroup.restore();
+      mixin.isOverriddenConfigsModified.restore();
     });
 
     it("configGroup is null", function() {
@@ -899,7 +896,8 @@ describe('App.ConfigsSaverMixin', function() {
             host_name: 'host1'
           }],
           "service_config_version_note": "note",
-          "desired_configs": "{}"
+          "desired_configs": "{}",
+          "service_name": "S1",
         }
       });
     });
@@ -924,6 +922,7 @@ describe('App.ConfigsSaverMixin', function() {
             host_name: 'host1'
           }],
           "service_config_version_note": "",
+          "service_name": "S1",
           "desired_configs": "{}",
           id: 'g1'
         }
@@ -1031,7 +1030,6 @@ describe('App.ConfigsSaverMixin', function() {
   describe("#onDoPUTClusterConfigurations", function () {
     var mockController = {
       updateClusterData: Em.K,
-      updateComponentConfig: Em.K,
       triggerQuickLinksUpdate: Em.K,
       loadConfigs: Em.K
     };
@@ -1040,7 +1038,6 @@ describe('App.ConfigsSaverMixin', function() {
       sinon.stub(App.router, 'get').returns(mockController);
       sinon.stub(App.Service, 'find').returns({});
       sinon.stub(mockController, 'updateClusterData');
-      sinon.stub(mockController, 'updateComponentConfig');
       sinon.stub(mockController, 'triggerQuickLinksUpdate');
       sinon.stub(mockController, 'loadConfigs');
       sinon.stub(mixin, 'showSaveConfigsPopup');
@@ -1060,7 +1057,6 @@ describe('App.ConfigsSaverMixin', function() {
       App.Service.find.restore();
       App.router.get.restore();
       mockController.updateClusterData.restore();
-      mockController.updateComponentConfig.restore();
       mockController.triggerQuickLinksUpdate.restore();
       mockController.loadConfigs.restore();
       mixin.showSaveConfigsPopup.restore();
@@ -1070,10 +1066,6 @@ describe('App.ConfigsSaverMixin', function() {
 
     it("updateClusterData should be called", function() {
       expect(mockController.updateClusterData.calledOnce).to.be.true;
-    });
-
-    it("updateComponentConfig should be called", function() {
-      expect(mockController.updateComponentConfig.calledOnce).to.be.true;
     });
 
     it("triggerQuickLinksUpdate should be called", function() {
@@ -1174,6 +1166,70 @@ describe('App.ConfigsSaverMixin', function() {
           desired_config: [{}]
         }
       }));
+    });
+  });
+
+  describe('#isOverriddenConfigsModified', function() {
+    it('no configs modified', function() {
+      expect(mixin.isOverriddenConfigsModified([
+        Em.Object.create({
+         name: '1',
+          savedValue: '1',
+          value: '1',
+          isFinal: false,
+          savedIsFinal: false
+        })
+      ], Em.Object.create({
+        properties: [
+          {name: '1'}
+        ]
+      }))).to.be.false;
+    });
+    it('config value modified', function() {
+      expect(mixin.isOverriddenConfigsModified([
+        Em.Object.create({
+          name: '2',
+          savedValue: '1',
+          value: '2',
+          isFinal: false,
+          savedIsFinal: false
+        })
+      ], Em.Object.create({
+        properties: [
+          {name: '2'}
+        ]
+      }))).to.be.true;
+    });
+    it('config isFinal modified', function() {
+      expect(mixin.isOverriddenConfigsModified([
+        Em.Object.create({
+          name: '2',
+          savedValue: '2',
+          value: '2',
+          isFinal: true,
+          savedIsFinal: false
+        })
+      ], Em.Object.create({
+        properties: [
+          {name: '2'}
+        ]
+      }))).to.be.true;
+    });
+    it('one config removed', function() {
+      expect(mixin.isOverriddenConfigsModified([
+        Em.Object.create({
+          name: '3',
+          savedValue: '3',
+          value: '3',
+          isFinal: false,
+          savedIsFinal: false
+        })
+      ], Em.Object.create({
+        properties: [
+          {name: '2'},
+          {name: '3'}
+        ]
+      }))).to.be.true;
     });
   });
 

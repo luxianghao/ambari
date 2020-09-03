@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,14 +18,11 @@
 
 package org.apache.ambari.server.topology;
 
+import java.util.Collection;
+import java.util.regex.Pattern;
+
 import org.apache.ambari.server.controller.internal.ProvisionAction;
 import org.apache.ambari.server.controller.internal.Stack;
-import org.apache.ambari.server.orm.entities.HostGroupEntity;
-import org.apache.ambari.server.state.DependencyInfo;
-
-import java.util.Collection;
-import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * Host Group representation.
@@ -41,14 +38,14 @@ public interface HostGroup {
    *
    * @return the host group name
    */
-  public String getName();
+  String getName();
 
   /**
    * Get the name of the associated blueprint
    *
    * @return associated blueprint name
    */
-  public String getBlueprintName();
+  String getBlueprintName();
 
   /**
    * Get the fully qualified host group name in the form of
@@ -56,21 +53,21 @@ public interface HostGroup {
    *
    * @return fully qualified host group name
    */
-  public String getFullyQualifiedName();
+  String getFullyQualifiedName();
 
   /**
    * Get all of the host group components.
    *
    * @return collection of component instances
    */
-  public Collection<Component> getComponents();
+  Collection<Component> getComponents();
 
   /**
    * Get all of the host group component names
    *
    * @return collection of component names as String
    */
-  public Collection<String> getComponentNames();
+  Collection<String> getComponentNames();
 
   /**
    * Get all host group component names for instances
@@ -82,7 +79,7 @@ public interface HostGroup {
    * @return collection of component names as String that are associated with
    *           the specified provision action
    */
-  public Collection<String> getComponentNames(ProvisionAction provisionAction);
+  Collection<String> getComponentNames(ProvisionAction provisionAction);
 
   /**
    * Get the host group components which belong to the specified service.
@@ -91,7 +88,7 @@ public interface HostGroup {
    *
    * @return collection of component names for the specified service; will not return null
    */
-  public Collection<String> getComponents(String service);
+  Collection<String> getComponents(String service);
 
   /**
    * Add a component to the host group.
@@ -100,7 +97,7 @@ public interface HostGroup {
    *
    * @return true if the component didn't already exist
    */
-  public boolean addComponent(String component);
+  boolean addComponent(String component);
 
   /**
    * Add a component to the host group, with the specified name
@@ -110,21 +107,21 @@ public interface HostGroup {
    * @param provisionAction provision action for this component
    * @return
    */
-  public boolean addComponent(String component, ProvisionAction provisionAction);
+  boolean addComponent(String component, ProvisionAction provisionAction);
 
   /**
    * Determine if the host group contains a master component.
    *
    * @return true if the host group contains a master component; false otherwise
    */
-  public boolean containsMasterComponent();
+  boolean containsMasterComponent();
 
   /**
    * Get all of the services associated with the host group components.
    *
    * @return collection of service names
    */
-  public Collection<String> getServices();
+  Collection<String> getServices();
 
   /**
    * Get the configuration associated with the host group.
@@ -133,14 +130,14 @@ public interface HostGroup {
    *
    * @return host group configuration
    */
-  public Configuration getConfiguration();
+  Configuration getConfiguration();
 
   /**
    * Get the stack associated with the host group.
    *
    * @return associated stack
    */
-  public Stack getStack();
+  Stack getStack();
 
   /**
    * Get the cardinality value that was specified for the host group.
@@ -149,6 +146,6 @@ public interface HostGroup {
    *
    * @return the cardinality specified for the hostgroup
    */
-  public String getCardinality();
+  String getCardinality();
 }
 

@@ -41,6 +41,13 @@
       <xs:element name="deleted" type="xs:boolean" minOccurs="0"/>
       <xs:element name="final" type="xs:boolean" minOccurs="0"/>
       <xs:element name="on-ambari-upgrade" type="propertyUpgradeBehavior" minOccurs="1"/>
+      <xs:element name="supported-refresh-commands" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="refresh-command" type="refreshCommands" minOccurs="1" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
       <xs:element name="on-stack-upgrade" type="propertyStackUpgradeBehavior" minOccurs="0"/>
       <xs:element name="property-type" minOccurs="0">
         <xs:simpleType>
@@ -63,6 +70,13 @@
           </xs:sequence>
         </xs:complexType>
       </xs:element>
+      <xs:element name="used-by" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="property" type="propertyDependencyInfo" minOccurs="1" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
     </xs:all>
     <xs:attribute name="require-input" type="xs:boolean" use="optional"/>
   </xs:complexType>
@@ -75,6 +89,11 @@
 
   <xs:complexType name="propertyStackUpgradeBehavior">
     <xs:attribute name="merge" type="xs:boolean" use="optional" default="true"/>
+  </xs:complexType>
+
+  <xs:complexType name="refreshCommands">
+    <xs:attribute name="componentName" type="xs:string" use="required"/>
+    <xs:attribute name="command" type="xs:string" use="optional"/>
   </xs:complexType>
 
   <xs:complexType name="valueAttributesInfo">
@@ -92,6 +111,7 @@
       <xs:element name="editable-only-at-install" type="xs:boolean" minOccurs="0"/>
       <xs:element name="show-property-name" type="xs:boolean" minOccurs="0"/>
       <xs:element name="increment-step" type="xs:string" minOccurs="0"/>
+      <xs:element name="keystore" type="xs:boolean" minOccurs="0"/>
       <xs:element name="entries" minOccurs="0">
         <xs:complexType>
           <xs:sequence>
@@ -104,8 +124,16 @@
       <xs:element name="selection-cardinality" type="xs:string" minOccurs="0"/>
       <xs:element name="property-file-name" type="xs:string" minOccurs="0"/>
       <xs:element name="property-file-type" type="xs:string" minOccurs="0"/>
+    <xs:element name="user-groups" minOccurs="0">
+      <xs:complexType>
+        <xs:sequence>
+          <xs:element name="property" type="userGroupInfo" minOccurs="1" maxOccurs="unbounded"/>
+        </xs:sequence>
+      </xs:complexType>
+    </xs:element>
     </xs:all>
   </xs:complexType>
+
 
   <xs:complexType name="valueEntryInfo">
     <xs:all>
@@ -113,6 +141,15 @@
       <xs:element name="label" type="xs:string" minOccurs="0"/>
       <xs:element name="description" type="xs:string" minOccurs="0"/>
     </xs:all>
+  </xs:complexType>
+
+  <xs:complexType name="userGroupInfo">
+    <xs:sequence>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="name" type="xs:string" minOccurs="0"/>
+        <xs:element name="type" type="xs:string" minOccurs="0"/>
+      </xs:choice>
+    </xs:sequence>
   </xs:complexType>
 
   <xs:complexType name="propertyDependencyInfo">
@@ -133,6 +170,7 @@
       <xs:enumeration value="ADDITIONAL_USER_PROPERTY"/>
       <xs:enumeration value="NOT_MANAGED_HDFS_PATH"/>
       <xs:enumeration value="VALUE_FROM_PROPERTY_FILE"/>
+      <xs:enumeration value="KERBEROS_PRINCIPAL"/>
     </xs:restriction>
   </xs:simpleType>
 </xs:schema>

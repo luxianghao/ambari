@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -10,8 +10,7 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distribut
- * ed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
@@ -19,22 +18,25 @@
 
 package org.apache.ambari.server.topology;
 
+import static java.util.stream.Collectors.toSet;
+import static org.apache.ambari.server.controller.internal.HostComponentResourceProvider.ALL_COMPONENTS;
+import static org.apache.ambari.server.controller.internal.ProvisionAction.INSTALL_AND_START;
+import static org.apache.ambari.server.controller.internal.ProvisionAction.INSTALL_ONLY;
+import static org.apache.ambari.server.state.ServiceInfo.HADOOP_COMPATIBLE_FS;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.controller.RequestStatusResponse;
 import org.apache.ambari.server.controller.internal.ProvisionAction;
+import org.apache.ambari.server.controller.internal.ProvisionClusterRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static org.apache.ambari.server.controller.internal.ProvisionAction.INSTALL_AND_START;
-import static org.apache.ambari.server.controller.internal.ProvisionAction.INSTALL_ONLY;
 
 /**
  * Represents a cluster topology.
@@ -51,9 +53,10 @@ public class ClusterTopologyImpl implements ClusterTopology {
   private Configuration configuration;
   private ConfigRecommendationStrategy configRecommendationStrategy;
   private ProvisionAction provisionAction = ProvisionAction.INSTALL_AND_START;
-  private Map<String, AdvisedConfiguration> advisedConfigurations = new HashMap<String, AdvisedConfiguration>();
-  private final Map<String, HostGroupInfo> hostGroupInfoMap = new HashMap<String, HostGroupInfo>();
+  private Map<String, AdvisedConfiguration> advisedConfigurations = new HashMap<>();
+  private final Map<String, HostGroupInfo> hostGroupInfoMap = new HashMap<>();
   private final AmbariContext ambariContext;
+  private final String defaultPassword;
 
   private final static Logger LOG = LoggerFactory.getLogger(ClusterTopologyImpl.class);
 
@@ -65,26 +68,14 @@ public class ClusterTopologyImpl implements ClusterTopology {
     // provision cluster currently requires that all hostgroups have same BP so it is ok to use root level BP here
     this.blueprint = topologyRequest.getBlueprint();
     this.configuration = topologyRequest.getConfiguration();
+    if (topologyRequest instanceof ProvisionClusterRequest) {
+      this.defaultPassword = ((ProvisionClusterRequest) topologyRequest).getDefaultPassword();
+    } else {
+      this.defaultPassword = null;
+    }
 
     registerHostGroupInfo(topologyRequest.getHostGroupInfo());
 
-    validateTopology(topologyRequest.getTopologyValidators());
-    this.ambariContext = ambariContext;
-  }
-
-  //todo: only used in tests, remove.  Validators not invoked when this constructor is used.
-  public ClusterTopologyImpl(AmbariContext ambariContext,
-                             Long clusterId,
-                             Blueprint blueprint,
-                             Configuration configuration,
-                             Map<String, HostGroupInfo> hostGroupInfo)
-                                throws InvalidTopologyException {
-
-    this.clusterId = clusterId;
-    this.blueprint = blueprint;
-    this.configuration = configuration;
-
-    registerHostGroupInfo(hostGroupInfo);
     this.ambariContext = ambariContext;
   }
 
@@ -121,7 +112,7 @@ public class ClusterTopologyImpl implements ClusterTopology {
   //todo: do we want to return groups with no requested hosts?
   @Override
   public Collection<String> getHostGroupsForComponent(String component) {
-    Collection<String> resultGroups = new ArrayList<String>();
+    Collection<String> resultGroups = new ArrayList<>();
     for (HostGroup group : getBlueprint().getHostGroups().values() ) {
       if (group.getComponentNames().contains(component)) {
         resultGroups.add(group.getName());
@@ -171,9 +162,14 @@ public class ClusterTopologyImpl implements ClusterTopology {
   }
 
   @Override
+  public Set<String> getAllHosts() {
+    return hostGroupInfoMap.values().stream().flatMap(hg -> hg.getHostNames().stream()).collect(toSet());
+  }
+
+  @Override
   public Collection<String> getHostAssignmentsForComponent(String component) {
     //todo: ordering requirements?
-    Collection<String> hosts = new ArrayList<String>();
+    Collection<String> hosts = new ArrayList<>();
     Collection<String> hostGroups = getHostGroupsForComponent(component);
     for (String group : hostGroups) {
       HostGroupInfo hostGroupInfo = getHostGroupInfo().get(group);
@@ -213,28 +209,6 @@ public class ClusterTopologyImpl implements ClusterTopology {
       && configProperties.get("yarn-site").get("yarn.resourcemanager.ha.enabled").equals("true");
   }
 
-  private void validateTopology(List<TopologyValidator> validators)
-      throws InvalidTopologyException {
-
-    for (TopologyValidator validator : validators) {
-      validator.validate(this);
-    }
-    if(isNameNodeHAEnabled()){
-        Collection<String> nnHosts = getHostAssignmentsForComponent("NAMENODE");
-        if (nnHosts.size() != 2) {
-            throw new InvalidTopologyException("NAMENODE HA requires exactly 2 hosts running NAMENODE but there are: " +
-                nnHosts.size() + " Hosts: " + nnHosts);
-        }
-        Map<String, String> hadoopEnvConfig = configuration.getFullProperties().get("hadoop-env");
-        if(hadoopEnvConfig != null && !hadoopEnvConfig.isEmpty() && hadoopEnvConfig.containsKey("dfs_ha_initial_namenode_active") && hadoopEnvConfig.containsKey("dfs_ha_initial_namenode_standby")) {
-           if((!HostGroup.HOSTGROUP_REGEX.matcher(hadoopEnvConfig.get("dfs_ha_initial_namenode_active")).matches() && !nnHosts.contains(hadoopEnvConfig.get("dfs_ha_initial_namenode_active")))
-             || (!HostGroup.HOSTGROUP_REGEX.matcher(hadoopEnvConfig.get("dfs_ha_initial_namenode_standby")).matches() && !nnHosts.contains(hadoopEnvConfig.get("dfs_ha_initial_namenode_standby")))){
-              throw new IllegalArgumentException("NAMENODE HA hosts mapped incorrectly for properties 'dfs_ha_initial_namenode_active' and 'dfs_ha_initial_namenode_standby'. Expected hosts are: " + nnHosts);
-        }
-        }
-    }
-  }
-
   @Override
   public boolean isClusterKerberosEnabled() {
     return ambariContext.isClusterKerberosEnabled(getClusterId());
@@ -248,7 +222,7 @@ public class ClusterTopologyImpl implements ClusterTopology {
 
       Collection<String> skipInstallForComponents = new ArrayList<>();
       if (skipInstallTaskCreate) {
-        skipInstallForComponents.add("ALL");
+        skipInstallForComponents.add(ALL_COMPONENTS);
       } else {
         // get the set of components that are marked as START_ONLY for this hostgroup
         skipInstallForComponents.addAll(hostGroup.getComponentNames(ProvisionAction.START_ONLY));
@@ -320,6 +294,20 @@ public class ClusterTopologyImpl implements ClusterTopology {
     }
   }
 
+  @Override
+  public String getDefaultPassword() {
+    return defaultPassword;
+  }
+
+  @Override
+  public boolean isComponentHadoopCompatible(String component) {
+    return blueprint.getServiceInfos().stream()
+      .filter(service -> service.getComponentByName(component) != null)
+      .findFirst()
+      .map(service -> HADOOP_COMPATIBLE_FS.equals(service.getServiceType()))
+      .orElse(false);
+  }
+
   private void registerHostGroupInfo(Map<String, HostGroupInfo> requestedHostGroupInfoMap) throws InvalidTopologyException {
     LOG.debug("Registering requested host group information for {} hostgroups", requestedHostGroupInfoMap.size());
     checkForDuplicateHosts(requestedHostGroupInfoMap);
@@ -382,12 +370,12 @@ public class ClusterTopologyImpl implements ClusterTopology {
 
 
   private void checkForDuplicateHosts(Map<String, HostGroupInfo> groupInfoMap) throws InvalidTopologyException {
-    Set<String> hosts = new HashSet<String>();
-    Set<String> duplicates = new HashSet<String>();
+    Set<String> hosts = new HashSet<>();
+    Set<String> duplicates = new HashSet<>();
     for (HostGroupInfo group : groupInfoMap.values()) {
       // check for duplicates within the new groups
       Collection<String> groupHosts = group.getHostNames();
-      Collection<String> groupHostsCopy = new HashSet<String>(group.getHostNames());
+      Collection<String> groupHostsCopy = new HashSet<>(group.getHostNames());
       groupHostsCopy.retainAll(hosts);
       duplicates.addAll(groupHostsCopy);
       hosts.addAll(groupHosts);

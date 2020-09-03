@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,18 +18,19 @@
 
 package org.apache.ambari.server.utils;
 
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-import com.google.inject.Inject;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.StaticallyInject;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Config;
 import org.apache.ambari.server.state.PropertyInfo;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+import com.google.inject.Inject;
 
 
 @StaticallyInject
@@ -84,7 +85,7 @@ public class SecretReference {
   }
 
   public static String generateStub(String configType, Long configVersion, String propertyName) {
-    return secretPrefix + ":" + configType + ":" + configVersion.toString() + ":" + propertyName;
+    return secretPrefix + ":" + configType + ":" + configVersion + ":" + propertyName;
   }
 
   /**
@@ -93,17 +94,32 @@ public class SecretReference {
    * @return New string with the passwords masked, or null if the property map is null.
    */
   public static String maskPasswordInPropertyMap(String propertyMap) {
-    if (null == propertyMap) return null;
-    Map<String, String> maskedMap = new HashMap<>();
-    Map<String, String> map = gson.fromJson(propertyMap, new TypeToken<Map<String, String>>() {}.getType());
-    for (Map.Entry<String, String> e : map.entrySet()) {
-      String value = e.getValue();
-      if (e.getKey().toLowerCase().contains(PASSWORD_TEXT) || e.getKey().toLowerCase().contains(PASSWD_TEXT)) {
-        value = secretPrefix;
-      }
-      maskedMap.put(e.getKey(), value);
+    if (null == propertyMap) {
+      return null;
     }
-    return gson.toJson(maskedMap);
+    final Map<String, String> map = gson.fromJson(propertyMap, new TypeToken<Map<String, String>>() {}.getType());
+    return gson.toJson(maskPasswordInPropertyMap(map));
+  }
+
+  /**
+   * Helper function to mask a string of properties that may contain a property with a password.
+   * @param propertyMap Property map to mask by replacing any passwords with the text "SECRET"
+   * @return a new map with the passwords masked, or null if the <code>propertyMap</code> is null.
+   */
+  public static Map<String, String> maskPasswordInPropertyMap(Map<String, String> propertyMap) {
+    if (null == propertyMap) {
+      return null;
+    }
+    final Map<String, String> maskedMap = new HashMap<>();
+    for (Map.Entry<String, String> property : propertyMap.entrySet()) {
+      String value = isPassword(property.getKey()) ? secretPrefix : property.getValue();
+      maskedMap.put(property.getKey(), value);
+    }
+    return maskedMap;
+  }
+
+  private final static boolean isPassword(String propertyName) {
+    return propertyName.toLowerCase().contains(PASSWORD_TEXT) || propertyName.toLowerCase().contains(PASSWD_TEXT);
   }
 
   /**

@@ -62,11 +62,11 @@ angular.module('ambariAdminConsole')
 
     });
     if (!passOneRoleCheck(arr)) {
-      console.log("CHECK FAILED");
+      console.log($t('common.alerts.checkFailed'));
       var deferred = $q.defer();
       deferred.reject({
         data: {
-          message: $t('users.roles.oneRolePerUser')
+          message: $t('users.roles.oneRolePerUserOrGroup')
         }
       });
       return deferred.promise;

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,11 +20,13 @@ package org.apache.ambari.server.api.resources;
 
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.ambari.server.api.query.render.ClusterBlueprintRenderer;
 import org.apache.ambari.server.api.query.render.Renderer;
 import org.apache.ambari.server.controller.KerberosHelper;
+import org.apache.ambari.server.controller.internal.BlueprintExportType;
 import org.apache.ambari.server.controller.spi.Resource;
 
 /**
@@ -51,16 +53,15 @@ public class ClusterResourceDefinition extends BaseResourceDefinition {
 
   @Override
   public Renderer getRenderer(String name) {
-    if (name != null && name.equals("blueprint")) {
-      return new ClusterBlueprintRenderer();
-    } else {
-      return super.getRenderer(name);
-    }
+    Optional<BlueprintExportType> blueprintExportType = BlueprintExportType.parse(name);
+    return blueprintExportType.isPresent()
+      ? new ClusterBlueprintRenderer(blueprintExportType.get())
+      : super.getRenderer(name);
   }
 
   @Override
   public Set<SubResourceDefinition> getSubResourceDefinitions() {
-    Set<SubResourceDefinition> setChildren = new HashSet<SubResourceDefinition>();
+    Set<SubResourceDefinition> setChildren = new HashSet<>();
     setChildren.add(new SubResourceDefinition(Resource.Type.Service));
     setChildren.add(new SubResourceDefinition(Resource.Type.Host));
     setChildren.add(new SubResourceDefinition(Resource.Type.Configuration));
@@ -85,6 +86,10 @@ public class ClusterResourceDefinition extends BaseResourceDefinition {
     directives.add(KerberosHelper.DIRECTIVE_REGENERATE_KEYTABS);
     directives.add(KerberosHelper.DIRECTIVE_MANAGE_KERBEROS_IDENTITIES);
     directives.add(KerberosHelper.DIRECTIVE_FORCE_TOGGLE_KERBEROS);
+    directives.add(KerberosHelper.DIRECTIVE_HOSTS);
+    directives.add(KerberosHelper.DIRECTIVE_COMPONENTS);
+    directives.add(KerberosHelper.DIRECTIVE_IGNORE_CONFIGS);
+    directives.add(KerberosHelper.DIRECTIVE_CONFIG_UPDATE_POLICY);
     return directives;
   }
 

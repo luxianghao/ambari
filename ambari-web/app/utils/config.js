@@ -37,6 +37,17 @@ App.config = Em.Object.create({
   preDefinedServiceConfigs: [],
 
   /**
+   * Map for methods used to parse hosts lists from certain config properties
+   */
+  uniqueHostsListParsers: [
+    {
+      propertyName: 'templeton.hive.properties',
+      type: 'webhcat-site',
+      method: 'getTempletonHiveHosts'
+    }
+  ],
+
+  /**
    *
    * Returns file name version that stored on server.
    *
@@ -272,6 +283,7 @@ App.config = Em.Object.create({
    * @returns {*|Object}
    */
   getDefaultConfig: function(name, fileName, coreObject) {
+    name = JSON.parse('"' + name + '"');
     var cfg = App.configsCollection.getConfigByName(name, fileName) ||
       App.config.createDefaultConfig(name, fileName, false);
     if (Em.typeOf(coreObject) === 'object') {
@@ -463,7 +475,7 @@ App.config = Em.Object.create({
     var additionalDescription = Em.I18n.t('services.service.config.password.additionalDescription');
     if ('password' === displayType) {
       if (description && !description.contains(additionalDescription)) {
-        return description + '<br />' + additionalDescription;
+        return description + '\n' + additionalDescription;
       } else {
         return additionalDescription;
       }
@@ -534,9 +546,14 @@ App.config = Em.Object.create({
    */
   getViewClass: function (displayType, dependentConfigPattern, unit) {
     switch (displayType) {
+      case 'user':
+      case 'group':
+        return App.ServiceConfigTextFieldUserGroupWithID;
       case 'checkbox':
       case 'boolean':
         return dependentConfigPattern ? App.ServiceConfigCheckboxWithDependencies : App.ServiceConfigCheckbox;
+      case 'boolean-inverted':
+        return App.ServiceConfigCheckbox;
       case 'password':
         return App.ServiceConfigPasswordField;
       case 'combobox':
@@ -615,6 +632,11 @@ App.config = Em.Object.create({
         };
       case 'password':
         return function (value, name, retypedPassword) {
+          if (name === 'ranger_admin_password') {
+            if (String(value).length < 9) {
+              return Em.I18n.t('errorMessage.config.password.length').format(9);
+            }
+          }
           return value !== retypedPassword ? Em.I18n.t('errorMessage.config.password') : '';
         };
       case 'user':
@@ -632,9 +654,8 @@ App.config = Em.Object.create({
           if (['javax.jdo.option.ConnectionURL', 'oozie.service.JPAService.jdbc.url'].contains(name)
             && !validator.isConfigValueLink(value) && validator.isConfigValueLink(value)) {
             return Em.I18n.t('errorMessage.config.spaces.trim');
-          } else {
-            return validator.isNotTrimmedRight(value) ? Em.I18n.t('errorMessage.config.spaces.trailing') : '';
           }
+          return validator.isNotTrimmedRight(value) ? Em.I18n.t('errorMessage.config.spaces.trailing') : '';
         };
     }
   },
@@ -896,7 +917,7 @@ App.config = Em.Object.create({
    */
   getPropertiesFromTheme: function (serviceName) {
     var properties = [];
-    App.Tab.find().forEach(function (t) {
+    App.Tab.find().rejectProperty('isCategorized').forEach(function (t) {
       if (!t.get('isAdvanced') && t.get('serviceName') === serviceName) {
         t.get('sections').forEach(function (s) {
           s.get('subSections').forEach(function (ss) {
@@ -917,15 +938,18 @@ App.config = Em.Object.create({
    */
   textareaIntoFileConfigs: function (configs, filename) {
     var configsTextarea = configs.findProperty('name', 'capacity-scheduler');
+    var stackConfigs = App.configsCollection.getAll();
     if (configsTextarea && !App.get('testMode')) {
       var properties = configsTextarea.get('value').split('\n');
 
       properties.forEach(function (_property) {
-        var name, value;
+        var name, value, isUserProperty;
         if (_property) {
-          _property = _property.split('=');
+          _property = _property.split(/=(.+)/);
           name = _property[0];
           value = (_property[1]) ? _property[1] : "";
+          isUserProperty = !stackConfigs.filterProperty('filename', 'capacity-scheduler.xml').findProperty('name', name);
+
           configs.push(Em.Object.create({
             name: name,
             value: value,
@@ -935,6 +959,7 @@ App.config = Em.Object.create({
             isFinal: configsTextarea.get('isFinal'),
             isNotDefaultValue: configsTextarea.get('isNotDefaultValue'),
             isRequiredByAgent: configsTextarea.get('isRequiredByAgent'),
+            isUserProperty: isUserProperty,
             group: null
           }));
         }
@@ -1133,7 +1158,8 @@ App.config = Em.Object.create({
       'isOriginalSCP': false,
       'overrides': null,
       'group': configGroup,
-      'parentSCP': null
+      'parentSCP': null,
+      isCustomGroupConfig: true
     });
 
     if (!configGroup.get('properties.length')) {
@@ -1181,7 +1207,9 @@ App.config = Em.Object.create({
 
     serviceConfigProperty.get('overrides').pushObject(newOverride);
 
-    var savedOverrides = serviceConfigProperty.get('overrides').filterProperty('savedValue');
+    var savedOverrides = serviceConfigProperty.get('overrides').filter(function (override) {
+      return !Em.isNone(Em.get(override, 'savedValue'));
+    });
     serviceConfigProperty.set('overrideValues', savedOverrides.mapProperty('savedValue'));
     serviceConfigProperty.set('overrideIsFinalValues', savedOverrides.mapProperty('savedIsFinal'));
 
@@ -1230,6 +1258,12 @@ App.config = Em.Object.create({
     return false;
   },
 
+  getTempletonHiveHosts: function (value) {
+    var pattern = /thrift:\/\/.+:\d+/,
+      patternMatch = value.match(pattern);
+    return patternMatch ? patternMatch[0].split('\\,') : [];
+  },
+
   /**
    * Update config property value based on its current value and list of zookeeper server hosts.
    * Used to prevent sort order issues.
@@ -1247,14 +1281,31 @@ App.config = Em.Object.create({
    *
    * @method updateHostsListValue
    * @param {Object} siteConfigs - prepared site config object to store
+   * @param {String} propertyType - type of the property to update
    * @param {String} propertyName - name of the property to update
    * @param {String} hostsList - list of ZooKeeper Server names to set as config property value
+   * @param {Boolean} isArray - determines whether value string is formatted as array
    * @return {String} - result value
    */
-  updateHostsListValue: function(siteConfigs, propertyName, hostsList) {
-    var value = hostsList;
-    var propertyHosts = (siteConfigs[propertyName] || '').split(',');
-    var hostsToSet = hostsList.split(',');
+  updateHostsListValue: function(siteConfigs, propertyType, propertyName, hostsList, isArray) {
+    var value = hostsList,
+      propertyHosts = (siteConfigs[propertyName] || ''),
+      hostsToSet = hostsList,
+      parser = this.get('uniqueHostsListParsers').find(function (property) {
+        return property.type === propertyType && property.propertyName === propertyName;
+      });
+    if (parser) {
+      propertyHosts = this.get(parser.method)(propertyHosts);
+      hostsToSet = this.get(parser.method)(hostsToSet);
+    } else {
+      if (isArray) {
+        var pattern = /(^\[|]$)/g;
+        propertyHosts = propertyHosts.replace(pattern, '');
+        hostsToSet = hostsToSet.replace(pattern, '');
+      }
+      propertyHosts = propertyHosts.split(',');
+      hostsToSet = hostsToSet.split(',');
+    }
 
     if (!Em.isEmpty(siteConfigs[propertyName])) {
       var diffLength = propertyHosts.filter(function(hostName) {
@@ -1273,38 +1324,38 @@ App.config = Em.Object.create({
    * @return {*|{then}}
    */
   getConfigsByTypes: function (sites) {
-    var dfd = $.Deferred();
-    App.ajax.send({
-      name: 'config.tags.selected',
-      sender: this,
-      data: {
-        tags: sites.mapProperty('site').join(',')
-      }
-    }).done(function (data) {
-      App.router.get('configurationController').getConfigsByTags(data.items.map(function (item) {
-        return {siteName: item.type, tagName: item.tag};
-      })).done(function (configs) {
-        var result = [];
-        configs.forEach(function(config){
-          var configsArray = [];
-          var configsObject = config.properties;
-          for (var property in configsObject) {
-            if (configsObject.hasOwnProperty(property)) {
-              configsArray.push(Em.Object.create({
-                name: property,
-                value: configsObject[property],
-                filename: App.config.getOriginalFileName(config.type)
-              }));
-            }
-          }
-          result.push(Em.Object.create({
-            serviceName: sites.findProperty('site', config.type).serviceName,
-            configs: configsArray
-          }));
-        });
-        dfd.resolve(result);
-      });
+    const dfd = $.Deferred();
+    App.router.get('configurationController').getCurrentConfigsBySites(sites.mapProperty('site')).done((configs) => {
+      dfd.resolve(this.getMappedConfigs(configs, sites));
     });
     return dfd.promise();
+  },
+
+  /**
+   *
+   * @param configs
+   * @param sites
+   */
+  getMappedConfigs: function (configs, sites) {
+    const result = [];
+    configs.forEach(function (config) {
+      var configsArray = [];
+      var configsObject = config.properties;
+      for (var property in configsObject) {
+        if (configsObject.hasOwnProperty(property)) {
+          configsArray.push(Em.Object.create({
+            name: property,
+            value: configsObject[property],
+            filename: App.config.getOriginalFileName(config.type)
+          }));
+        }
+      }
+      result.push(Em.Object.create({
+        serviceName: sites.findProperty('site', config.type).serviceName,
+        configs: configsArray
+      }));
+    });
+
+    return result;
   }
 });

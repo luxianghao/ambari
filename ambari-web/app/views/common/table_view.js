@@ -19,7 +19,7 @@
 var App = require('app');
 var filters = require('views/common/filter_view');
 
-App.TableView = Em.View.extend(App.UserPref, {
+App.TableView = Em.View.extend(App.Persist, {
 
   init: function() {
     this.set('filterConditions', []);
@@ -273,6 +273,17 @@ App.TableView = Em.View.extend(App.UserPref, {
   },
 
   /**
+   *
+   * @param {Array} filterConditions
+   */
+  updateComboFilter: function(filterConditions) {
+    this.set('controller.resetStartIndex', true);
+    this.set('filterConditions', filterConditions);
+    this.saveAllFilterConditions();
+    this.filter();
+  },
+
+  /**
    * save filter conditions to local storage
    * @param iColumn {Number}
    * @param value {String|Array}
@@ -339,6 +350,14 @@ App.TableView = Em.View.extend(App.UserPref, {
       result = true;
     }
     return result;
+  },
+
+  clearStartIndex: function() {
+    if (this.get('controller.startIndex') !== 1) {
+      this.set('controller.resetStartIndex', true);
+      return true;
+    }
+    return false;
   },
 
   /**

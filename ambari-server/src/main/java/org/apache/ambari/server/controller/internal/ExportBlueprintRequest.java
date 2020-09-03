@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -10,8 +10,7 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distribut
- * ed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
@@ -19,10 +18,20 @@
 
 package org.apache.ambari.server.controller.internal;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.api.util.TreeNode;
 import org.apache.ambari.server.controller.AmbariManagementController;
-import org.apache.ambari.server.controller.AmbariServer;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
 import org.apache.ambari.server.state.DesiredConfig;
@@ -36,52 +45,37 @@ import org.apache.ambari.server.topology.HostGroupImpl;
 import org.apache.ambari.server.topology.HostGroupInfo;
 import org.apache.ambari.server.topology.InvalidTopologyTemplateException;
 import org.apache.ambari.server.topology.TopologyRequest;
-import org.apache.ambari.server.topology.TopologyValidator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * Request to export a blueprint from an existing cluster.
  */
 public class ExportBlueprintRequest implements TopologyRequest {
 
-  private final static Logger LOG = LoggerFactory.getLogger(ExportBlueprintRequest.class);
-  private static AmbariManagementController controller = AmbariServer.getController();
+  private final AmbariManagementController controller;
 
-  private String clusterName;
-  private Long clusterId;
+  private final String clusterName;
+  private final Long clusterId;
   private Blueprint blueprint;
-  private Configuration configuration;
-  //todo: Should this map be represented by a new class?
-  private Map<String, HostGroupInfo> hostGroupInfo = new HashMap<String, HostGroupInfo>();
+  private final Configuration configuration;
+  private final Map<String, HostGroupInfo> hostGroupInfo = new HashMap<>();
 
 
-  public ExportBlueprintRequest(TreeNode<Resource> clusterNode) throws InvalidTopologyTemplateException {
+  public ExportBlueprintRequest(TreeNode<Resource> clusterNode, AmbariManagementController controller) throws InvalidTopologyTemplateException {
+    this.controller = controller;
+
     Resource clusterResource = clusterNode.getObject();
+    Stack stack = parseStack(clusterResource);
     clusterName = String.valueOf(clusterResource.getPropertyValue(
         ClusterResourceProvider.CLUSTER_NAME_PROPERTY_ID));
     clusterId = Long.valueOf(String.valueOf(clusterResource.getPropertyValue(
             ClusterResourceProvider.CLUSTER_ID_PROPERTY_ID)));
 
 
-    createConfiguration(clusterNode);
-    //todo: should be parsing Configuration from the beginning
-    //createConfiguration(configurations);
+    configuration = createConfiguration(clusterNode);
 
     Collection<ExportedHostGroup> exportedHostGroups = processHostGroups(clusterNode.getChild("hosts"));
     createHostGroupInfo(exportedHostGroups);
-    createBlueprint(exportedHostGroups, parseStack(clusterResource));
+    createBlueprint(exportedHostGroups, stack);
   }
 
   public String getClusterName() {
@@ -114,11 +108,6 @@ public class ExportBlueprintRequest implements TopologyRequest {
   }
 
   @Override
-  public List<TopologyValidator> getTopologyValidators() {
-    return Collections.emptyList();
-  }
-
-  @Override
   public String getDescription() {
     return String.format("Export Command For Cluster '%s'", clusterName);
   }
@@ -129,11 +118,11 @@ public class ExportBlueprintRequest implements TopologyRequest {
   private void createBlueprint(Collection<ExportedHostGroup> exportedHostGroups, Stack stack) {
     String bpName = "exported-blueprint";
 
-    Collection<HostGroup> hostGroups = new ArrayList<HostGroup>();
+    Collection<HostGroup> hostGroups = new ArrayList<>();
     for (ExportedHostGroup exportedHostGroup : exportedHostGroups) {
 
       // create Component using component name
-      List<Component> componentList = new ArrayList<Component>();
+      List<Component> componentList = new ArrayList<>();
       for (String component : exportedHostGroup.getComponents()) {
         componentList.add(new Component(component));
       }
@@ -148,7 +137,6 @@ public class ExportBlueprintRequest implements TopologyRequest {
     for (ExportedHostGroup exportedGroup : exportedHostGroups) {
       HostGroupInfo groupInfo = new HostGroupInfo(exportedGroup.getName());
       groupInfo.addHosts(exportedGroup.getHostInfo());
-      //todo: should be parsing Configuration from the beginning
       groupInfo.setConfiguration(exportedGroup.getConfiguration());
       hostGroupInfo.put(groupInfo.getHostGroupName(), groupInfo);
     }
@@ -171,12 +159,10 @@ public class ExportBlueprintRequest implements TopologyRequest {
    * Process cluster scoped configurations.
    *
    * @param clusterNode  cluster node
-   *
    */
-  private void createConfiguration(TreeNode<Resource> clusterNode) {
-
-    Map<String, Map<String, String>> properties = new HashMap<String, Map<String, String>>();
-    Map<String, Map<String, Map<String, String>>> attributes = new HashMap<String, Map<String, Map<String, String>>>();
+  private static Configuration createConfiguration(TreeNode<Resource> clusterNode) {
+    Map<String, Map<String, String>> properties = new HashMap<>();
+    Map<String, Map<String, Map<String, String>>> attributes = new HashMap<>();
 
     Map<String, Object> desiredConfigMap = clusterNode.getObject().getPropertiesMap().get("Clusters/desired_configs");
     TreeNode<Resource> configNode = clusterNode.getChild("configurations");
@@ -184,16 +170,15 @@ public class ExportBlueprintRequest implements TopologyRequest {
       ExportedConfiguration configuration = new ExportedConfiguration(config);
       DesiredConfig desiredConfig = (DesiredConfig) desiredConfigMap.get(configuration.getType());
       if (desiredConfig != null && desiredConfig.getTag().equals(configuration.getTag())) {
-
         properties.put(configuration.getType(), configuration.getProperties());
         attributes.put(configuration.getType(), configuration.getPropertyAttributes());
       }
     }
-    configuration = new Configuration(properties, attributes);
-    // empty parent configuration when exporting as all properties are included in this configuration
-    configuration.setParentConfiguration(new Configuration(
-        Collections.<String, Map<String, String>>emptyMap(),
-        Collections.<String, Map<String, Map<String, String>>>emptyMap()));
+
+    Configuration configuration = new Configuration(properties, attributes);
+    configuration.setParentConfiguration(new Configuration(Collections.emptyMap(), Collections.emptyMap()));
+
+    return configuration;
   }
 
   /**
@@ -204,7 +189,7 @@ public class ExportBlueprintRequest implements TopologyRequest {
    * @return collection of host groups
    */
   private Collection<ExportedHostGroup> processHostGroups(TreeNode<Resource> hostNode) {
-    Map<ExportedHostGroup, ExportedHostGroup> mapHostGroups = new HashMap<ExportedHostGroup, ExportedHostGroup>();
+    Map<ExportedHostGroup, ExportedHostGroup> mapHostGroups = new HashMap<>();
     int count = 1;
     for (TreeNode<Resource> host : hostNode.getChildren()) {
       ExportedHostGroup group = new ExportedHostGroup(host);
@@ -220,30 +205,10 @@ public class ExportBlueprintRequest implements TopologyRequest {
         group.setName("host_group_" + count++);
         group.addHost(hostName);
       }
-      processHostGroupComponents(group);
     }
 
     return mapHostGroups.values();
   }
-
-
-  /**
-   * Process host group component information for a specific host.
-   *
-   * @param group host group instance
-   *
-   * @return list of component names for the host
-   */
-  private List<Map<String, String>> processHostGroupComponents(ExportedHostGroup group) {
-    List<Map<String, String>> listHostGroupComponents = new ArrayList<Map<String, String>>();
-    for (String component : group.getComponents()) {
-      Map<String, String> mapComponentProperties = new HashMap<String, String>();
-      listHostGroupComponents.add(mapComponentProperties);
-      mapComponentProperties.put("name", component);
-    }
-    return listHostGroupComponents;
-  }
-
 
   // ----- Host Group inner class --------------------------------------------
 
@@ -261,12 +226,12 @@ public class ExportBlueprintRequest implements TopologyRequest {
     /**
      * Associated components.
      */
-    private Set<String> components = new HashSet<String>();
+    private final Set<String> components = new HashSet<>();
 
     /**
      * Host group scoped configurations.
      */
-    private Collection<ExportedConfiguration> configurations = new HashSet<ExportedConfiguration>();
+    private final Collection<ExportedConfiguration> configurations = new HashSet<>();
 
     /**
      * Number of instances.
@@ -276,7 +241,7 @@ public class ExportBlueprintRequest implements TopologyRequest {
     /**
      * Collection of associated hosts.
      */
-    private Collection<String> hosts = new HashSet<String>();
+    private final Collection<String> hosts = new HashSet<>();
 
     /**
      * Constructor.
@@ -296,8 +261,8 @@ public class ExportBlueprintRequest implements TopologyRequest {
     }
 
     public Configuration getConfiguration() {
-      Map<String, Map<String, String>> configProperties = new HashMap<String, Map<String, String>>();
-      Map<String, Map<String, Map<String, String>>> configAttributes = new HashMap<String, Map<String, Map<String, String>>>();
+      Map<String, Map<String, String>> configProperties = new HashMap<>();
+      Map<String, Map<String, Map<String, String>>> configAttributes = new HashMap<>();
 
       for (ExportedConfiguration config : configurations) {
         configProperties.put(config.getType(), config.getProperties());
@@ -406,7 +371,6 @@ public class ExportBlueprintRequest implements TopologyRequest {
             getComponents().add("AMBARI_SERVER");
           }
         } catch (UnknownHostException e) {
-          //todo: SystemException?
           throw new RuntimeException("Unable to obtain local host name", e);
         }
       } catch (UnknownHostException e) {
@@ -436,7 +400,7 @@ public class ExportBlueprintRequest implements TopologyRequest {
   /**
    * Encapsulates a configuration.
    */
-  private class ExportedConfiguration {
+  private static class ExportedConfiguration {
     /**
      * Configuration type such as hdfs-site.
      */
@@ -450,12 +414,12 @@ public class ExportBlueprintRequest implements TopologyRequest {
     /**
      * Properties of the configuration.
      */
-    private Map<String, String> properties = new HashMap<String, String>();
+    private Map<String, String> properties = new HashMap<>();
 
     /**
      * Attributes for the properties in the cluster configuration.
      */
-    private Map<String, Map<String, String>> propertyAttributes = new HashMap<String, Map<String, String>>();
+    private Map<String, Map<String, String>> propertyAttributes = new HashMap<>();
 
     /**
      * Constructor.
@@ -478,18 +442,6 @@ public class ExportBlueprintRequest implements TopologyRequest {
       if (propertiesMap.containsKey("properties_attributes")) {
         propertyAttributes = (Map) propertiesMap.get("properties_attributes");
       }
-
-      //todo: not processing config here, ensure that
-      //todo: this logic regarding null/empty properties is properly handled
-//      if (properties != null && !properties.isEmpty()) {
-//        stripRequiredProperties(properties);
-//      } else {
-//        LOG.warn("Empty configuration found for configuration type = " + type +
-//            " during Blueprint export.  This may occur after an upgrade of Ambari, when" +
-//            "attempting to export a Blueprint from a cluster started by an older version of " +
-//            "Ambari.");
-//      }
-
     }
 
     /**
@@ -547,4 +499,5 @@ public class ExportBlueprintRequest implements TopologyRequest {
       return result;
     }
   }
+
 }

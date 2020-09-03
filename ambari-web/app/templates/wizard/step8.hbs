@@ -27,7 +27,7 @@
 
   <div class="panel panel-default">
     <div class="panel-body">
-      <div id="step8-content" class="well pre-scrollable">
+      <div id="step8-content" class="well pre-scrollable" {{QAAttr "review-content"}}>
         <div id="step8-info">
           {{#each item in controller.clusterInfo}}
             <p>
@@ -62,12 +62,12 @@
               <p><b>{{t menu.item.services}}:</b></p>
               <ul>
                 {{#each controller.services}}
-                  <li>
-                    <em><b>{{display_name}}</b></em>
+                  <li {{QAAttr "service-block"}}>
+                    <em><b {{QAAttr "service-name"}} class="service-name">{{display_name}}</b></em>
                     <ul>
                       {{#each component in this.service_components}}
                         <li>
-                          <span class="text text-info">{{component.display_name }} : </span>{{component.component_value}}
+                          <span class="text text-info" {{QAAttr "component-name"}}>{{component.display_name }} : </span> <span {{QAAttr "host-name"}}>{{component.component_value}}</span>
                         </li>
                       {{/each}}
                     </ul>
@@ -84,20 +84,26 @@
 
 <div class="wizard-footer col-md-12">
   <div class="btn-area">
-    <button type="button" class="btn btn-default pull-left installer-back-btn" {{bindAttr disabled="App.router.btnClickInProgress"}} {{action back}}>
+    <button type="button" {{QAAttr "wizard-back"}} class="btn btn-default pull-left installer-back-btn" {{bindAttr disabled="App.router.btnClickInProgress"}} {{action back}}>
       &larr; {{t common.back}}
       {{#if App.router.backBtnClickInProgress}}
         {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
       {{/if}}
     </button>
-    <button type="button" class="btn btn-success pull-right"
+    {{template "templates/wizard/installer_cancel_button"}}
+    <button type="button" {{QAAttr "wizard-next"}} class="btn btn-success pull-right"
        id="spinner" {{bindAttr disabled="controller.isSubmitDisabled"}} {{action submit target="controller"}}>
       {{#if App.router.nextBtnClickInProgress}}
         {{view App.SpinnerView tagName="span" classNames="service-button-spinner"}}
       {{/if}}
       {{t common.deploy}} &rarr;
     </button>
-    <button type="button" class="btn btn-info pull-right" {{action printReview target="view"}}>{{t common.print}}</button>
+    <button type="button" class="btn btn-secondary pull-right" {{action printReview target="view"}}>{{t common.print}}</button>
     <button type="button" {{bindAttr class=":btn :btn-primary :pull-right :mrm controller.showDownloadCsv::hide"}} {{action downloadCSV target="controller"}}>{{t admin.kerberos.wizard.step5.downloadCSV}}</button>
+    {{#unless App.router.clusterInstallCompleted}}
+      <button type="button" class="btn btn-secondary pull-right" {{action generateBlueprintConfirmation target="controller"}}><i class="glyphicon glyphicon-download-alt"></i>&nbsp;
+        {{t common.generate.blueprint}}
+      </button>
+    {{/unless}}
   </div>
 </div>

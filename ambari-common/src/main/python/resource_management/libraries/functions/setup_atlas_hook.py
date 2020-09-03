@@ -24,9 +24,11 @@ __all__ = ["has_atlas_in_cluster", "setup_atlas_hook", "setup_atlas_jar_symlinks
 import os
 
 # Local Imports
+from resource_management.libraries.functions import stack_features
 from resource_management.libraries.resources.properties_file import PropertiesFile
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.functions.default import default
+from resource_management.libraries.script import Script
 from resource_management.core.resources.system import Link
 from resource_management.core.resources.packaging import Package
 from resource_management.core.logger import Logger
@@ -96,7 +98,7 @@ SHARED_ATLAS_HOOK_SECURITY_CONFIGS_FOR_NON_CLIENT_SERVICE = set(
   ]
 )
 
-NON_CLIENT_SERVICES = [SERVICE.HIVE, SERVICE.STORM, SERVICE.FALCON]
+NON_CLIENT_SERVICES = [SERVICE.HIVE, SERVICE.STORM, SERVICE.FALCON, SERVICE.HBASE]
 
 def has_atlas_in_cluster():
   """
@@ -117,6 +119,8 @@ def setup_atlas_hook(service_name, service_props, atlas_hook_filepath, owner, gr
   """
   import params
   atlas_props = default('/configurations/application-properties', {})
+  merged_props = {}
+  merged_props.update(service_props)
 
   if has_atlas_in_cluster():
     # Take the subset
@@ -131,12 +135,12 @@ def setup_atlas_hook(service_name, service_props, atlas_hook_filepath, owner, gr
 
     merged_props.update(service_props)
 
-    Logger.info(format("Generating Atlas Hook config file {atlas_hook_filepath}"))
-    PropertiesFile(atlas_hook_filepath,
-                   properties = merged_props,
-                   owner = owner,
-                   group = group,
-                   mode = 0644)
+  Logger.info(format("Generating Atlas Hook config file {atlas_hook_filepath}"))
+  PropertiesFile(atlas_hook_filepath,
+           properties = merged_props,
+           owner = owner,
+           group = group,
+           mode = 0644)
 
 
 def setup_atlas_jar_symlinks(hook_name, jar_source_dir):
@@ -157,22 +161,26 @@ def setup_atlas_jar_symlinks(hook_name, jar_source_dir):
   """
   import params
 
-  if has_atlas_in_cluster():
-    atlas_home_dir = os.environ['METADATA_HOME_DIR'] if 'METADATA_HOME_DIR' in os.environ \
-      else format("{stack_root}/current/atlas-server")
+  stack_root = Script.get_stack_root()
+  atlas_component_name = "atlas"
+  stack_version = stack_features.get_stack_feature_version(Script.get_config())
+  atlas_home_dir = os.path.join(stack_root, stack_version, atlas_component_name)
 
-    # Will only exist if this host contains Atlas Server
-    atlas_hook_dir = os.path.join(atlas_home_dir, "hook", hook_name)
-    if os.path.exists(atlas_hook_dir):
-      Logger.info("Atlas Server is present on this host, will symlink jars inside of %s to %s if not already done." %
-                  (jar_source_dir, atlas_hook_dir))
+  # Will only exist if this host contains Atlas Server
+  atlas_hook_dir = os.path.join(atlas_home_dir, "hook", hook_name)
 
-      src_files = os.listdir(atlas_hook_dir)
-      for file_name in src_files:
-        atlas_hook_file_name = os.path.join(atlas_hook_dir, file_name)
-        source_lib_file_name = os.path.join(jar_source_dir, file_name)
-        if os.path.isfile(atlas_hook_file_name):
-          Link(source_lib_file_name, to=atlas_hook_file_name)
+  if os.path.exists(atlas_hook_dir):
+    Logger.info("Atlas Server is present on this host, will symlink jars inside of %s to %s if not already done." %
+                (jar_source_dir, atlas_hook_dir))
+
+    src_files = os.listdir(atlas_hook_dir)
+    for file_name in src_files:
+      atlas_hook_file_name = os.path.join(atlas_hook_dir, file_name)
+      source_lib_file_name = os.path.join(jar_source_dir, file_name)
+      if os.path.isfile(atlas_hook_file_name):
+        Link(source_lib_file_name, to=atlas_hook_file_name)
+  else:
+    Logger.info("Atlas hook directory path {0} doesn't exist".format(atlas_hook_dir))
 
 def install_atlas_hook_packages(atlas_plugin_package, atlas_ubuntu_plugin_package, host_sys_prepped,
                                 agent_stack_retry_on_unavailability, agent_stack_retry_count):

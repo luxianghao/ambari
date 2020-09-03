@@ -21,6 +21,88 @@ var stringUtils = require('utils/string_utils');
 require('utils/helper');
 require('models/configs/objects/service_config_category');
 
+var Dependency = Ember.Object.extend({
+  name: Ember.computed('service', function() {
+    return this.get('service.serviceName');
+  }),
+
+  displayName: Ember.computed('service', function() {
+    return this.get('service.displayNameOnSelectServicePage');
+  }),
+
+  compatibleServices: function(services) {
+    return services.filterProperty('serviceName', this.get('name'));
+  },
+
+  isMissing: function(selectedServices) {
+    return Em.isEmpty(this.compatibleServices(selectedServices));
+  }
+});
+
+var HcfsDependency = Dependency.extend({
+  displayName: Ember.computed(function() {
+    return Em.I18n.t('installer.step4.hcfs.displayName');
+  }),
+
+  compatibleServices: function(services) {
+    return services.filterProperty("isDFS", true);
+  }
+});
+
+Dependency.reopenClass({
+  fromService: function(service) {
+    return service.get('isDFS')
+      ? HcfsDependency.create({service: service})
+      : Dependency.create({service: service});
+  }
+});
+
+var MissingDependency = Ember.Object.extend({
+  hasMultipleOptions: Ember.computed('compatibleServices', function() {
+    return this.get('compatibleServices').length > 1;
+  }),
+
+  selectFirstCompatible: function() {
+    this.get('compatibleServices')[0].set('isSelected', true);
+  },
+
+  displayOptions: Ember.computed('compatibleServices', function() {
+    return this.get('compatibleServices').mapProperty('serviceName').join(', ');
+  })
+});
+
+App.FileSystem = Ember.ObjectProxy.extend({
+  content: null,
+  services: [],
+
+  //special case for HDFS and OZONE. They can be selected together
+  shouldAllSelectionBeCleared: function () {
+    const dfsNames = this.get('services').mapProperty('serviceName');
+    const coExistingDfs = ['HDFS', 'OZONE'],
+      selectedServices = this.get('services').filterProperty('isSelected');
+    for (let i = 0; i < selectedServices.length; i++) {
+      if (!coExistingDfs.includes(selectedServices[i].get('serviceName'))) {
+        return true;
+      }
+    }
+    return !(dfsNames.includes('HDFS') && dfsNames.includes('OZONE') && coExistingDfs.includes(this.get('content.serviceName')));
+  },
+
+  isSelected: function(key, aBoolean) {
+    if (arguments.length > 1) {
+      if (this.shouldAllSelectionBeCleared()) {
+        this.clearAllSelection();
+      }
+      this.get('content').set('isSelected', aBoolean);
+    }
+    return this.get('content.isSelected');
+  }.property('content.isSelected', 'services.@each.isSelected'),
+
+  clearAllSelection: function() {
+    this.get('services').setEach('isSelected', false);
+  }
+});
+
 /**
  * This model loads all services supported by the stack
  * The model maps to the  http://hostname:8080/api/v1/stacks/HDP/versions/${versionNumber}/services?fields=StackServices/*,serviceComponents/*
@@ -34,6 +116,7 @@ App.StackService = DS.Model.extend({
   configTypes: DS.attr('object'),
   serviceVersion: DS.attr('string'),
   serviceCheckSupported: DS.attr('boolean'),
+  supportDeleteViaUi: DS.attr('boolean'),
   stackName: DS.attr('string'),
   stackVersion: DS.attr('string'),
   selection: DS.attr('string'),
@@ -47,7 +130,9 @@ App.StackService = DS.Model.extend({
   configs: DS.attr('array'),
   requiredServices: DS.attr('array', {defaultValue: []}),
 
-  isDisabled: Em.computed.or('isMandatory', 'isInstalled'),
+  isDisabled: function () {
+    return this.get('isInstalled') || (this.get('isMandatory') && !App.get('router.clusterInstallCompleted'));
+  }.property('isMandatory', 'isInstalled', 'App.router.clusterInstallCompleted'),
 
   /**
    * @type {String[]}
@@ -67,6 +152,42 @@ App.StackService = DS.Model.extend({
    * @type {String[]}
    */
   dependentServiceNames: DS.attr('array', {defaultValue: []}),
+
+  dependencies: function(availableServices) {
+    var result = [];
+    this.get('requiredServices').forEach(function(serviceName) {
+      var service = availableServices.findProperty('serviceName', serviceName);
+      if (service) {
+        result.push(Dependency.fromService(service));
+      }
+    });
+    return result;
+  },
+
+  /**
+   * Add dependencies which are not already included in selectedServices to the given missingDependencies collection
+  */
+  collectMissingDependencies: function(selectedServices, availableServices, missingDependencies) {
+    this._missingDependencies(selectedServices, availableServices).forEach(function (dependency) {
+      this._addMissingDependency(dependency, availableServices, missingDependencies);
+    }.bind(this));
+  },
+
+  _missingDependencies: function(selectedServices, availableServices) {
+    return this.dependencies(availableServices).filter(function(dependency) {
+      return dependency.isMissing(selectedServices);
+    });
+  },
+
+  _addMissingDependency: function(dependency, availableServices, missingDependencies) {
+    if(!missingDependencies.someProperty('serviceName', dependency.get('name'))) {
+      missingDependencies.push(MissingDependency.create({
+         serviceName: dependency.get('name'),
+         displayName: dependency.get('displayName'),
+         compatibleServices: dependency.compatibleServices(availableServices)
+      }));
+    }
+  },
 
   // Is the service a distributed filesystem
   isDFS: function () {
@@ -100,17 +221,13 @@ App.StackService = DS.Model.extend({
   }.property('coSelectedServices', 'serviceName'),
 
   isHiddenOnSelectServicePage: function () {
-    var hiddenServices = ['MAPREDUCE2'];
-    return hiddenServices.contains(this.get('serviceName')) || !this.get('isInstallable') || this.get('doNotShowAndInstall');
-  }.property('serviceName', 'isInstallable'),
+    return !this.get('isInstallable') || this.get('doNotShowAndInstall');
+  }.property('isInstallable', 'doNotShowAndInstall'),
 
   doNotShowAndInstall: function () {
     var skipServices = [];
     if(!App.supports.installGanglia) {
       skipServices.push('GANGLIA');
-    }
-    if(App.router.get('clusterInstallCompleted') != true){
-      skipServices.push('RANGER', 'RANGER_KMS');
     }
     return skipServices.contains(this.get('serviceName'));
   }.property('serviceName'),
@@ -166,7 +283,7 @@ App.StackService = DS.Model.extend({
     var configTypes = this.get('configTypes');
     var serviceComponents = this.get('serviceComponents');
     if (configTypes && Object.keys(configTypes).length) {
-      var pattern = ["General", "CapacityScheduler", "FaultTolerance", "Isolation", "Performance", "HIVE_SERVER2", "KDC", "Kadmin","^Advanced", "Env$", "^Custom", "Falcon - Oozie integration", "FalconStartupSite", "FalconRuntimeSite", "MetricCollector", "Settings$", "AdvancedHawqCheck", "LogsearchAdminJson"];
+      var pattern = ["General", "ResourceType", "CapacityScheduler", "ContainerExecutor", "Registry", "FaultTolerance", "Isolation", "Performance", "HIVE_SERVER2", "KDC", "Kadmin","^Advanced", "Env$", "^Custom", "Falcon - Oozie integration", "FalconStartupSite", "FalconRuntimeSite", "MetricCollector", "Settings$", "AdvancedHawqCheck", "LogsearchAdminJson"];
       configCategories = App.StackService.configCategories.call(this).filter(function (_configCategory) {
         var serviceComponentName = _configCategory.get('name');
         var isServiceComponent = serviceComponents.someProperty('componentName', serviceComponentName);
@@ -214,7 +331,7 @@ App.StackService.displayOrder = [
   'STORM',
   'FLUME',
   'ACCUMULO',
-  'AMBARI_INFRA',
+  'AMBARI_INFRA_SOLR',
   'AMBARI_METRICS',
   'ATLAS',
   'KAFKA',
@@ -233,9 +350,7 @@ App.StackService.componentsOrderForService = {
 };
 
 //@TODO: Write unit test for no two keys in the object should have any intersecting elements in their values
-App.StackService.coSelected = {
-  'YARN': ['MAPREDUCE2']
-};
+App.StackService.coSelected = {};
 
 
 App.StackService.reviewPageHandlers = {
@@ -272,9 +387,12 @@ App.StackService.configCategories = function () {
         App.ServiceConfigCategory.create({ name: 'NODEMANAGER', displayName: 'Node Manager', showHost: true}),
         App.ServiceConfigCategory.create({ name: 'APP_TIMELINE_SERVER', displayName: 'Application Timeline Server', showHost: true}),
         App.ServiceConfigCategory.create({ name: 'General', displayName: 'General'}),
+        App.ServiceConfigCategory.create({ name: 'ResourceTypes', displayName: 'Resource Types'}),
         App.ServiceConfigCategory.create({ name: 'FaultTolerance', displayName: 'Fault Tolerance'}),
         App.ServiceConfigCategory.create({ name: 'Isolation', displayName: 'Isolation'}),
-        App.ServiceConfigCategory.create({ name: 'CapacityScheduler', displayName: 'Scheduler', siteFileName: 'capacity-scheduler.xml'})
+        App.ServiceConfigCategory.create({ name: 'CapacityScheduler', displayName: 'Scheduler', siteFileName: 'capacity-scheduler.xml'}),
+        App.ServiceConfigCategory.create({ name: 'ContainerExecutor', displayName: 'Container Executor', siteFileName: 'container-executor.xml'}),
+        App.ServiceConfigCategory.create({ name: 'Registry', displayName: 'Registry'})
       ]);
       break;
     case 'MAPREDUCE2':
@@ -371,8 +489,7 @@ App.StackService.configCategories = function () {
         App.ServiceConfigCategory.create({ name: 'UnixAuthenticationSettings', displayName: 'Unix Authentication Settings'}),
         App.ServiceConfigCategory.create({ name: 'ADSettings', displayName: 'AD Settings'}),
         App.ServiceConfigCategory.create({ name: 'LDAPSettings', displayName: 'LDAP Settings'}),
-        App.ServiceConfigCategory.create({ name: 'KnoxSSOSettings', displayName: 'Knox SSO Settings'}),
-        App.ServiceConfigCategory.create({ name: 'SolrKerberosSettings', displayName: 'Solr Kerberos Settings'})
+        App.ServiceConfigCategory.create({ name: 'KnoxSSOSettings', displayName: 'Knox SSO Settings'})
       ]);
       break;
     case 'ACCUMULO':

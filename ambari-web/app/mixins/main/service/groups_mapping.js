@@ -23,7 +23,7 @@ var App = require('app');
  *
  * @type {Em.Mixin}
  */
-App.GroupsMappingMixin = Em.Mixin.create({
+App.GroupsMappingMixin = Em.Mixin.create(App.TrackRequestMixin, {
 
   /**
    * Load config groups
@@ -58,7 +58,6 @@ App.GroupsMappingMixin = Em.Mixin.create({
    * @method saveConfigGroupsToModel
    */
   saveConfigGroupsToModel: function (data, opt, params) {
-    App.store.commit();
     App.configGroupsMapper.map(data, false, params.serviceNames.split(','));
     this.set('configGroupsAreLoaded', true);
     params.dfd.resolve();

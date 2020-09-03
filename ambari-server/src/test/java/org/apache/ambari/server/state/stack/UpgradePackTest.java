@@ -23,8 +23,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import java.io.File;
-import java.util.ArrayList;
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -33,29 +32,28 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
-import org.apache.ambari.server.stack.ModuleFileUnmarshaller;
-import org.apache.ambari.server.state.stack.UpgradePack.PrerequisiteCheckConfig;
-import org.apache.ambari.server.state.stack.UpgradePack.ProcessingComponent;
-import org.apache.ambari.server.state.stack.upgrade.ClusterGrouping;
-import org.apache.ambari.server.state.stack.upgrade.ClusterGrouping.ExecuteStage;
-import org.apache.ambari.server.state.stack.upgrade.ConfigureTask;
-import org.apache.ambari.server.state.stack.upgrade.Direction;
-import org.apache.ambari.server.state.stack.upgrade.Grouping;
-import org.apache.ambari.server.state.stack.upgrade.HostOrderGrouping;
-import org.apache.ambari.server.state.stack.upgrade.ParallelScheduler;
-import org.apache.ambari.server.state.stack.upgrade.RestartGrouping;
-import org.apache.ambari.server.state.stack.upgrade.RestartTask;
-import org.apache.ambari.server.state.stack.upgrade.ServiceCheckGrouping;
-import org.apache.ambari.server.state.stack.upgrade.StopGrouping;
-import org.apache.ambari.server.state.stack.upgrade.Task;
-import org.apache.ambari.server.state.stack.upgrade.UpdateStackGrouping;
-import org.apache.ambari.server.state.stack.upgrade.UpgradeType;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.filefilter.FileFilterUtils;
-import org.apache.commons.io.filefilter.IOFileFilter;
+import org.apache.ambari.server.stack.upgrade.ClusterGrouping;
+import org.apache.ambari.server.stack.upgrade.ConfigureTask;
+import org.apache.ambari.server.stack.upgrade.Direction;
+import org.apache.ambari.server.stack.upgrade.ExecuteStage;
+import org.apache.ambari.server.stack.upgrade.Grouping;
+import org.apache.ambari.server.stack.upgrade.HostOrderGrouping;
+import org.apache.ambari.server.stack.upgrade.ParallelScheduler;
+import org.apache.ambari.server.stack.upgrade.RestartGrouping;
+import org.apache.ambari.server.stack.upgrade.RestartTask;
+import org.apache.ambari.server.stack.upgrade.ServiceCheckGrouping;
+import org.apache.ambari.server.stack.upgrade.StopGrouping;
+import org.apache.ambari.server.stack.upgrade.Task;
+import org.apache.ambari.server.stack.upgrade.UpdateStackGrouping;
+import org.apache.ambari.server.stack.upgrade.UpgradePack;
+import org.apache.ambari.server.stack.upgrade.UpgradePack.PrerequisiteCheckConfig;
+import org.apache.ambari.server.stack.upgrade.UpgradePack.ProcessingComponent;
+import org.apache.ambari.spi.upgrade.UpgradeType;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -64,9 +62,9 @@ import org.junit.experimental.categories.Category;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.collect.Sets;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 
 /**
  * Tests for the upgrade pack
@@ -88,60 +86,35 @@ public class UpgradePackTest {
   }
 
   @After
-  public void teardown() {
-    injector.getInstance(PersistService.class).stop();
+  public void teardown() throws AmbariException, SQLException {
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
+  /**
+   * Tests that boolean values are property serialized in the upgrade pack.
+   *
+   * @throws Exception
+   */
   @Test
-  public void findAndValidateUpgradePacks() throws Exception {
+  public void testIsDowngradeAllowed() throws Exception {
+    Map<String, UpgradePack> upgrades = ambariMetaInfo.getUpgradePacks("HDP", "2.2.0");
+    assertTrue(upgrades.size() > 0);
 
-    IOFileFilter filter = new IOFileFilter() {
-      @Override
-      public boolean accept(File dir, String name) {
-        return false;
+    String upgradePackWithoutDowngrade = "upgrade_test_no_downgrade";
+    boolean foundAtLeastOnePackWithoutDowngrade = false;
+
+    for (String key : upgrades.keySet()) {
+      UpgradePack upgradePack = upgrades.get(key);
+      if (upgradePack.getName().equals(upgradePackWithoutDowngrade)) {
+        foundAtLeastOnePackWithoutDowngrade = true;
+        assertFalse(upgradePack.isDowngradeAllowed());
+        continue;
       }
 
-      @Override
-      public boolean accept(File file) {
-        // file has the folder named 'upgrades', ends with '.xml' and is NOT 'config-upgrade.xml'
-        if (file.getAbsolutePath().contains("upgrades") &&
-            file.getAbsolutePath().endsWith(".xml") &&
-            !file.getAbsolutePath().contains("config-upgrade.xml")) {
-
-          return true;
-        }
-
-        return false;
-      }
-    };
-
-    List<File> files = new ArrayList<>();
-
-    files.addAll(FileUtils.listFiles(new File("src/main/resources/stacks"), filter,
-      FileFilterUtils.directoryFileFilter()));
-
-    files.addAll(FileUtils.listFiles(new File("src/test/resources/stacks"), filter,
-        FileFilterUtils.directoryFileFilter()));
-
-    files.addAll(FileUtils.listFiles(new File("src/test/resources/stacks_with_upgrade_cycle"), filter,
-        FileFilterUtils.directoryFileFilter()));
-
-    ModuleFileUnmarshaller unmarshaller = new ModuleFileUnmarshaller();
-
-    for (File file : files) {
-      String fileContent = FileUtils.readFileToString(file, "UTF-8");
-
-      // these things must be in upgrade packs for them to work anyway
-      if (fileContent.contains("<upgrade") && fileContent.contains("xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"")) {
-        if (!fileContent.contains("xsi:noNamespaceSchemaLocation=\"upgrade-pack.xsd\"")) {
-          String msg = String.format("File %s appears to be an upgrade pack, but does not define 'upgrade-pack.xsd' as its schema",
-              file.getAbsolutePath());
-          Assert.fail(msg);
-        } else {
-          unmarshaller.unmarshal(UpgradePack.class, file, true);
-        }
-      }
+      assertTrue(upgradePack.isDowngradeAllowed());
     }
+
+    assertTrue(foundAtLeastOnePackWithoutDowngrade);
   }
 
   @Test
@@ -191,9 +164,12 @@ public class UpgradePackTest {
     assertNotNull(pc.preTasks);
     assertNotNull(pc.postTasks);
     assertNotNull(pc.tasks);
-    assertNull(pc.preDowngradeTasks);
-    assertNull(pc.postDowngradeTasks);
+    assertNotNull(pc.preDowngradeTasks);
+    assertNotNull(pc.postDowngradeTasks);
     assertEquals(1, pc.tasks.size());
+
+    assertEquals(3, pc.preDowngradeTasks.size());
+    assertEquals(1, pc.postDowngradeTasks.size());
 
     assertEquals(Task.Type.RESTART, pc.tasks.get(0).getType());
     assertEquals(RestartTask.class, pc.tasks.get(0).getClass());
@@ -225,6 +201,7 @@ public class UpgradePackTest {
     ConfigureTask ct = (ConfigureTask) t;
     // check that the Configure task successfully parsed id
     assertEquals("hdp_2_1_1_nm_pre_upgrade", ct.getId());
+    assertFalse(ct.supportsPatch);
   }
 
   @Test
@@ -262,10 +239,12 @@ public class UpgradePackTest {
         "SERVICE_CHECK_1",
         "CORE_SLAVES",
         "SERVICE_CHECK_2",
+        "OOZIE",
         "POST_CLUSTER");
 
     List<String> expected_down = Arrays.asList(
         "PRE_CLUSTER",
+        "OOZIE",
         "CORE_SLAVES",
         "SERVICE_CHECK_2",
         "CORE_MASTER",
@@ -324,7 +303,7 @@ public class UpgradePackTest {
       "Stop High-Level Daemons",
       "Backups",
       "Stop Low-Level Daemons",
-      "UPDATE_DESIRED_STACK_ID",
+      "UPDATE_DESIRED_REPOSITORY_ID",
       "ALL_HOST_OPS",
       "ZOOKEEPER",
       "HDFS",
@@ -333,7 +312,7 @@ public class UpgradePackTest {
 
     List<String> expected_down = Arrays.asList(
       "Restore Backups",
-      "UPDATE_DESIRED_STACK_ID",
+      "UPDATE_DESIRED_REPOSITORY_ID",
       "ALL_HOST_OPS",
       "ZOOKEEPER",
       "HDFS",
@@ -555,7 +534,7 @@ public class UpgradePackTest {
     ServiceCheckGrouping scGroup = (ServiceCheckGrouping) group;
     Set<String> priorityServices = scGroup.getPriorities();
     assertEquals(4, priorityServices.size());
-    Iterator serviceIterator = priorityServices.iterator();
+    Iterator<String> serviceIterator = priorityServices.iterator();
     assertEquals("ZOOKEEPER", serviceIterator.next());
     assertEquals("HBASE", serviceIterator.next());
 
@@ -606,6 +585,105 @@ public class UpgradePackTest {
 
     assertEquals(HostOrderGrouping.class, upgradePack.getAllGroups().get(0).getClass());
     assertEquals(Grouping.class, upgradePack.getAllGroups().get(1).getClass());
+  }
+
+  @Test
+  public void testDowngradeComponentTasks() throws Exception {
+    Map<String, UpgradePack> upgrades = ambariMetaInfo.getUpgradePacks("HDP", "2.1.1");
+    UpgradePack upgradePack = upgrades.get("upgrade_component_tasks_test");
+    assertNotNull(upgradePack);
+
+    Map<String, Map<String, ProcessingComponent>> components = upgradePack.getTasks();
+    assertTrue(components.containsKey("ZOOKEEPER"));
+    assertTrue(components.containsKey("HDFS"));
+
+    Map<String, ProcessingComponent> zkMap = components.get("ZOOKEEPER");
+    Map<String, ProcessingComponent> hdfsMap = components.get("HDFS");
+
+    assertTrue(zkMap.containsKey("ZOOKEEPER_SERVER"));
+    assertTrue(zkMap.containsKey("ZOOKEEPER_CLIENT"));
+    assertTrue(hdfsMap.containsKey("NAMENODE"));
+    assertTrue(hdfsMap.containsKey("DATANODE"));
+    assertTrue(hdfsMap.containsKey("HDFS_CLIENT"));
+    assertTrue(hdfsMap.containsKey("JOURNALNODE"));
+
+    ProcessingComponent zkServer = zkMap.get("ZOOKEEPER_SERVER");
+    ProcessingComponent zkClient = zkMap.get("ZOOKEEPER_CLIENT");
+    ProcessingComponent hdfsNN = hdfsMap.get("NAMENODE");
+    ProcessingComponent hdfsDN = hdfsMap.get("DATANODE");
+    ProcessingComponent hdfsClient = hdfsMap.get("HDFS_CLIENT");
+    ProcessingComponent hdfsJN = hdfsMap.get("JOURNALNODE");
+
+    // ZK server has only pretasks defined, with pre-downgrade being a copy of pre-upgrade
+    assertNotNull(zkServer.preTasks);
+    assertNotNull(zkServer.preDowngradeTasks);
+    assertNull(zkServer.postTasks);
+    assertNull(zkServer.postDowngradeTasks);
+    assertEquals(1, zkServer.preTasks.size());
+    assertEquals(1, zkServer.preDowngradeTasks.size());
+
+    // ZK client has only post-tasks defined, with post-downgrade being a copy of pre-upgrade
+    assertNull(zkClient.preTasks);
+    assertNull(zkClient.preDowngradeTasks);
+    assertNotNull(zkClient.postTasks);
+    assertNotNull(zkClient.postDowngradeTasks);
+    assertEquals(1, zkClient.postTasks.size());
+    assertEquals(1, zkClient.postDowngradeTasks.size());
+
+    // NN has only pre-tasks defined, with an empty pre-downgrade
+    assertNotNull(hdfsNN.preTasks);
+    assertNotNull(hdfsNN.preDowngradeTasks);
+    assertNull(hdfsNN.postTasks);
+    assertNull(hdfsNN.postDowngradeTasks);
+    assertEquals(1, hdfsNN.preTasks.size());
+    assertEquals(0, hdfsNN.preDowngradeTasks.size());
+
+    // DN has only post-tasks defined, with post-downgrade being empty
+    assertNull(hdfsDN.preTasks);
+    assertNull(hdfsDN.preDowngradeTasks);
+    assertNotNull(hdfsDN.postTasks);
+    assertNotNull(hdfsDN.postDowngradeTasks);
+    assertEquals(1, hdfsDN.postTasks.size());
+    assertEquals(0, hdfsDN.postDowngradeTasks.size());
+
+    // HDFS client has only post and post-downgrade tasks
+    assertNull(hdfsClient.preTasks);
+    assertNotNull(hdfsClient.preDowngradeTasks);
+    assertNull(hdfsClient.postTasks);
+    assertNotNull(hdfsClient.postDowngradeTasks);
+    assertEquals(1, hdfsClient.preDowngradeTasks.size());
+    assertEquals(1, hdfsClient.postDowngradeTasks.size());
+
+    // JN has differing tasks for pre and post downgrade
+    assertNotNull(hdfsJN.preTasks);
+    assertNotNull(hdfsJN.preDowngradeTasks);
+    assertNotNull(hdfsJN.postTasks);
+    assertNotNull(hdfsJN.postDowngradeTasks);
+    assertEquals(1, hdfsJN.preTasks.size());
+    assertEquals(2, hdfsJN.preDowngradeTasks.size());
+    assertEquals(1, hdfsJN.postTasks.size());
+    assertEquals(2, hdfsJN.postDowngradeTasks.size());
+
+    // make sure all ids are accounted for
+
+    Set<String> allIds = Sets.newHashSet("some_id", "some_id1", "some_id2", "some_id3", "some_id4", "some_id5");
+
+    @SuppressWarnings("unchecked")
+    Set<List<Task>> allTasks = Sets.newHashSet(hdfsJN.preTasks, hdfsJN.preDowngradeTasks,
+        hdfsJN.postTasks, hdfsJN.postDowngradeTasks);
+
+    for (List<Task> list : allTasks) {
+      for (Task t : list) {
+        assertEquals(ConfigureTask.class, t.getClass());
+
+        ConfigureTask ct = (ConfigureTask) t;
+        assertTrue(allIds.contains(ct.id));
+
+        allIds.remove(ct.id);
+      }
+    }
+
+    assertTrue(allIds.isEmpty());
   }
 
 

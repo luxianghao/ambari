@@ -62,12 +62,20 @@ var MappingMixin= Ember.Mixin.create({
   },
 
   handleImportMapping(actionNode,json,mappings){
-    var domain={};
+    var domain={
+      unsupportedProperties : {}
+    };
     if (json._xmlns){
       var version=CommonUtils.extractSchemaVersion(json._xmlns);
-      this.schemaVersions.setActionVersion(actionNode.actionType,version);
+      //this.schemaVersions.setActionVersion(actionNode.actionType,version);
     }
     actionNode.set("domain",domain);
+    Object.keys(json).forEach((propKey)=>{
+      if(!mappings.findBy('xml', propKey) && propKey !=='_xmlns'  && propKey !=='@id' && propKey !== '__jsogObjectId'){
+         domain.unsupportedProperties[propKey] = json[propKey];
+         domain[propKey] = json[propKey];
+       }
+    });
     mappings.forEach(function(mapping){
       if (!mapping.occurs) {
         mapping.occurs = "once";
@@ -208,15 +216,15 @@ var SLAMapper= Ember.Object.extend({
       var slaPrefix="sla";
       slaInfo["__prefix"]=slaPrefix;
       if (sla.nominalTime){
-        slaInfo[slaPrefix+":"+"nominal-time"]=sla.nominalTime;
+        slaInfo[slaPrefix+":"+"nominal-time"]=sla.nominalTime.value;
       }
-      if (sla.shouldStart){
+      if (sla.shouldStart && sla.shouldStart.time){
         slaInfo[slaPrefix+":"+"should-start"]="${"+sla.shouldStart.time+ "*"+sla.shouldStart.unit+"}";
       }
-      if (sla.shouldEnd){
+      if (sla.shouldEnd && sla.shouldEnd.time){
         slaInfo[slaPrefix+":"+"should-end"]="${"+sla.shouldEnd.time+ "*"+sla.shouldEnd.unit+"}";
       }
-      if (sla.maxDuration){
+      if (sla.maxDuration && sla.maxDuration.time){
         slaInfo[slaPrefix+":"+"max-duration"]="${"+sla.maxDuration.time+ "*"+sla.maxDuration.unit+"}";
       }
       if (sla.alertEvents){
@@ -225,20 +233,31 @@ var SLAMapper= Ember.Object.extend({
       if (sla.alertContact){
         slaInfo[slaPrefix+":"+"alert-contact"]=sla.alertContact;
       }
-
+      if(sla.notificationMessage){
+        slaInfo[slaPrefix+":"+"notification-msg"]=sla.notificationMessage;
+      }
+      if(sla.upstreamApps){
+        slaInfo[slaPrefix+":"+"upstream-apps"]=sla.upstreamApps;
+      }
     }
     return nodeObj;
   },
   handleImport(domain,infoJson,key){
     var sla=domain[key]=SlaInfo.create({});
     if (infoJson["nominal-time"] && infoJson["nominal-time"].__text){
-      sla.nominalTime=infoJson["nominal-time"].__text;
+      sla.nominalTime= this.extractDateField(infoJson["nominal-time"].__text);
     }
     if (infoJson["alert-contact"]&& infoJson["alert-contact"].__text){
       sla.alertContact=infoJson["alert-contact"].__text;
     }
     if (infoJson["alert-events"] && infoJson["alert-events"].__text){
       sla.alertEvents=infoJson["alert-events"].__text;
+    }
+    if (infoJson["notification-msg"] && infoJson["notification-msg"].__text){
+      sla.notificationMessage=infoJson["notification-msg"].__text;
+    }
+    if (infoJson["upstream-apps"] && infoJson["upstream-apps"].__text){
+      sla.upstreamApps=infoJson["upstream-apps"].__text;
     }
     this.processTimePeriods(sla,infoJson,"should-start","shouldStart");
     this.processTimePeriods(sla,infoJson,"should-end","shouldEnd");
@@ -254,6 +273,20 @@ var SLAMapper= Ember.Object.extend({
   parseSlaTime(str,key){
     var timePeriod= str.substring(str.indexOf("{")+1,str.indexOf("}"));
     return timePeriod.split("*");
-  }
+  },
+  extractDateField(value){
+    var dateField = {};
+    var date = new Date(value);
+    dateField.value = value;
+    if(isNaN(date.getTime())){
+      dateField.displayValue = value;
+      dateField.type = 'expr';
+    }else{
+      dateField.type = 'date';
+      var utcDate = new Date(date.getTime() + date.getTimezoneOffset()*60*1000);
+      dateField.displayValue = moment(utcDate).format("MM/DD/YYYY hh:mm A");
+    }
+    return dateField;
+  },
 });
 export {MappingMixin,ConfigurationMapper,PrepareMapper,SLAMapper};

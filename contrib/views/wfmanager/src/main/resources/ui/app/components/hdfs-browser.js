@@ -19,6 +19,8 @@ import Ember from 'ember';
 import HdfsViewerConfig from '../utils/hdfsviewer';
 export default Ember.Component.extend({
   config: HdfsViewerConfig.create(),
+  uploaderService : Ember.inject.service('hdfs-file-uploader'),
+  userInfo : Ember.inject.service('workspace-manager'),
   initialize:function(){
     var self=this;
     self.$("#filediv").modal("show");
@@ -26,8 +28,12 @@ export default Ember.Component.extend({
       self.sendAction('closeWorkflowSubmitConfigs');
       self.sendAction("closeFileBrowser");
     });
-
   }.on('didInsertElement'),
+  setUserData : function() {
+    this.set("homeDirectory", "/user/"+this.get("userInfo").getUserName());
+    this.set("selectedPath", "/user/"+this.get("userInfo").getUserName());
+    this.set("filePath", "/user/"+this.get("userInfo").getUserName());
+  }.on("init"),
   selectFileType: "all",//can be all/file/folder
   selectedPath:"",
   isDirectory:false,
@@ -52,14 +58,25 @@ export default Ember.Component.extend({
     this.set("alertDetails",data.details);
     this.set("alertMessage",data.message);
   },
+  isUpdated : function(){
+    if(this.get('showUploadSuccess')){
+      this.$('#success-alert').fadeOut(5000, ()=>{
+        this.set("showUploadSuccess", false);
+      });
+    }
+  }.on('didUpdate'),
   actions: {
-    viewerError() {
+    viewerError(error) {
+      if (error.responseJSON && error.responseJSON.message && error.responseJSON.message.includes("Permission")) {
+        this.showNotification({"type": "error", "message": "Permission denied"});
+      }
     },
     createFolder(){
       var self=this;
       var $elem=this.$('input[name="selectedPath"]');
       //$elem.val($elem.val()+"/");
-
+      var folderHint="<enter folder here>";
+      this.set("selectedPath",this.get("selectedPath")+"/"+folderHint);
       setTimeout(function(){
         $elem[0].selectionStart = $elem[0].selectionEnd = self.get("selectedPath").length-folderHint.length;
       },10);
@@ -69,6 +86,7 @@ export default Ember.Component.extend({
     },
     viewerSelectedPath(data) {
       this.set("selectedPath",data.path);
+      this.set("filePath",data.path);
       this.set("isDirectory",data.isDirectory);
       this.set("alertMessage",null);
     },
@@ -92,6 +110,9 @@ export default Ember.Component.extend({
       this.set("uploadSelected",false);
     },
     uploadSuccess(e){
+      this.get('uploaderService').trigger('uploadSuccess');
+      this.set('uploadSelected', false);
+      this.set('showUploadSuccess', true);
     },
     uploadFailure(textStatus,errorThrown){
       this.showNotification({

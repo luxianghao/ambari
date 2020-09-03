@@ -78,7 +78,16 @@
       </service>
       <service-check>false</service-check>
     </group>
-    
+
+    <group xsi:type="cluster" name="HBASE" title="Update HBase Configuration">
+      <skippable>true</skippable>
+      <execute-stage service="HBASE" component="HBASE_MASTER" title="Update HBase Configuration">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.HBaseEnvMaxDirectMemorySizeAction">
+          <summary>Update HBase Env Configuration</summary>
+        </task>
+      </execute-stage>
+    </group>
+
     <group name="SERVICE_CHECK_1" title="Post-Master Service Checks" xsi:type="service-check">
       <priority>
         <service>HDFS</service>
@@ -107,6 +116,16 @@
         <percent>20</percent>
         <message>Please run additional tests</message>
       </batch>
+    </group>
+
+    <!-- This group will be ignored because it is an invalid syntax. It is not a cluster type but contains an execute-stage -->
+    <group name="HBASE" title="Update HBase Configuration">
+      <skippable>true</skippable>
+      <execute-stage service="HBASE" component="HBASE_MASTER" title="Update HBase Configuration">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.HBaseEnvMaxDirectMemorySizeAction">
+          <summary>Update HBase Env Configuration</summary>
+        </task>
+      </execute-stage>
     </group>
     
     <group name="SERVICE_CHECK_2" title="Post-Slave Service Checks" xsi:type="service-check">
@@ -151,12 +170,14 @@
             <message>This is a manual task with a placeholder of {{foo/bar}}</message>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
         <post-upgrade>
           <task xsi:type="configure" id="hdp_2_2_0_zk_post_upgrade"/>
         </post-upgrade>
+        <post-downgrade copy-upgrade="true" />
       </component>
     </service>
     <service name="HDFS">
@@ -171,6 +192,7 @@
             <message>Update your database</message>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade>
           <task xsi:type="restart-task" />
         </upgrade>
@@ -180,6 +202,7 @@
             <function>list</function>
           </task>
         </post-upgrade>
+        <post-downgrade copy-upgrade="true" />
       </component>
       <component name="DATANODE">
         <pre-downgrade />
@@ -201,6 +224,7 @@
             <function>list</function>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade />
       </component>
       <component name="NODEMANAGER">
@@ -210,6 +234,7 @@
             <function>list</function>
           </task>
         </pre-upgrade>
+        <pre-downgrade copy-upgrade="true" />
         <upgrade />
       </component>
     </service>

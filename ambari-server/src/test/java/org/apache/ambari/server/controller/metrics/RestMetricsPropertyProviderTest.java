@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,12 +25,17 @@ import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.replay;
 
 import java.lang.reflect.Field;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.AmbariServer;
@@ -49,6 +54,8 @@ import org.apache.ambari.server.controller.utilities.StreamProvider;
 import org.apache.ambari.server.events.publishers.AmbariEventPublisher;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
+import org.apache.ambari.server.orm.dao.StackDAO;
+import org.apache.ambari.server.orm.entities.StackEntity;
 import org.apache.ambari.server.security.TestAuthenticationFactory;
 import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.state.Cluster;
@@ -61,6 +68,7 @@ import org.apache.ambari.server.state.stack.MetricDefinition;
 import org.apache.ambari.server.utils.SynchronousThreadPoolExecutor;
 import org.easymock.EasyMock;
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -79,15 +87,17 @@ public class RestMetricsPropertyProviderTest {
   protected static final String HOST_COMPONENT_HOST_NAME_PROPERTY_ID = PropertyHelper.getPropertyId("HostRoles", "host_name");
   protected static final String HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID = PropertyHelper.getPropertyId("HostRoles", "component_name");
   protected static final String HOST_COMPONENT_STATE_PROPERTY_ID = PropertyHelper.getPropertyId("HostRoles", "state");
-  protected static final Map<String, String> metricsProperties = new HashMap<String, String>();
-  protected static final Map<String, Metric> componentMetrics = new HashMap<String, Metric>();
+  protected static final Map<String, String> metricsProperties = new HashMap<>();
+  protected static final Map<String, Metric> componentMetrics = new HashMap<>();
   private static final String CLUSTER_NAME_PROPERTY_ID = PropertyHelper.getPropertyId("HostRoles", "cluster_name");
   private static final String DEFAULT_STORM_UI_PORT = "8745";
   public static final int NUMBER_OF_RESOURCES = 400;
+  private static final int METRICS_SERVICE_TIMEOUT = 10;
   private static Injector injector;
   private static Clusters clusters;
   private static Cluster c1;
   private static AmbariManagementController amc;
+  private static MetricsRetrievalService metricsRetrievalService;
 
   {
     metricsProperties.put("default_port", DEFAULT_STORM_UI_PORT);
@@ -111,8 +121,20 @@ public class RestMetricsPropertyProviderTest {
     injector = Guice.createInjector(new InMemoryDefaultTestModule());
     injector.getInstance(GuiceJpaInitializer.class);
     clusters = injector.getInstance(Clusters.class);
+    StackDAO stackDAO = injector.getInstance(StackDAO.class);
+
+
+    StackEntity stackEntity = new StackEntity();
+    stackEntity.setStackName("HDP");
+    stackEntity.setStackVersion("2.1.1");
+    stackDAO.create(stackEntity);
+
+
     clusters.addCluster("c1", new StackId("HDP-2.1.1"));
     c1 = clusters.getCluster("c1");
+
+
+
 
     // disable request TTL for these tests
     Configuration configuration = injector.getInstance(Configuration.class);
@@ -121,10 +143,11 @@ public class RestMetricsPropertyProviderTest {
 
     JMXPropertyProvider.init(configuration);
 
-    MetricsRetrievalService metricsRetrievalService = injector.getInstance(
+    metricsRetrievalService = injector.getInstance(
         MetricsRetrievalService.class);
 
-    metricsRetrievalService.start();
+    metricsRetrievalService.startAsync();
+    metricsRetrievalService.awaitRunning(METRICS_SERVICE_TIMEOUT, TimeUnit.SECONDS);
     metricsRetrievalService.setThreadPoolExecutor(new SynchronousThreadPoolExecutor());
 
     // Setting up Mocks for Controller, Clusters etc, queried as part of user's Role context
@@ -141,9 +164,18 @@ public class RestMetricsPropertyProviderTest {
         Collections.singletonMap("tag", "version1"))).anyTimes();
     expect(amc.getConfigHelper()).andReturn(configHelperMock).anyTimes();
     expect(configHelperMock.getEffectiveConfigProperties(eq(c1),
-        EasyMock.<Map<String, Map<String, String>>>anyObject())).andReturn(Collections.singletonMap("storm-site",
+        EasyMock.anyObject())).andReturn(Collections.singletonMap("storm-site",
         Collections.singletonMap("ui.port", DEFAULT_STORM_UI_PORT))).anyTimes();
     replay(amc, configHelperMock);
+  }
+
+  @AfterClass
+  public static void after() throws AmbariException, SQLException, TimeoutException {
+    if (metricsRetrievalService != null && metricsRetrievalService.isRunning()) {
+      metricsRetrievalService.stopAsync();
+      metricsRetrievalService.awaitTerminated(METRICS_SERVICE_TIMEOUT, TimeUnit.SECONDS);
+    }
+    H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
   }
 
   private RestMetricsPropertyProvider createRestMetricsPropertyProvider(MetricDefinition metricDefinition,
@@ -235,7 +267,7 @@ public class RestMetricsPropertyProviderTest {
     replay(metricDefinition);
 
     Map<String, PropertyInfo> metrics = StackDefinedPropertyProvider.getPropertyInfo(metricDefinition);
-    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<String, Map<String, PropertyInfo>>();
+    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<>();
     componentMetrics.put(WRAPPED_METRICS_KEY, metrics);
     TestStreamProvider streamProvider = new TestStreamProvider();
     TestMetricsHostProvider metricsHostProvider = new TestMetricsHostProvider();
@@ -247,7 +279,7 @@ public class RestMetricsPropertyProviderTest {
     Map<String, String> customMetricsProperties = new HashMap<>(metricsProperties);
     customMetricsProperties.put("port_property_name", "wrong_property");
     String resolvedPort = restMetricsPropertyProvider.resolvePort(c1, "domu-12-31-39-0e-34-e1.compute-1.internal",
-        "STORM_REST_API", customMetricsProperties);
+        "STORM_REST_API", customMetricsProperties, "http");
     Assert.assertEquals(DEFAULT_STORM_UI_PORT, resolvedPort);
 
     // a port property exists (8745). Should return it, not a default_port (8746)
@@ -255,7 +287,7 @@ public class RestMetricsPropertyProviderTest {
     // custom default
     customMetricsProperties.put("default_port", "8746");
     resolvedPort = restMetricsPropertyProvider.resolvePort(c1, "domu-12-31-39-0e-34-e1.compute-1.internal",
-        "STORM_REST_API", customMetricsProperties);
+        "STORM_REST_API", customMetricsProperties, "http");
     Assert.assertEquals(DEFAULT_STORM_UI_PORT, resolvedPort);
 
   }
@@ -268,7 +300,7 @@ public class RestMetricsPropertyProviderTest {
     replay(metricDefinition);
 
     Map<String, PropertyInfo> metrics = StackDefinedPropertyProvider.getPropertyInfo(metricDefinition);
-    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<String, Map<String, PropertyInfo>>();
+    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<>();
     componentMetrics.put(WRAPPED_METRICS_KEY, metrics);
     TestStreamProvider streamProvider = new TestStreamProvider();
     TestMetricsHostProvider metricsHostProvider = new TestMetricsHostProvider();
@@ -284,7 +316,7 @@ public class RestMetricsPropertyProviderTest {
     resource.setProperty(HOST_COMPONENT_STATE_PROPERTY_ID, "STARTED");
 
     // request with an empty set should get all supported properties
-    Request request = PropertyHelper.getReadRequest(Collections.<String>emptySet());
+    Request request = PropertyHelper.getReadRequest(Collections.emptySet());
     Assert.assertEquals(1, restMetricsPropertyProvider.populateResources(Collections.singleton(resource), request, null).size());
     Assert.assertNull(resource.getPropertyValue(PropertyHelper.getPropertyId("metrics/api/cluster/summary", "wrong.metric")));
 
@@ -306,7 +338,7 @@ public class RestMetricsPropertyProviderTest {
     expect(metricDefinition.getProperties()).andReturn(metricsProperties);
     replay(metricDefinition);
     Map<String, PropertyInfo> metrics = StackDefinedPropertyProvider.getPropertyInfo(metricDefinition);
-    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<String, Map<String, PropertyInfo>>();
+    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<>();
     componentMetrics.put(WRAPPED_METRICS_KEY, metrics);
     TestStreamProvider streamProvider = new TestStreamProvider();
     TestMetricsHostProvider metricsHostProvider = new TestMetricsHostProvider();
@@ -322,7 +354,7 @@ public class RestMetricsPropertyProviderTest {
     resource.setProperty(HOST_COMPONENT_STATE_PROPERTY_ID, "STARTED");
 
     // request with an empty set should get all supported properties
-    Request request = PropertyHelper.getReadRequest(Collections.<String>emptySet());
+    Request request = PropertyHelper.getReadRequest(Collections.emptySet());
 
     Assert.assertEquals(1, restMetricsPropertyProvider.populateResources(Collections.singleton(resource), request, null).size());
 
@@ -337,7 +369,7 @@ public class RestMetricsPropertyProviderTest {
     expect(metricDefinition.getProperties()).andReturn(metricsProperties);
     replay(metricDefinition);
     Map<String, PropertyInfo> metrics = StackDefinedPropertyProvider.getPropertyInfo(metricDefinition);
-    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<String, Map<String, PropertyInfo>>();
+    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<>();
     componentMetrics.put(WRAPPED_METRICS_KEY, metrics);
     TestStreamProvider streamProvider = new TestStreamProvider();
     TestMetricsHostProvider metricsHostProvider = new TestMetricsHostProvider();
@@ -354,7 +386,7 @@ public class RestMetricsPropertyProviderTest {
 
     // request with an empty set should get all supported properties
     // only ask for one property
-    Map<String, TemporalInfo> temporalInfoMap = new HashMap<String, TemporalInfo>();
+    Map<String, TemporalInfo> temporalInfoMap = new HashMap<>();
     Request request = PropertyHelper.getReadRequest(Collections.singleton("metrics/api/cluster"), temporalInfoMap);
 
     Assert.assertEquals(1, restMetricsPropertyProvider.populateResources(Collections.singleton(resource), request, null).size());
@@ -372,7 +404,7 @@ public class RestMetricsPropertyProviderTest {
     expect(metricDefinition.getProperties()).andReturn(metricsProperties);
     replay(metricDefinition);
     Map<String, PropertyInfo> metrics = StackDefinedPropertyProvider.getPropertyInfo(metricDefinition);
-    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<String, Map<String, PropertyInfo>>();
+    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<>();
     componentMetrics.put(WRAPPED_METRICS_KEY, metrics);
     TestStreamProvider streamProvider = new TestStreamProvider();
     TestMetricsHostProvider metricsHostProvider = new TestMetricsHostProvider();
@@ -388,7 +420,7 @@ public class RestMetricsPropertyProviderTest {
     resource.setProperty(HOST_COMPONENT_STATE_PROPERTY_ID, "INSTALLED");
 
     // request with an empty set should get all supported properties
-    Request request = PropertyHelper.getReadRequest(Collections.<String>emptySet());
+    Request request = PropertyHelper.getReadRequest(Collections.emptySet());
 
     Assert.assertEquals(1, restMetricsPropertyProvider.populateResources(Collections.singleton(resource), request, null).size());
 
@@ -403,12 +435,12 @@ public class RestMetricsPropertyProviderTest {
     expect(metricDefinition.getProperties()).andReturn(metricsProperties);
     replay(metricDefinition);
     Map<String, PropertyInfo> metrics = StackDefinedPropertyProvider.getPropertyInfo(metricDefinition);
-    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<String, Map<String, PropertyInfo>>();
+    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<>();
     componentMetrics.put(WRAPPED_METRICS_KEY, metrics);
     TestStreamProvider streamProvider = new TestStreamProvider();
     TestMetricsHostProvider metricsHostProvider = new TestMetricsHostProvider();
 
-    Set<Resource> resources = new HashSet<Resource>();
+    Set<Resource> resources = new HashSet<>();
 
     RestMetricsPropertyProvider restMetricsPropertyProvider = createRestMetricsPropertyProvider(metricDefinition, componentMetrics, streamProvider,
         metricsHostProvider);
@@ -427,7 +459,7 @@ public class RestMetricsPropertyProviderTest {
     }
 
     // request with an empty set should get all supported properties
-    Request request = PropertyHelper.getReadRequest(Collections.<String>emptySet());
+    Request request = PropertyHelper.getReadRequest(Collections.emptySet());
 
     Set<Resource> resourceSet = restMetricsPropertyProvider.populateResources(resources, request, null);
 
@@ -448,40 +480,45 @@ public class RestMetricsPropertyProviderTest {
     expect(metricDefinition.getProperties()).andReturn(metricsProperties);
     replay(metricDefinition);
     Map<String, PropertyInfo> metrics = StackDefinedPropertyProvider.getPropertyInfo(metricDefinition);
-    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<String, Map<String, PropertyInfo>>();
+    HashMap<String, Map<String, PropertyInfo>> componentMetrics = new HashMap<>();
     componentMetrics.put(WRAPPED_METRICS_KEY, metrics);
     TestStreamProvider streamProvider = new TestStreamProvider(100L);
     TestMetricsHostProvider metricsHostProvider = new TestMetricsHostProvider();
 
-    Set<Resource> resources = new HashSet<Resource>();
+    Set<Resource> resources = new HashSet<>();
 
     RestMetricsPropertyProvider restMetricsPropertyProvider = createRestMetricsPropertyProvider(metricDefinition, componentMetrics, streamProvider,
         metricsHostProvider);
 
-    // set the provider timeout to 50 millis
-    restMetricsPropertyProvider.setPopulateTimeout(50L);
+    // set the provider timeout to -1 millis to guarantee timeout
+    restMetricsPropertyProvider.setPopulateTimeout(-1L);
+    try {
+      Resource resource = new ResourceImpl(Resource.Type.HostComponent);
 
-    Resource resource = new ResourceImpl(Resource.Type.HostComponent);
+      resource.setProperty("HostRoles/cluster_name", "c1");
+      resource.setProperty(HOST_COMPONENT_HOST_NAME_PROPERTY_ID, "domu-12-31-39-0e-34-e1.compute-1.internal");
+      resource.setProperty(HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID, "STORM_REST_API");
 
-    resource.setProperty("HostRoles/cluster_name", "c1");
-    resource.setProperty(HOST_COMPONENT_HOST_NAME_PROPERTY_ID, "domu-12-31-39-0e-34-e1.compute-1.internal");
-    resource.setProperty(HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID, "STORM_REST_API");
+      resources.add(resource);
 
-    resources.add(resource);
+      // request with an empty set should get all supported properties
+      Request request = PropertyHelper.getReadRequest(Collections.emptySet());
 
-    // request with an empty set should get all supported properties
-    Request request = PropertyHelper.getReadRequest(Collections.<String>emptySet());
+      Set<Resource> resourceSet = restMetricsPropertyProvider.populateResources(resources, request, null);
 
-    Set<Resource> resourceSet = restMetricsPropertyProvider.populateResources(resources, request, null);
+      // make sure that the thread running the stream provider has completed
+      Thread.sleep(150L);
 
-    // make sure that the thread running the stream provider has completed
-    Thread.sleep(150L);
+      Assert.assertEquals(0, resourceSet.size());
 
-    Assert.assertEquals(0, resourceSet.size());
-
-    // assert that properties never get set on the resource
-    Assert.assertNull(resource.getPropertyValue("metrics/api/cluster/summary/tasks.total"));
-    Assert.assertNull(resource.getPropertyValue("metrics/api/cluster/summary/supervisors"));
+      // assert that properties never get set on the resource
+      Assert.assertNull(resource.getPropertyValue("metrics/api/cluster/summary/tasks.total"));
+      Assert.assertNull(resource.getPropertyValue("metrics/api/cluster/summary/supervisors"));
+    } finally {
+      // reset default value
+      restMetricsPropertyProvider.setPopulateTimeout(injector.getInstance(Configuration.class)
+          .getPropertyProvidersCompletionServiceTimeout());
+    }
   }
 
   public static class TestMetricsHostProvider implements MetricHostProvider {
@@ -508,6 +545,11 @@ public class RestMetricsPropertyProviderTest {
 
     @Override
     public boolean isCollectorComponentLive(String clusterName, MetricsService service) throws SystemException {
+      return false;
+    }
+
+    @Override
+    public boolean isCollectorHostExternal(String clusterName) {
       return false;
     }
   }

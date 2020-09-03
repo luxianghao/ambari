@@ -23,27 +23,40 @@ App.MainAdminServiceAutoStartView = Em.View.extend({
 
   /**
    * @type {boolean}
+   */
+  isSaveDisabled: Em.computed.or('!controller.isModified', 'controller.saveInProgress'),
+
+  /**
+   * @type {boolean}
    * @default false
    */
-  isLoaded: false,
-
   isDisabled: false,
 
-  didInsertElement: function () {
-    var self = this;
+  /**
+   * @type {boolean}
+   */
+  skipCyclicCall: false,
 
-    this.set('isDisabled', !App.isAuthorized('SERVICE.START_STOP, CLUSTER.MODIFY_CONFIGS'));
-    this.get('controller').load().then(function() {
-      self.set('isLoaded', true);
-      self.initSwitcher();
-    });
+  /**
+   * @type {boolean}
+   */
+  allComponentsChecked: false,
+
+  /**
+   * @type {?object}
+   */
+  switcher: null,
+
+  didInsertElement: function () {
+    this.set('isDisabled', !App.isAuthorized('CLUSTER.MANAGE_AUTO_START'));
+    this.get('controller').load();
   },
 
   onValueChange: function () {
     if (this.get('switcher')) {
-      this.get('switcher').bootstrapSwitch('state', this.get('controller.servicesAutoStart'));
+      this.get('switcher').bootstrapSwitch('state', this.get('controller.isGeneralRecoveryEnabled'));
     }
-  }.observes('controller.servicesAutoStart'),
+  }.observes('controller.isGeneralRecoveryEnabled'),
 
   /**
    * Init switcher plugin.
@@ -51,22 +64,41 @@ App.MainAdminServiceAutoStartView = Em.View.extend({
    * @method initSwitcher
    */
   initSwitcher: function () {
-    var self = this;
-    if (this.$) {
-      this.set('switcher', this.$("input:eq(0)").bootstrapSwitch({
-        state: self.get('controller.servicesAutoStart'),
+    const self = this.get('parentView');
+    if (self.get('controller.isLoaded')) {
+      self.set('switcher', $(".general-auto-start>input").bootstrapSwitch({
+        state: self.get('controller.isGeneralRecoveryEnabled'),
         onText: Em.I18n.t('common.enabled'),
         offText: Em.I18n.t('common.disabled'),
         offColor: 'default',
         onColor: 'success',
-        disabled: this.get('isDisabled'),
+        disabled: self.get('isDisabled'),
         handleWidth: Math.max(Em.I18n.t('common.enabled').length, Em.I18n.t('common.disabled').length) * 8,
-        onSwitchChange: function (event, state) {
-          self.set('controller.servicesAutoStart', state);
-          self.get('controller').valueChanged();
+        onSwitchChange: (event, state) => {
+          self.set('controller.isGeneralRecoveryEnabled', state);
         }
       }));
     }
-  }
+  },
+
+  observeAllComponentsChecked: function() {
+    if (this.get('skipCyclicCall')) {
+      this.set('skipCyclicCall', false);
+    } else {
+      this.get('controller.componentsConfigsGrouped').setEach('recoveryEnabled', this.get('allComponentsChecked'));
+    }
+  }.observes('allComponentsChecked'),
+
+  observesEachComponentChecked: function() {
+    const components = this.get('controller.componentsConfigsGrouped');
+    if (this.get('allComponentsChecked') && components.someProperty('recoveryEnabled', false)) {
+      this.set('skipCyclicCall', true);
+      this.set('allComponentsChecked', false);
+    } else if (!this.get('allComponentsChecked') && components.everyProperty('recoveryEnabled', true)) {
+      this.set('skipCyclicCall', true);
+      this.set('allComponentsChecked', true);
+    }
+  }.observes('controller.componentsConfigsGrouped.@each.recoveryEnabled')
+
 });
 

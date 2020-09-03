@@ -106,6 +106,9 @@ App.Queue = DS.Model.extend({
           }.bind(this));
           this.notifyPropertyChange('labels');
       }
+      else {
+        this.get('labels').clear();
+      }
     }
 
     return this.get('_accessAllLabels');
@@ -252,6 +255,11 @@ App.Queue = DS.Model.extend({
   minimum_user_limit_percent: DS.attr('number', { defaultValue: 100 }),
   maximum_applications: DS.attr('number', { defaultValue: null }),
   maximum_am_resource_percent: DS.attr('number', { defaultValue: null }),
+  priority: DS.attr('number', {defaultValue: 0}),
+  maximum_allocation_mb:DS.attr('number'),
+  maximum_allocation_vcores:DS.attr('number'),
+  maximum_application_lifetime:DS.attr('number'),
+  default_application_lifetime:DS.attr('number'),
 
   disable_preemption: DS.attr('string', {defaultValue: ''}),
   isPreemptionInherited: DS.attr('boolean', {defaultValue: true}),
@@ -279,6 +287,16 @@ App.Queue = DS.Model.extend({
 
     return this.get('_overCapacity') || !Em.isEmpty(this.get('labels').filterBy('overCapacity'));
   }.property('_overCapacity','labels.@each.overCapacity'),
+
+  childrenQueues: function() {
+    var queuesArray = this.get('queuesArray');
+    return this.store.all('queue')
+      .filterBy('depth', this.get('depth') + 1)
+      .filterBy('parentPath', this.get('path'))
+      .filter(function(queue) {
+        return queuesArray.contains(queue.get('name'));
+      });
+  }.property('queues'),
 
   isInvalidMaxCapacity: false,
   isInvalidLabelMaxCapacity: false,
@@ -324,5 +342,15 @@ App.Queue = DS.Model.extend({
 
   isLeafQ: function() {
     return this.get('queues') === null;
-  }.property('queues')
+  }.property('queues'),
+
+  /**
+   * To reset the maximum_application_lifetime and default_application_lifetime if current Q is no longer Leaf Queue 
+   */
+  watchChangeLeafQueue: function () {
+    if (this.get('isLeafQ') == false) {
+      this.set('maximum_application_lifetime', null);
+      this.set('default_application_lifetime', null);
+    }
+  }.observes('isLeafQ')
 });

@@ -20,7 +20,7 @@ App = require('app');
 require('ember');
 require('models/host_component');
 require('views/common/modal_popup');
-require('mixins/common/userPref');
+require('mixins/common/persist');
 require('controllers/application');
 require('controllers/global/background_operations_controller');
 require('controllers/global/cluster_controller');
@@ -28,7 +28,7 @@ require('controllers/main/service/reassign_controller');
 require('controllers/main/service/item');
 var batchUtils = require('utils/batch_scheduled_requests');
 var testHelpers = require('test/helpers');
-var stackSerivceModel = {
+var stackServiceModel = {
   'HDFS': Em.Object.create({
     serviceName: 'HDFS',
     requiredServices: ['ZOOKEEPER']
@@ -283,12 +283,12 @@ describe('App.MainServiceItemController', function () {
       mainServiceItemController.startStopPopup.restore();
     });
     it("start service", function () {
-      mainServiceItemController.startService({});
-      expect(mainServiceItemController.startStopPopup.calledWith({},App.HostComponentStatus.started)).to.equal(true);
+      mainServiceItemController.startService();
+      expect(mainServiceItemController.startStopPopup.calledWith(App.HostComponentStatus.started)).to.equal(true);
     });
     it("stop service", function () {
-      mainServiceItemController.stopService({});
-      expect(mainServiceItemController.startStopPopup.calledWith({},App.HostComponentStatus.stopped)).to.equal(true);
+      mainServiceItemController.stopService();
+      expect(mainServiceItemController.startStopPopup.calledWith(App.HostComponentStatus.stopped)).to.equal(true);
     });
   });
 
@@ -347,7 +347,7 @@ describe('App.MainServiceItemController', function () {
       });
       it(test.m, function () {
         if (!test.default) {
-          App.store.load(App.Service, test.content);
+          App.store.safeLoad(App.Service, test.content);
         }
         mainServiceItemController.runSmokeTest({}).onPrimary();
         expect(mainServiceItemController.runSmokeTestPrimary.calledOnce).to.equal(test.startSmoke);
@@ -356,27 +356,26 @@ describe('App.MainServiceItemController', function () {
   });
 
   describe("#startStopPopup", function () {
-    var el = document.createElement("BUTTON");
-    el.disabled = false;
-    var event = {
-      target: el
-    };
     var mainServiceItemController = App.MainServiceItemController.create({
       content: {
-        serviceName: "HDFS",
-        hostComponents: [ {
-          componentName: 'NAMENODE',
-          workStatus: 'INSTALLED'
-        }]
+        serviceName: 'HDFS',
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'NAMENODE',
+            workStatus: 'INSTALLED'
+          })
+        ]
       }
     });
     var mainServiceItemControllerHdfsStarted = App.MainServiceItemController.create({
       content: {
-        serviceName: "HDFS",
-        hostComponents: [ {
-          componentName: 'NAMENODE',
-          workStatus: 'STARTED'
-        }]
+        serviceName: 'HDFS',
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'NAMENODE',
+            workStatus: 'STARTED'
+          })
+        ]
       }
     });
     beforeEach(function () {
@@ -394,12 +393,12 @@ describe('App.MainServiceItemController', function () {
       Em.I18n.t.restore();
     });
     it("start start/stop service popup", function () {
-      mainServiceItemController.startStopPopup(event, "").onPrimary();
+      mainServiceItemController.startStopPopup("").onPrimary();
       expect(mainServiceItemController.startStopPopupPrimary.calledOnce).to.equal(true);
     });
 
     it ("should popup warning to check last checkpoint time if work status is STARTED", function() {
-      mainServiceItemControllerHdfsStarted.startStopPopup(event, "INSTALLED");
+      mainServiceItemControllerHdfsStarted.startStopPopup("INSTALLED");
       expect(mainServiceItemControllerHdfsStarted.checkNnLastCheckpointTime.calledOnce).to.equal(true);
     });
 
@@ -445,13 +444,13 @@ describe('App.MainServiceItemController', function () {
       });
 
       it ("should confirm stop if serviceHealth is INSTALLED", function() {
-        mainServiceItemController.startStopPopup(event, "INSTALLED");
+        mainServiceItemController.startStopPopup("INSTALLED");
         expect(Em.I18n.t.calledWith('services.service.stop.confirmMsg')).to.be.ok;
         expect(Em.I18n.t.calledWith('services.service.stop.confirmButton')).to.be.ok;
       });
 
       it ("should confirm start if serviceHealth is not INSTALLED", function() {
-        mainServiceItemController.startStopPopup(event, "");
+        mainServiceItemController.startStopPopup("");
         expect(Em.I18n.t.calledWith('services.service.start.confirmMsg')).to.be.ok;
         expect(Em.I18n.t.calledWith('services.service.start.confirmButton')).to.be.ok;
       });
@@ -459,7 +458,7 @@ describe('App.MainServiceItemController', function () {
       it ("should not display a dependent list if it is to start a service", function() {
         var _mainServiceItemController = App.MainServiceItemController.create(
             {content: {serviceName: "HDFS", passiveState:'OFF'}});
-        _mainServiceItemController.startStopPopup(event, "");
+        _mainServiceItemController.startStopPopup("");
         expect(Em.I18n.t.calledWith('services.service.stop.warningMsg.dependent.services')).to.not.be.ok;
       });
 
@@ -467,15 +466,17 @@ describe('App.MainServiceItemController', function () {
         beforeEach(function () {
           var _mainServiceItemController = App.MainServiceItemController.create(
             {content: {
-              serviceName: "HDFS",
+              serviceName: 'HDFS',
               passiveState:'OFF',
-              hostComponents: [{
-                componentName: 'NAMENODE',
-                workStatus: 'INSTALLED'
-              }]
+              hostComponents: [
+                Em.Object.create({
+                  componentName: 'NAMENODE',
+                  workStatus: 'INSTALLED'
+                })
+              ]
             }}
           );
-          _mainServiceItemController.startStopPopup(event, "INSTALLED");
+          _mainServiceItemController.startStopPopup("INSTALLED");
           this.dependencies = Em.I18n.t('services.service.stop.warningMsg.dependent.services').format("HDFS", "HBase,YARN");
           this.msg = Em.I18n.t('services.service.stop.warningMsg.turnOnMM').format("HDFS");
           this.fullMsg = _mainServiceItemController.addAdditionalWarningMessage("INSTALLED", this.msg, "HDFS");
@@ -497,7 +498,7 @@ describe('App.MainServiceItemController', function () {
         beforeEach(function () {
           var _mainServiceItemController = App.MainServiceItemController.create(
             {content: {serviceName: "HIVE", passiveState:'OFF'}});
-          _mainServiceItemController.startStopPopup(event, "INSTALLED");
+          _mainServiceItemController.startStopPopup("INSTALLED");
           this.dependencies = Em.I18n.t('services.service.stop.warningMsg.dependent.services').format("HIVE", "Spark");
           this.msg = Em.I18n.t('services.service.stop.warningMsg.turnOnMM').format("HIVE");
           this.fullMsg = _mainServiceItemController.addAdditionalWarningMessage("INSTALLED", this.msg, "HIVE");
@@ -521,11 +522,13 @@ describe('App.MainServiceItemController', function () {
     var temp = batchUtils.restartAllServiceHostComponents;
     var mainServiceItemController = App.MainServiceItemController.create({
       content: {
-        serviceName: "HDFS",
-        hostComponents: [{
-          componentName: 'NAMENODE',
-          workStatus: 'STARTED'
-        }]
+        serviceName: 'HDFS',
+        hostComponents: [
+          Em.Object.create({
+            componentName: 'NAMENODE',
+            workStatus: 'STARTED'
+          })
+        ]
       }
     });
     beforeEach(function () {
@@ -548,11 +551,13 @@ describe('App.MainServiceItemController', function () {
     it("start restartAllHostComponents for service", function () {
       var controller = App.MainServiceItemController.create({
         content: {
-          serviceName: "HDFS",
-          hostComponents: [{
-            componentName: 'NAMENODE',
-            workStatus: 'INSTALLED'
-          }]
+          serviceName: 'HDFS',
+          hostComponents: [
+            Em.Object.create({
+              componentName: 'NAMENODE',
+              workStatus: 'INSTALLED'
+            })
+          ]
         }
       });
       controller.restartAllHostComponents({}).onPrimary();
@@ -614,7 +619,7 @@ describe('App.MainServiceItemController', function () {
             }
           ]
         },
-        result: false
+        result: 0
       },
       {
         m: "NameNode has JMX data, the last checkpoint time is > 12 hours ago",
@@ -644,7 +649,7 @@ describe('App.MainServiceItemController', function () {
               }
             ]
           },
-        result: "c6401.ambari.apache.org"
+        result: 1
       },
       {
         m: "NameNode has no JMX data available",
@@ -673,7 +678,7 @@ describe('App.MainServiceItemController', function () {
             }
           ]
         },
-        result: null
+        result: 0
       },
       {
         m: "HA enabled, both active and standby NN has JMX data normally.",
@@ -719,7 +724,7 @@ describe('App.MainServiceItemController', function () {
             }
           ]
         },
-        result: false
+        result: 0
       },
       {
         m: "HA enabled, both NamoNodes are standby NN",
@@ -765,7 +770,7 @@ describe('App.MainServiceItemController', function () {
             }
           ]
         },
-        result: false
+        result: 0
       },
       {
         m: "HA enabled, active NN has no JMX data, use the standby's data",
@@ -810,10 +815,10 @@ describe('App.MainServiceItemController', function () {
             }
           ]
         },
-        result: false
+        result: 0
       },
       {
-        m: "HA enabled, both NamoNodes no JMX data",
+        m: "HA enabled, both NameNodes no JMX data",
         data:
         {"href" : "",
           "ServiceComponentInfo" : {
@@ -854,57 +859,98 @@ describe('App.MainServiceItemController', function () {
             }
           ]
         },
-        result: null
+        result: 0
       }
     ];
 
     beforeEach(function () {
       sinon.stub(App, 'dateTime').returns(1435790048000);
+      sinon.stub(App.HDFSService, 'find').returns([
+        Em.Object.create({
+          hostComponents: []
+        })
+      ]);
     });
 
     afterEach(function () {
       App.dateTime.restore();
+      App.HDFSService.find.restore();
     });
 
     tests.forEach(function (test) {
       it(test.m, function () {
         var mainServiceItemController = App.MainServiceItemController.create({isNNCheckpointTooOld: null});
-        mainServiceItemController.parseNnCheckPointTime(test.data);
-        expect(mainServiceItemController.get('isNNCheckpointTooOld')).to.equal(test.result);
+        mainServiceItemController.parseNnCheckPointTime(test.data, null, {});
+        expect(mainServiceItemController.get('nameNodesWithOldCheckpoints.length')).to.equal(test.result);
       });
     });
   });
+
 
   describe("#isStartDisabled", function () {
     var tests = [
       {
         content: {
-          healthStatus: 'red'
+          isStarted: true
         },
-        isPending: true,
-        disabled: true,
-        m: "disabled because of pending"
-      },
-      {
-        content: {
-          healthStatus: 'green'
-        },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            installedCount: 0
+          })
+        ],
         isPending: false,
         disabled: true,
-        m: "disabled because healthStatus is not red"
+        m: "disabled since service state is started and no component is stopped"
       },
       {
         content: {
-          healthStatus: 'red'
+          isStarted: true
         },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            installedCount: 0
+          }),
+          Em.Object.create({
+            installedCount: 2
+          })
+        ],
         isPending: false,
         disabled: false,
-        m: "enabled because healthStatus is red and pending is false"
-      }
+        m: "enabled although service state is started, 2 components are stopped"
+      },
+      {
+        content: {
+          isStarted: false
+        },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            installedCount: 0
+          }),
+          Em.Object.create({
+            installedCount: 0
+          })
+        ],
+        isPending: false,
+        disabled: false,
+        m: "enabled although all components are stopped service state is not started"
+      },
+      {
+        content: {
+          isStarted: true
+        },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            installedCount: 0
+          })
+        ],
+        isPending: true,
+        disabled: true,
+        m: "disabled since state is pending."
+      },
     ];
     tests.forEach(function (test) {
       it(test.m, function () {
-        var mainServiceItemController = App.MainServiceItemController.create({content: {healthStatus: test.content.healthStatus}, isPending: test.isPending});
+        var mainServiceItemController = App.MainServiceItemController.create({content: test.content, isPending: test.isPending, nonClientServiceComponents: test.nonClientServiceComponents});
         expect(mainServiceItemController.get('isStartDisabled')).to.equal(test.disabled);
       });
     });
@@ -914,32 +960,60 @@ describe('App.MainServiceItemController', function () {
     var tests = [
       {
         content: {
-          healthStatus: 'red'
+          isStarted: false
         },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            startedCount: 0
+          })
+        ],
         isPending: true,
         disabled: true,
         m: "disabled because of pending"
       },
       {
         content: {
-          healthStatus: 'green'
+          isStarted: true
         },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            startedCount: 0
+          })
+        ],
         isPending: false,
         disabled: false,
-        m: "enabled because healthStatus is green and pending is false"
+        m: "enabled because healthStatus is green although no components are started"
       },
       {
         content: {
-          healthStatus: 'red'
+          isStarted: false
         },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            startedCount: 1
+          })
+        ],
+        isPending: false,
+        disabled: false,
+        m: "enabled because atleast 1 component is started."
+      },
+      {
+        content: {
+          isStarted: false
+        },
+        nonClientServiceComponents: [
+          Em.Object.create({
+            startedCount: 0
+          })
+        ],
         isPending: false,
         disabled: true,
-        m: "disabled because healthStatus is not green"
+        m: "disabled because healthStatus is not green and no started components"
       }
     ];
     tests.forEach(function (test) {
       it(test.m, function () {
-        var mainServiceItemController = App.MainServiceItemController.create({content: test.content, isPending: test.isPending});
+        var mainServiceItemController = App.MainServiceItemController.create({content: test.content, isPending: test.isPending, nonClientServiceComponents: test.nonClientServiceComponents});
         expect(mainServiceItemController.get('isStopDisabled')).to.equal(test.disabled);
       });
     });
@@ -1214,7 +1288,7 @@ describe('App.MainServiceItemController', function () {
       expect(mainServiceItemController.downloadClientConfigsCall.calledWith({
         serviceName: 'S1',
         componentName: 'C1',
-        displayName: 'd1'
+        resourceType: mainServiceItemController.resourceTypeEnum.SERVICE_COMPONENT
       })).to.be.true;
     });
     it('should launch $.fileDownload method, event passed', function () {
@@ -1226,7 +1300,43 @@ describe('App.MainServiceItemController', function () {
       expect(mainServiceItemController.downloadClientConfigsCall.calledWith({
         serviceName: 'S1',
         componentName: 'name1',
-        displayName: 'label1'
+        resourceType: mainServiceItemController.resourceTypeEnum.SERVICE_COMPONENT
+      })).to.be.true;
+    });
+  });
+
+  describe('#downloadAllClientConfigs()', function () {
+
+    var mainServiceItemController = App.MainServiceItemController.create({
+      content: {
+        clientComponents: [
+          Em.Object.create({
+            totalCount: 1,
+            componentName: 'C1',
+            displayName: 'd1'
+          }),
+          Em.Object.create({
+            totalCount: 1,
+            componentName: 'C2',
+            displayName: 'd2'
+          })
+        ],
+        serviceName: 'S1'
+      }
+    });
+
+    beforeEach(function () {
+      sinon.stub(mainServiceItemController, 'downloadClientConfigsCall', Em.K);
+    });
+    afterEach(function () {
+      mainServiceItemController.downloadClientConfigsCall.restore();
+    });
+
+    it('should call downloadClientConfigsCall method for all clients', function () {
+      mainServiceItemController.downloadAllClientConfigs();
+      expect(mainServiceItemController.downloadClientConfigsCall.calledWith({
+        serviceName: 'S1',
+        resourceType: mainServiceItemController.resourceTypeEnum.SERVICE
       })).to.be.true;
     });
   });
@@ -1316,7 +1426,7 @@ describe('App.MainServiceItemController', function () {
     beforeEach(function() {
       mainServiceItemController = App.MainServiceItemController.create({});
       sinon.stub(App.StackService, 'find', function (serviceName) {
-        return stackSerivceModel[serviceName];
+        return stackServiceModel[serviceName];
       });
       this.mockService = sinon.stub(App.Service, 'find');
     });
@@ -1377,9 +1487,9 @@ describe('App.MainServiceItemController', function () {
       this.mockService = sinon.stub(App.Service, 'find');
       this.mockRangerPluginEnabled = sinon.stub(mainServiceItemController, 'isRangerPluginEnabled');
       sinon.stub(App, 'showConfirmationPopup');
-      sinon.stub(App.ModalPopup, 'show');
       sinon.stub(App.format, 'role', function(name) {return name});
       sinon.stub(mainServiceItemController, 'kerberosDeleteWarning');
+      sinon.stub(mainServiceItemController, 'showLastWarning');
 
       mainServiceItemController.reopen({
         interDependentServices: []
@@ -1392,7 +1502,6 @@ describe('App.MainServiceItemController', function () {
       this.mockService.restore();
       mainServiceItemController.dependentServicesWarning.restore();
       App.showConfirmationPopup.restore();
-      App.ModalPopup.show.restore();
       App.format.role.restore();
       mainServiceItemController.kerberosDeleteWarning.restore();
       this.mockRangerPluginEnabled.restore();
@@ -1439,7 +1548,7 @@ describe('App.MainServiceItemController', function () {
       this.allowUninstallServices.returns(true);
       this.mockService.returns([Em.Object.create({workStatus: App.Service.statesMap.stopped}), Em.Object.create({workStatus: App.Service.statesMap.stopped})]);
       mainServiceItemController.deleteService('S1');
-      expect(App.showConfirmationPopup.calledOnce).to.be.true;
+      expect(mainServiceItemController.showLastWarning.calledOnce).to.be.true;
     });
 
     it("service has not dependent services, and install failed", function() {
@@ -1447,7 +1556,7 @@ describe('App.MainServiceItemController', function () {
       this.allowUninstallServices.returns(true);
       this.mockService.returns([Em.Object.create({workStatus: App.Service.statesMap.install_failed}), Em.Object.create({workStatus: App.Service.statesMap.install_failed})]);
       mainServiceItemController.deleteService('S1');
-      expect(App.showConfirmationPopup.calledOnce).to.be.true;
+      expect(mainServiceItemController.showLastWarning.calledOnce).to.be.true;
     });
 
     it("service has not dependent services, and not stopped", function() {
@@ -1468,12 +1577,10 @@ describe('App.MainServiceItemController', function () {
 
     beforeEach(function() {
       mainServiceItemController = App.MainServiceItemController.create({});
-      sinon.spy(App.ModalPopup, 'show');
       sinon.stub(App.router, 'transitionTo');
     });
 
     afterEach(function() {
-      App.ModalPopup.show.restore();
       App.router.transitionTo.restore();
     });
 
@@ -1490,11 +1597,9 @@ describe('App.MainServiceItemController', function () {
 
     beforeEach(function() {
       mainServiceItemController = App.MainServiceItemController.create({});
-      sinon.stub(App.ModalPopup, 'show');
       sinon.stub(App.format, 'role', function(name) {return name});
     });
     afterEach(function() {
-      App.ModalPopup.show.restore();
       App.format.role.restore();
     });
 
@@ -1508,11 +1613,8 @@ describe('App.MainServiceItemController', function () {
     var mainServiceItemController;
 
     beforeEach(function () {
-      mainServiceItemController = App.MainServiceItemController.create();
-    });
-
-    afterEach(function () {
       App.ModalPopup.show.restore();
+      mainServiceItemController = App.MainServiceItemController.create();
     });
 
     describe('confirmation popup', function () {
@@ -1607,7 +1709,7 @@ describe('App.MainServiceItemController', function () {
 
     beforeEach(function() {
       sinon.stub(App.StackService, 'find', function (serviceName) {
-        return stackSerivceModel[serviceName];
+        return stackServiceModel[serviceName];
       });
       mainServiceItemController = App.MainServiceItemController.create({
         content: {}
@@ -1671,27 +1773,27 @@ describe('App.MainServiceItemController', function () {
 
     beforeEach(function() {
       mainServiceItemController = App.MainServiceItemController.create({});
-      sinon.stub(mainServiceItemController, 'loadConfigRecommendations', Em.K);
+      sinon.stub(mainServiceItemController, 'saveConfigs', Em.K);
       sinon.stub(mainServiceItemController, 'deleteServiceCall', Em.K);
       mainServiceItemController.reopen({
         interDependentServices: []
       })
     });
     afterEach(function() {
-      mainServiceItemController.loadConfigRecommendations.restore();
+      mainServiceItemController.saveConfigs.restore();
       mainServiceItemController.deleteServiceCall.restore();
     });
 
-    it("window.location.reload should be called", function() {
+    it("saveConfigs should be called", function() {
       mainServiceItemController.deleteServiceCallSuccessCallback([], null, {});
       expect(mainServiceItemController.deleteServiceCall.called).to.be.false;
-      expect(mainServiceItemController.loadConfigRecommendations.calledOnce).to.be.true;
+      expect(mainServiceItemController.saveConfigs.calledOnce).to.be.true;
     });
 
     it("deleteServiceCall should be called", function() {
       mainServiceItemController.deleteServiceCallSuccessCallback([], null, {servicesToDeleteNext: true});
       expect(mainServiceItemController.deleteServiceCall.calledOnce).to.be.true;
-      expect(mainServiceItemController.loadConfigRecommendations.called).to.be.false;
+      expect(mainServiceItemController.saveConfigs.called).to.be.false;
     });
   });
 
@@ -1723,10 +1825,10 @@ describe('App.MainServiceItemController', function () {
       }
     ].forEach(function (test) {
         it(test.m, function () {
-          this.mockService.returns([Em.Object.create({
+          this.mockService.returns(Em.Object.create({
             serviceName: 'YARN',
             isRestartRequired: test.isRestartRequired
-          })]);
+          }));
           var confirmationPopup = mainServiceItemController.restartLLAP();
           confirmationPopup.onPrimary();
           expect(mainServiceItemController[test.toCall].calledOnce).to.be.true;
@@ -1765,6 +1867,54 @@ describe('App.MainServiceItemController', function () {
     });
   });
 
+  describe('#confirmServiceDeletion', function () {
+
+    var mainServiceItemController = App.MainServiceItemController.create({deleteServiceProgressPopup: null});
+
+    [
+      {
+        content: Em.Object.create({serviceName: 'DRUID'}),
+        stackServices: [
+          Em.Object.create({id: 'DRUID', displayName: 'Druid', serviceName: 'DRUID', requiredServices: []})
+        ],
+        m: 'No required services',
+        e: Em.I18n.t('services.service.delete.service.success.confirmation').format('Druid')
+      },
+      {
+        content: Em.Object.create({serviceName: 'MAPREDUCE2'}),
+        stackServices: [
+          Em.Object.create({id: 'MAPREDUCE2', serviceName: 'MAPREDUCE2', requiredServices: ['YARN'], displayName: 'MapReduce2'}),
+          Em.Object.create({id: 'YARN', serviceName: 'YARN', requiredServices: ['MAPREDUCE2'], displayName: 'YARN'}),
+        ],
+        m: 'One required service',
+        e: Em.I18n.t('services.service.delete.service.success.confirmation.plural').format('MapReduce2, YARN')
+      }
+    ].forEach(function(test) {
+      describe(test.m, function () {
+
+        beforeEach(function () {
+          sinon.stub(App.StackService, 'find', function (id) {
+            return arguments.length ? test.stackServices.findProperty('id', id) : test.stackServices;
+          });
+          sinon.spy(App, 'showAlertPopup');
+          mainServiceItemController.set('content', test.content);
+          mainServiceItemController.confirmServiceDeletion();
+        });
+
+        afterEach(function () {
+          App.StackService.find.restore();
+          App.showAlertPopup.restore();
+        });
+
+        it('Popup body has display service names', function () {
+          expect(App.showAlertPopup.args[0][1]).to.be.equal(test.e);
+        });
+
+      });
+    });
+
+  });
+
   describe("#isRangerPluginEnabled()", function () {
     var mainServiceItemController;
 
@@ -1793,4 +1943,633 @@ describe('App.MainServiceItemController', function () {
       expect(mainServiceItemController.isRangerPluginEnabled()).to.be.true;
     });
   });
+
+  describe('#dependentServiceNames', function () {
+
+    var controller,
+      serviceName = 's0',
+      dependentServiceNames = ['s1', 's2'],
+      testCases = [
+        {
+          isConfigsPropertiesLoaded: true,
+          dependentServiceNames: dependentServiceNames,
+          message: 'model is ready'
+        },
+        {
+          isConfigsPropertiesLoaded: false,
+          dependentServiceNames: [],
+          message: 'model is not ready'
+        }
+      ];
+
+    beforeEach(function () {
+      controller = App.MainServiceItemController.create({
+        content: {
+          serviceName: serviceName
+        }
+      });
+      sinon.stub(App.StackService, 'find').returns(Em.Object.create({
+        dependentServiceNames: dependentServiceNames
+      }));
+    });
+
+    afterEach(function () {
+      App.StackService.find.restore();
+    });
+
+    testCases.forEach(function (test) {
+
+      it(test.message, function () {
+        App.set('router.clusterController.isConfigsPropertiesLoaded', test.isConfigsPropertiesLoaded);
+        expect(controller.get('dependentServiceNames')).to.eql(test.dependentServiceNames);
+      });
+
+    });
+
+  });
+
+  describe('#applyRecommendedValues', function () {
+
+    var controller;
+    var configsS1;
+    var configsS2;
+
+      beforeEach(function () {
+      controller = App.MainServiceItemController.create({
+        stepConfigs: [
+          Em.Object.create({
+            serviceName: 's1',
+            configs: [
+              Em.Object.create({
+                name: 'p1',
+                value: 'v1'
+              }),
+              Em.Object.create({
+                name: 'p2',
+                value: 'v2'
+              })
+            ]
+          }),
+          Em.Object.create({
+            serviceName: 's2',
+            configs: [
+              Em.Object.create({
+                name: 'p3',
+                value: 'v3'
+              }),
+              Em.Object.create({
+                name: 'p4',
+                value: 'v4'
+              })
+            ]
+          })
+        ],
+        changedProperties: [
+          {
+            serviceName: 's1',
+            propertyName: 'p1',
+            recommendedValue: 'r1',
+            initialValue: 'i1',
+            saveRecommended: false
+          },
+          {
+            serviceName: 's1',
+            propertyName: 'p2',
+            recommendedValue: 'r2',
+            initialValue: 'i2',
+            saveRecommended: true
+          },
+          {
+            serviceName: 's2',
+            propertyName: 'p3',
+            recommendedValue: 'r3',
+            initialValue: 'i3',
+            saveRecommended: true
+          }
+        ]
+      });
+    });
+
+    beforeEach(function () {
+      controller.applyRecommendedValues(controller.get('stepConfigs'));
+      configsS1 = controller.get('stepConfigs').findProperty('serviceName', 's1').get('configs');
+      configsS2 = controller.get('stepConfigs').findProperty('serviceName', 's2').get('configs');
+    });
+
+    it('should update properties with saveRecommended flag set to true', function () {
+      expect(configsS1.findProperty('name', 'p1').get('value')).to.equal('i1');
+      expect(configsS1.findProperty('name', 'p2').get('value')).to.equal('r2');
+      expect(configsS2.findProperty('name', 'p3').get('value')).to.equal('r3');
+      expect(configsS2.findProperty('name', 'p4').get('value')).to.equal('v4');
+    });
+
+  });
+
+  describe('#startStopPopupErrorCallback', function () {
+
+    beforeEach(function () {
+      sinon.spy(App.ajax, 'defaultErrorHandler');
+    });
+
+    afterEach(function () {
+      App.ajax.defaultErrorHandler.restore();
+    });
+
+    it('`App.ajax.defaultErrorHandler` should be called', function () {
+      App.MainServiceItemController.create().startStopPopupErrorCallback({}, {}, '', {}, {query: Em.Object.create()});
+      expect(App.ajax.defaultErrorHandler.calledOnce).to.be.true;
+    });
+
+  });
+  
+  describe('#clientComponents', function() {
+    beforeEach(function() {
+      sinon.stub(App.StackServiceComponent, 'find').returns([
+        Em.Object.create({
+          componentName: 'C1',
+          displayName: 'c1',
+          serviceName: 'S1',
+          isClient: true
+        })
+      ]);
+    });
+    afterEach(function() {
+      App.StackServiceComponent.find.restore();
+    });
+    
+    it('should return list of clients', function() {
+      var ctrl = App.MainServiceItemController.create({
+        content: {
+          serviceName: 'S1'
+        }
+      });
+      ctrl.propertyDidChange('clientComponents');
+      expect(ctrl.get('clientComponents')).to.be.eql([
+        {
+          action:  'downloadAllClientConfigs',
+          context: {
+            label: Em.I18n.t('common.all.clients')
+          }
+        },
+        {
+          action: 'downloadClientConfigs',
+          context: {
+            name: 'C1',
+            label: 'c1'
+          }
+        }
+      ]);
+    });
+  });
+  
+  describe('#sitesToLoad', function() {
+    beforeEach(function() {
+      sinon.stub(App.StackService, 'find').returns([
+        Em.Object.create({
+          serviceName: 'S1',
+          configTypeList: ['type1']
+        })
+      ]);
+    });
+    afterEach(function() {
+      App.StackService.find.restore();
+    });
+    
+    it('should return sites', function() {
+      var ctrl = App.MainServiceItemController.create({
+        content: {
+          serviceName: 'S1'
+        },
+        configDependentServiceNames: ['S1'],
+        serviceConfigsMap: {
+          'S1': ['type2']
+        }
+      });
+      ctrl.propertyDidChange('sitesToLoad');
+      expect(ctrl.get('sitesToLoad')).to.be.eql(['type1', 'type2', 'cluster-env']);
+    });
+  });
+  
+  describe('#startStopPopupSuccessCallback', function() {
+    var ctrl;
+    var mock = {
+      dataLoading: function() {
+        return {
+          done: function(callback) {
+            callback(true);
+          }
+        }
+      },
+      showPopup: sinon.spy()
+    };
+    beforeEach(function() {
+      ctrl = App.MainServiceItemController.create();
+      sinon.stub(App.router, 'get').returns(mock);
+    });
+    afterEach(function() {
+      App.router.get.restore();
+    });
+    
+    it('showPopup should be called when call successful', function() {
+      var params = {query: Em.Object.create()};
+      ctrl.startStopPopupSuccessCallback({Requests: []}, {}, params);
+      expect(params.query.get('status')).to.be.equal('SUCCESS');
+      expect(mock.showPopup.calledOnce).to.be.true;
+    });
+    it('should set FAIL status when call failed', function() {
+      var params = {query: Em.Object.create()};
+      ctrl.startStopPopupSuccessCallback(null, {}, params);
+      expect(params.query.get('status')).to.be.equal('FAIL');
+    });
+  });
+  
+  describe('#checkNnLastCheckpointTime', function() {
+    var ctrl;
+    var callback = sinon.spy();
+    beforeEach(function() {
+      ctrl = App.MainServiceItemController.create();
+      sinon.stub(ctrl, 'pullNnCheckPointTime').returns({complete: Em.clb});
+      sinon.stub(ctrl, 'getHdfsUser').returns({done: Em.clb});
+      sinon.stub(ctrl, 'getMessageForOldCheckpoints').returns('message');
+      sinon.stub(App, 'showConfirmationFeedBackPopup');
+      sinon.stub(App, 'showConfirmationPopup');
+    });
+    afterEach(function() {
+      ctrl.pullNnCheckPointTime.restore();
+      ctrl.getHdfsUser.restore();
+      ctrl.getMessageForOldCheckpoints.restore();
+      App.showConfirmationFeedBackPopup.restore();
+      App.showConfirmationPopup.restore();
+    });
+    
+    it('showConfirmationFeedBackPopup should be called', function() {
+      ctrl.set('nameNodesWithOldCheckpoints', [{}]);
+      ctrl.checkNnLastCheckpointTime(callback);
+      expect(App.showConfirmationFeedBackPopup.calledWith(callback, 'message')).to.be.true;
+    });
+    it('callback should be called', function() {
+      ctrl.set('nameNodesWithOldCheckpoints', []);
+      ctrl.set('isNameNodeCheckpointUnavailable', false);
+      ctrl.checkNnLastCheckpointTime(callback);
+      expect(callback.calledOnce).to.be.true;
+    });
+    it('showConfirmationPopup should be called', function() {
+      ctrl.set('nameNodesWithOldCheckpoints', []);
+      ctrl.set('isNameNodeCheckpointUnavailable', true);
+      ctrl.checkNnLastCheckpointTime(callback);
+      expect(App.showConfirmationPopup.calledWith(
+        callback, Em.I18n.t('services.service.stop.HDFS.warningMsg.checkPointNA'), null,
+        Em.I18n.t('common.warning'), Em.I18n.t('common.proceedAnyway'), 'danger')
+      ).to.be.true;
+    });
+  });
+  
+  describe('#pullNnCheckPointTime', function() {
+    beforeEach(function() {
+      sinon.stub(App.HDFSService, 'find').returns([
+        Em.Object.create({
+          hostComponents: [
+            Em.Object.create({
+              haNameSpace: 'ha',
+              clusterIdValue: 'c1'
+            })
+          ]
+        })
+      ]);
+    });
+    afterEach(function() {
+      App.HDFSService.find.restore();
+    });
+    
+    it('App.ajax.send should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.pullNnCheckPointTime('ha');
+      expect(testHelpers.findAjaxRequest('name', 'common.service.hdfs.getNnCheckPointTime')[0].data).to.be.eql({
+        clusterIdValue: 'c1'
+      });
+    });
+  });
+  
+  describe('#startStopWithMmode', function() {
+    var ctrl;
+    beforeEach(function() {
+      ctrl = App.MainServiceItemController.create({
+        content: {
+          serviceName: 's1'
+        }
+      });
+      sinon.stub(ctrl, 'startStopPopupPrimary').returns({
+        complete: Em.clb
+      });
+      sinon.stub(batchUtils, 'turnOnOffPassiveRequest').returns({
+        complete: Em.clb
+      });
+    });
+    afterEach(function() {
+      ctrl.startStopPopupPrimary.restore();
+      batchUtils.turnOnOffPassiveRequest.restore();
+    });
+    
+    it('turnOnOffPassiveRequest should be called when turning off maintenance', function() {
+      ctrl.startStopWithMmode('STARTED', '', true, [], [], '');
+      expect(batchUtils.turnOnOffPassiveRequest.calledWith('OFF', Em.I18n.t('passiveState.turnOff'), 'S1')).to.be.true;
+    });
+    it('startStopPopupPrimary should be called when turning on maintenance', function() {
+      ctrl.startStopWithMmode('INSTALLED', '', true, [], [], '');
+      expect(ctrl.startStopPopupPrimary.calledWith('INSTALLED', '', [], [], '')).to.be.true;
+    });
+    it('startStopPopupPrimary should be called', function() {
+      ctrl.startStopWithMmode('INSTALLED', '', false, [], [], '');
+      expect(ctrl.startStopPopupPrimary.calledWith('INSTALLED', '', [], [], '')).to.be.true;
+    });
+  });
+  
+  describe('#refreshYarnQueues', function() {
+    beforeEach(function() {
+      sinon.stub(App, 'showConfirmationPopup', Em.clb);
+      sinon.stub(App.MasterComponent, 'find').returns(Em.Object.create({
+        hostNames: ['host1']
+      }));
+    });
+    afterEach(function() {
+      App.showConfirmationPopup.restore();
+      App.MasterComponent.find.restore();
+    });
+    
+    it('App.ajax.send should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.refreshYarnQueues();
+      expect(testHelpers.findAjaxRequest('name', 'service.item.refreshQueueYarnRequest')[0].data).to.be.eql({
+        command: "REFRESHQUEUES",
+        context: Em.I18n.t('services.service.actions.run.yarnRefreshQueues.context'),
+        hosts: 'host1',
+        serviceName: "YARN",
+        componentName: "RESOURCEMANAGER",
+        forceRefreshConfigTags: "capacity-scheduler"
+      });
+    });
+  });
+  
+  describe('#refreshYarnQueuesSuccessCallback', function() {
+    beforeEach(function() {
+      sinon.stub(App.router, 'get').returns({showPopup: sinon.spy()});
+    });
+    afterEach(function() {
+      App.router.get.restore();
+    });
+    
+    it('showPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.refreshYarnQueuesSuccessCallback({Requests: {id: 1}});
+      expect(App.router.get('backgroundOperationsController').showPopup.calledOnce).to.be.true;
+    });
+  });
+  
+  describe('#refreshYarnQueuesErrorCallback', function() {
+    beforeEach(function() {
+      sinon.stub(App, 'showAlertPopup');
+    });
+    afterEach(function() {
+      App.showAlertPopup.restore();
+    });
+    
+    it('showAlertPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.refreshYarnQueuesErrorCallback({
+        responseText: JSON.stringify({
+          message: 'hello'
+        })
+      });
+      expect(App.showAlertPopup.calledWith(
+        Em.I18n.t('services.service.actions.run.yarnRefreshQueues.error'),
+        Em.I18n.t('services.service.actions.run.yarnRefreshQueues.error') + 'hello'
+      )).to.be.true;
+    });
+  });
+  
+  describe('#startStopLdapKnox', function() {
+    beforeEach(function() {
+      sinon.stub(App.HostComponent, 'find').returns([
+        Em.Object.create({
+          componentName: 'KNOX_GATEWAY',
+          hostName: 'host1'
+        })
+      ]);
+      sinon.stub(App, 'showConfirmationPopup', Em.clb);
+    });
+    afterEach(function() {
+      App.HostComponent.find.restore();
+      App.showConfirmationPopup.restore();
+    });
+    
+    it('App.ajax.send should be called after confirmation', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.startStopLdapKnox('command1', 'context1');
+      expect(testHelpers.findAjaxRequest('name', 'service.item.startStopLdapKnox')[0].data).to.be.eql({
+        command: 'command1',
+        context: 'context1',
+        host: 'host1',
+        serviceName: "KNOX",
+        componentName: "KNOX_GATEWAY"
+      });
+    });
+  });
+  
+  describe('#startStopLdapKnoxSuccessCallback', function() {
+    beforeEach(function() {
+      sinon.stub(App.router, 'get').returns({showPopup: sinon.spy()});
+    });
+    afterEach(function() {
+      App.router.get.restore();
+    });
+    
+    it('showPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.startStopLdapKnoxSuccessCallback({Requests: {id: 1}});
+      expect(App.router.get('backgroundOperationsController').showPopup.calledOnce).to.be.true;
+    });
+  });
+  
+  describe('#startStopLdapKnoxErrorCallback', function() {
+    beforeEach(function() {
+      sinon.stub(App, 'showAlertPopup');
+    });
+    afterEach(function() {
+      App.showAlertPopup.restore();
+    });
+    
+    it('showAlertPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.startStopLdapKnoxErrorCallback({
+        responseText: JSON.stringify({
+          message: 'hello'
+        })
+      });
+      expect(App.showAlertPopup.calledWith(
+        Em.I18n.t('services.service.actions.run.startStopLdapKnox.error'),
+        Em.I18n.t('services.service.actions.run.yarnRefreshQueues.error') + 'hello'
+      )).to.be.true;
+    });
+  });
+  
+  describe('#restartLLAPRequest', function() {
+    beforeEach(function() {
+      sinon.stub(App.HostComponent, 'find').returns([
+        Em.Object.create({
+          componentName: 'HIVE_SERVER_INTERACTIVE',
+          hostName: 'host1'
+        })
+      ]);
+    });
+    afterEach(function() {
+      App.HostComponent.find.restore();
+    });
+    
+    it('App.ajax.send should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.restartLLAPRequest();
+      expect(testHelpers.findAjaxRequest('name', 'service.item.executeCustomCommand')[0].data).to.be.eql({
+        command: 'RESTART_LLAP',
+        context: Em.I18n.t('services.service.actions.run.restartLLAP'),
+        hosts: 'host1',
+        serviceName: "HIVE",
+        componentName: "HIVE_SERVER_INTERACTIVE"
+      });
+    });
+  });
+  
+  describe('#restartLLAPAndRefreshQueueRequest', function() {
+    beforeEach(function() {
+      sinon.stub(App.MasterComponent, 'find').returns(Em.Object.create({
+        hostNames: ['host1']
+      }));
+    });
+    afterEach(function() {
+      App.MasterComponent.find.restore();
+    });
+    
+    it('App.ajax.send should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.restartLLAPAndRefreshQueueRequest();
+      expect(testHelpers.findAjaxRequest('name', 'common.batch.request_schedules')[0].data).to.be.eql({
+        intervalTimeSeconds: 1,
+        tolerateSize: 0,
+        batches: [
+          {
+            "order_id": 1,
+            "type": "POST",
+            "uri": "/clusters/mycluster/requests",
+            "RequestBodyInfo": {
+              "RequestInfo": {
+                "context": "Refresh YARN Capacity Scheduler",
+                "command": "REFRESHQUEUES",
+                "parameters/forceRefreshConfigTags": "capacity-scheduler"
+              },
+              "Requests/resource_filters": [{
+                "service_name": "YARN",
+                "component_name": "RESOURCEMANAGER",
+                "hosts": 'host1'
+              }]
+            }
+          },
+          {
+            "order_id": 2,
+            "type": "POST",
+            "uri": "/clusters/mycluster/requests",
+            "RequestBodyInfo": {
+              "RequestInfo": {"context": "Restart LLAP", "command": "RESTART_LLAP"},
+              "Requests/resource_filters": [{
+                "service_name": "HIVE",
+                "component_name": "HIVE_SERVER_INTERACTIVE",
+                "hosts": 'host1'
+              }]
+            }
+          }
+        ]
+      });
+    });
+  });
+  
+  describe('#requestSuccessCallback', function() {
+    var mock = {
+      dataLoading: function() {
+        return {
+          done: function(clb) {
+            clb(true);
+          }
+        }
+      },
+      showPopup: sinon.spy()
+    };
+    beforeEach(function() {
+      sinon.stub(App.router, 'get').returns(mock);
+    });
+    afterEach(function() {
+      App.router.get.restore();
+    });
+    
+    it('showPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.requestSuccessCallback();
+      expect(mock.showPopup.calledOnce).to.be.true;
+    });
+  });
+  
+  describe('#rebalanceHdfsNodesSuccessCallback', function() {
+    var mock = {
+      showPopup: sinon.spy()
+    };
+    beforeEach(function() {
+      sinon.stub(App.router, 'get').returns(mock);
+    });
+    afterEach(function() {
+      App.router.get.restore();
+    });
+    
+    it('showPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.rebalanceHdfsNodesSuccessCallback({Requests: {id: 1}});
+      expect(mock.showPopup.calledOnce).to.be.true;
+    });
+  });
+  
+  describe('#regenerateKeytabFileOperationsRequestSuccess', function() {
+    var mock = {
+      showPopup: sinon.spy()
+    };
+    beforeEach(function() {
+      sinon.stub(App.router, 'get').returns(mock);
+    });
+    afterEach(function() {
+      App.router.get.restore();
+    });
+    
+    it('showPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create();
+      ctrl.regenerateKeytabFileOperationsRequestSuccess();
+      expect(mock.showPopup.calledOnce).to.be.true;
+    });
+  });
+  
+  describe('#regenerateKeytabFileOperationsRequestError', function() {
+    beforeEach(function() {
+      sinon.stub(App, 'showAlertPopup');
+    });
+    afterEach(function() {
+      App.showAlertPopup.restore();
+    });
+    
+    it('showAlertPopup should be called', function() {
+      var ctrl = App.MainServiceItemController.create({
+        content: {
+          serviceName: 'S1'
+        }
+      });
+      ctrl.regenerateKeytabFileOperationsRequestError();
+      expect(App.showAlertPopup.calledWith(
+        Em.I18n.t('common.error'), Em.I18n.t('alerts.notifications.regenerateKeytab.service.error').format('S1')
+      )).to.be.true;
+    });
+  });
+  
 });

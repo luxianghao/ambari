@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -27,6 +27,7 @@ import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlAttribute;
 import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlElementWrapper;
 import javax.xml.bind.annotation.XmlRootElement;
 import javax.xml.bind.annotation.XmlTransient;
 
@@ -43,7 +44,7 @@ public class RepositoryXml implements Validable{
   @XmlElement(name="latest")
   private String latestUri;
   @XmlElement(name="os")
-  private List<Os> oses = new ArrayList<Os>();
+  private List<Os> oses = new ArrayList<>();
 
   @XmlTransient
   private boolean valid = true;
@@ -67,7 +68,7 @@ public class RepositoryXml implements Validable{
   }
 
   @XmlTransient
-  private Set<String> errorSet = new HashSet<String>();
+  private Set<String> errorSet = new HashSet<>();
 
   @Override
   public void addError(String error) {
@@ -146,8 +147,13 @@ public class RepositoryXml implements Validable{
     private String mirrorslist = null;
     private String repoid = null;
     private String reponame = null;
-    private String latest = null;
+    private String distribution = null;
+    private String components = null;
     private boolean unique = false;
+
+    @XmlElementWrapper(name="tags")
+    @XmlElement(name="tag")
+    private Set<RepoTag> tags = new HashSet<>();
 
     private Repo() {
     }
@@ -180,10 +186,13 @@ public class RepositoryXml implements Validable{
       return reponame;
     }
 
-    public String getLatestUri() {
-      return latest;
+    public String getDistribution() {
+      return distribution;
     }
 
+    public String getComponents() {
+      return components;
+    }
     /**
      * @return true if version of HDP that change with each release
      */
@@ -196,6 +205,13 @@ public class RepositoryXml implements Validable{
      */
     public void setUnique(boolean unique) {
       this.unique = unique;
+    }
+
+    /**
+     * @return the repo tags
+     */
+    public Set<RepoTag> getTags() {
+      return tags;
     }
   }
 
@@ -217,8 +233,10 @@ public class RepositoryXml implements Validable{
           ri.setOsType(os.trim());
           ri.setRepoId(r.getRepoId());
           ri.setRepoName(r.getRepoName());
-          ri.setLatestBaseUrl(r.getBaseUrl());
+          ri.setDistribution(r.getDistribution());
+          ri.setComponents(r.getComponents());
           ri.setUnique(r.isUnique());
+          ri.setTags(r.tags);
 
           repos.add(ri);
         }

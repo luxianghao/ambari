@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,8 +17,9 @@
  */
 package org.apache.ambari.server.state.scheduler;
 
-import com.google.inject.Inject;
-import com.google.inject.name.Named;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.scheduler.AbstractLinearExecutionJob;
@@ -27,8 +28,9 @@ import org.quartz.DisallowConcurrentExecution;
 import org.quartz.PersistJobDataAfterExecution;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.HashMap;
-import java.util.Map;
+
+import com.google.inject.Inject;
+import com.google.inject.name.Named;
 
 @PersistJobDataAfterExecution
 @DisallowConcurrentExecution
@@ -43,6 +45,8 @@ public class BatchRequestJob extends AbstractLinearExecutionJob {
     "BatchRequestJob.ClusterName";
   public static final String BATCH_REQUEST_FAILED_TASKS_KEY =
     "BatchRequestJob.FailedTaskCount";
+  public static final String BATCH_REQUEST_FAILED_TASKS_IN_CURRENT_BATCH_KEY =
+    "BatchRequestJob.FailedTaskInCurrentBatchCount";
   public static final String BATCH_REQUEST_TOTAL_TASKS_KEY =
     "BatchRequestJob.TotalTaskCount";
 
@@ -108,7 +112,8 @@ public class BatchRequestJob extends AbstractLinearExecutionJob {
         throw new AmbariException("Task failure tolerance limit exceeded"
             + ", execution_id = " + executionId
             + ", processed batch_id = " + batchId
-            + ", failed tasks = " + aggregateCounts.get(BATCH_REQUEST_FAILED_TASKS_KEY)
+            + ", failed tasks in current batch = " + aggregateCounts.get(BATCH_REQUEST_FAILED_TASKS_IN_CURRENT_BATCH_KEY)
+            + ", failed tasks total = " + aggregateCounts.get(BATCH_REQUEST_FAILED_TASKS_KEY)
             + ", total tasks completed = " + aggregateCounts.get(BATCH_REQUEST_TOTAL_TASKS_KEY));
       }
     }
@@ -139,7 +144,7 @@ public class BatchRequestJob extends AbstractLinearExecutionJob {
                                         Map<String, Integer> oldCounts,
                                         BatchRequestResponse batchRequestResponse) {
 
-    Map<String, Integer> taskCounts = new HashMap<String, Integer>();
+    Map<String, Integer> taskCounts = new HashMap<>();
 
     if (batchRequestResponse != null) {
       Integer failedTasks = batchRequestResponse.getFailedTaskCount() +
@@ -151,9 +156,11 @@ public class BatchRequestJob extends AbstractLinearExecutionJob {
         batchRequestResponse.getTotalTaskCount();
 
       taskCounts.put(BATCH_REQUEST_FAILED_TASKS_KEY, failedCount);
+      taskCounts.put(BATCH_REQUEST_FAILED_TASKS_IN_CURRENT_BATCH_KEY, batchRequestResponse.getFailedTaskCount());
       taskCounts.put(BATCH_REQUEST_TOTAL_TASKS_KEY, totalCount);
 
       properties.put(BATCH_REQUEST_FAILED_TASKS_KEY, failedCount);
+      properties.put(BATCH_REQUEST_FAILED_TASKS_IN_CURRENT_BATCH_KEY, batchRequestResponse.getFailedTaskCount());
       properties.put(BATCH_REQUEST_TOTAL_TASKS_KEY, totalCount);
     }
 
@@ -161,7 +168,7 @@ public class BatchRequestJob extends AbstractLinearExecutionJob {
   }
 
   private Map<String, Integer> getTaskCountProperties(Map<String, Object> properties) {
-    Map<String, Integer> taskCounts = new HashMap<String, Integer>();
+    Map<String, Integer> taskCounts = new HashMap<>();
     if (properties != null) {
       Object countObj = properties.get(BATCH_REQUEST_FAILED_TASKS_KEY);
       taskCounts.put(BATCH_REQUEST_FAILED_TASKS_KEY,

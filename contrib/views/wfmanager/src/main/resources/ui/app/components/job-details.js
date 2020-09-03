@@ -18,10 +18,12 @@
 import Ember from 'ember';
 import {WorkflowImporter} from '../domain/workflow-importer';
 import {ActionTypeResolver} from "../domain/action-type-resolver";
+import Constants from '../utils/constants';
 
 export default Ember.Component.extend({
   workflowImporter: WorkflowImporter.create({}),
   actionTypeResolver: ActionTypeResolver.create({}),
+  layoutConfigs: { name: 'dagre', fit: false, edgeSep: 100 },
   error : {},
   errorMessage : Ember.computed('error', function() {
     if(this.get('error').status === 400){
@@ -49,15 +51,20 @@ export default Ember.Component.extend({
     }
   }),
   displayType : Ember.computed('model.jobType', function() {
-    if(this.get('jobType') === 'wf'){
+    if(this.get('model.jobType') === 'wf'){
       return "Workflow";
-    }else if(this.get('jobType') === 'coords'){
+    }else if(this.get('model.jobType') === 'coords'){
       return "Coordinator";
     }
-    else if(this.get('jobType') === 'bundles'){
+    else if(this.get('model.jobType') === 'bundles'){
       return "Bundle";
     }
     return "Workflow";
+  }),
+  configurationProperties : Ember.computed('model', function(){
+    var x2js = new X2JS();
+    var configurationObj  = x2js.xml_str2json(this.get('model.conf'));
+    return configurationObj.configuration.property;
   }),
   initialize : function(){
     if(this.get('currentTab')){
@@ -66,11 +73,6 @@ export default Ember.Component.extend({
         this.set('model.actionDetails', this.get('model.actions')[0]);
       }
     }
-
-    var x2js = new X2JS();
-    var configurationObj  = x2js.xml_str2json(this.get('model.conf'));
-    this.set('model.configurationProperties', configurationObj.configuration.property);
-
     this.$('.nav-tabs').on('shown.bs.tab', function(event){
       this.sendAction('onTabChange', this.$(event.target));
     }.bind(this));
@@ -102,6 +104,13 @@ export default Ember.Component.extend({
     } else {
       return workflowActions;
     }
+  },
+
+  getActionNode(nodeName, nodeType) {
+    if (nodeType === 'start') {
+      nodeName = ':start:';
+    }
+    return this.getNodeActionByName(this.get('model.actions'), nodeName);
   },
 
   getActionStatus(nodeName, nodeType) {
@@ -184,7 +193,7 @@ export default Ember.Component.extend({
     var dataNodes = [];
     var self=this;
     workflow.nodeVisitor.process(workflow.startNode, function(node) {
-      if (node.type === 'kill') {
+      if (node.type === 'kill' && !(node.forceRenderNode || self.getActionNode(node.name, node.type))) {
         return;
       }
       var nodeActionStatus = self.getActionStatus(node.name, node.type);
@@ -198,8 +207,28 @@ export default Ember.Component.extend({
       });
         if (node.transitions.length > 0) {
           node.transitions.forEach(function(tran){
-            if (tran.targetNode.type === 'kill') {
+            var transitionBorderColor;
+            var actionNode = self.getActionNode(node.name, node.type);
+            if (tran.targetNode.type === 'kill' &&
+              !((actionNode && actionNode.transition===tran.targetNode.name) || (node.isPlaceholder()))) {
               return;
+            }
+             if (tran.getTargetNode(true).isKillNode()  && !tran.isOnError()){
+              tran.targetNode.forceRenderNode = true;
+             }
+            if (actionNode && (actionNode.transition===tran.targetNode.name ||actionNode.transition==='*' || (tran.targetNode.isPlaceholder() && actionNode.transition===tran.getTargetNode(true).name))) {
+              transitionBorderColor = Constants.successfulFlowColor;
+              if (tran.targetNode.isPlaceholder()) {
+                tran.targetNode.successfulFlow = true;
+              }
+            }else{
+              transitionBorderColor = Constants.defaultFlowColor;
+            }
+            if (!actionNode){
+              transitionBorderColor = Constants.defaultFlowColor;
+              if (node.isPlaceholder() && node.successfulFlow) {
+                transitionBorderColor = Constants.successfulFlowColor;
+              }
             }
             dataNodes.push(
               {
@@ -207,8 +236,8 @@ export default Ember.Component.extend({
                   id: tran.sourceNodeId + '_to_' + tran.targetNode.id,
                   source:tran.sourceNodeId,
                   target: tran.targetNode.id,
-                  borderColor: (self.getActionStatus(tran.targetNode.name, tran.targetNode.type) === 'Not-Visited')
-                    ? '#808080' : self.getBorderColorBasedOnStatus(nodeActionStatus)
+                  transition: tran,
+                  borderColor: transitionBorderColor
                 }
               }
             );
@@ -229,9 +258,16 @@ export default Ember.Component.extend({
       this.set('model.actionInfo', actionInfo);
     },
     renderDag(xmlString){
-      var workflow = this.get("workflowImporter").importWorkflow(xmlString);
-      console.log("Workflow Object..", workflow);
+      var wfObject = this.get("workflowImporter").importWorkflow(xmlString);
+      var workflow = wfObject.workflow;
       var dataNodes=this.getCyDataNodes(workflow);
+      if (dataNodes.length > Constants.flowGraphMaxNodeCount) {
+        this.set("model.flowGraphMaxNodeCountReached", true);
+        this.set("model.inProgress", false);
+        return;
+      } else {
+        this.set("model.flowGraphMaxNodeCountReached", false);
+      }
       var cy = cytoscape({
         container: document.getElementById('cy'),
         elements: dataNodes,
@@ -247,6 +283,14 @@ export default Ember.Component.extend({
               label: 'data(name)',
               'text-valign': 'center',
               'font-size': 8
+            }
+          },
+          {
+            selector: 'node[type = "placeholder"]',
+            style: {
+              width: 1,
+              height: 1,
+              label: ''
             }
           },
           {
@@ -276,14 +320,29 @@ export default Ember.Component.extend({
               width: 1,
               'line-color': 'data(borderColor)',
               'curve-style': 'bezier',
-      				'target-arrow-shape': 'triangle',
-              'target-arrow-color': 'data(borderColor)'
+              'target-arrow-shape': function(target){
+                if (target.data().transition && target.data().transition.getTargetNode(false) && !target.data().transition.getTargetNode(false).isPlaceholder()) {
+                  return "triangle";
+                }else{
+                  return "none";
+                }
+              },
+              'target-arrow-color': 'data(borderColor)',
+              'color': '#262626',
+              'font-size': 12,
+              label: function(target) {
+                if (!target.data().transition || !target.data().transition.condition) {
+                  return "";
+                }else if (target.data().transition.condition.length>5){
+                  return target.data().transition.condition.slice(0, 5)+"...";
+                }else{
+                  return target.data().transition.condition;
+                }
+              }
             }
           }
         ],
-        layout: {
-          name: 'dagre'
-        }
+        layout: this.get("layoutConfigs"),
       });
 
       // the default values of each option are outlined below:
@@ -300,11 +359,30 @@ export default Ember.Component.extend({
       };
 
       cy.panzoom( defaults );
+      cy.pan({x:200,y:50});
 
       cy.on('click', 'node', function(event) {
         var node = event.cyTarget;
         this.showActionNodeDetail(node, xmlString);
       }.bind(this));
+
+      cy.on('mousemove', 'edge', function(event) {
+        this.get("context").$(".overlay-transition-content, .decision-condition-label").hide();
+        if (event.cyTarget.data().transition && event.cyTarget.data().transition.condition) {
+          this.get("context").$(".decision-condition-body").html(event.cyTarget.data().transition.condition);
+          this.get("context").$(".overlay-transition-content").css({
+            top: event.originalEvent.offsetY + 10,
+            left: event.originalEvent.offsetX + 15
+          });
+          this.get("context").$(".overlay-transition-content, .decision-condition-label").show();
+        }
+      }.bind(this));
+
+      cy.on('mouseout', 'edge',function(event) {
+        this.get("context").$(".overlay-transition-content").hide();
+      }.bind(this));
+
+      this.set("model.inProgress", false);
     },
     importSampleWorkflow (){
       var self=this;
@@ -321,18 +399,36 @@ export default Ember.Component.extend({
       });
     },
     actions : {
-      back (){
-        this.sendAction('back');
+      back (jobType, jobId){
+        this.sendAction('back', jobType, jobId);
       },
       close : function(){
         this.sendAction('close');
       },
       doRefresh : function(){
-        this.sendAction('doRefresh');
+        var tab = this.$(this.get('currentTab')).prop('href');
+        if (tab) {
+          var currentTabHref = tab.substr(tab.indexOf('#')+1);
+          if(currentTabHref === 'jobLog'){
+            this.send('getJobLog', this.get('logParams'));
+          }else if(currentTabHref === 'jobErrorLog'){
+            this.send('getErrorLog');
+          }else if(currentTabHref === 'jobAuditLog'){
+            this.send('getAuditLog');
+          }else if(currentTabHref === 'jobDag'){
+            this.send('getJobDag');
+          }else if(currentTabHref === 'coordActionReruns'){
+            this.send('getCoordActionReruns');
+          }else{
+            this.sendAction('doRefresh');
+          }
+        } else {
+          this.sendAction('doRefresh');
+        }
       },
       getJobDefinition : function () {
         Ember.$.get(Ember.ENV.API_URL+'/v2/job/'+this.get('id')+'?show=definition&timezone=GMT',function(response){
-          this.set('model.jobDefinition', (new XMLSerializer()).serializeToString(response).trim());
+          this.set('jobDefinition', (new XMLSerializer()).serializeToString(response).trim());
         }.bind(this)).fail(function(error){
           this.set('error',error);
         }.bind(this));
@@ -341,6 +437,7 @@ export default Ember.Component.extend({
         this.set('model.actionDetails', this.get('model.actions')[0]);
       },
       getJobLog : function (params){
+        this.set('logParams', params);
         var url = Ember.ENV.API_URL+'/v2/job/'+this.get('id')+'?show=log';
         if(params && params.logFilter){
           url = url + '&logfilter=' + params.logFilter;
@@ -349,7 +446,9 @@ export default Ember.Component.extend({
           url = url + '&type=action&scope='+ params.logActionList;
         }
         Ember.$.get(url,function(response){
-          response = response.trim().length > 0 ? response : "No messages present";
+          if(Ember.isBlank(response)){
+            response = 'No Logs';
+          }
           this.set('model.jobLog', response);
         }.bind(this)).fail(function(error){
           this.set('error', error);
@@ -357,7 +456,9 @@ export default Ember.Component.extend({
       },
       getErrorLog : function (){
         Ember.$.get(Ember.ENV.API_URL+'/v2/job/'+this.get('id')+'?show=errorlog',function(response){
-          response = response.trim().length > 0 ? response : "No messages present";
+          if(Ember.isBlank(response)){
+            response = 'No Errors';
+          }
           this.set('model.errorLog', response);
         }.bind(this)).fail(function(error){
           this.set('error', error);
@@ -365,19 +466,23 @@ export default Ember.Component.extend({
       },
       getAuditLog : function (){
         Ember.$.get(Ember.ENV.API_URL+'/v2/job/'+this.get('id')+'?show=auditlog',function(response){
-          response = response.trim().length > 0 ? response : "No messages present";
+          if(Ember.isBlank(response)){
+            response = 'No Logs';
+          }
           this.set('model.auditLog', response);
         }.bind(this)).fail(function(error){
           this.set('error', error);
         }.bind(this));
       },
       getJobDag : function (){
+        this.set("model.inProgress", true);
         //if (true) return this.importSampleWorkflow();
         Ember.$.get(Ember.ENV.API_URL+'/v2/job/'+this.get('id')+'?show=definition&timezone=GMT',function(response){
           var xmlString = (new XMLSerializer()).serializeToString(response).trim();
           this.renderDag(xmlString);
         }.bind(this)).fail(function(error){
           this.set('error',error);
+          this.set("model.inProgress", false);
         }.bind(this));
         // this.set('model.jobDag', Ember.ENV.API_URL+'/v2/job/'+this.get('id')+'?show=graph');
       },
@@ -400,6 +505,11 @@ export default Ember.Component.extend({
       },
       showCoord : function(coordId){
         this.sendAction('showCoord', coordId);
+      },
+      editWorkflow(path){
+        var x2js = new X2JS();
+        var configurationObj  = x2js.xml_str2json(this.get('model.conf'));
+        this.sendAction('editWorkflow', path, null, true, {"settings":configurationObj});
       }
     }
   });

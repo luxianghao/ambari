@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -24,30 +24,15 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
 import org.apache.ambari.server.stack.Validable;
 
+import io.swagger.annotations.ApiModelProperty;
 
 public class StackVersionResponse implements Validable{
 
   private String minJdk;
   private String maxJdk;
-
-  public String getMinJdk() {
-    return minJdk;
-  }
-
-  public void setMinJdk(String minJdk) {
-    this.minJdk = minJdk;
-  }
-
-  public String getMaxJdk() {
-    return maxJdk;
-  }
-
-  public void setMaxJdk(String maxJdk) {
-    this.maxJdk = maxJdk;
-  }
-
   private String stackName;
   private String stackVersion;
   private String minUpgradeVersion;
@@ -57,13 +42,6 @@ public class StackVersionResponse implements Validable{
   private Map<String, Map<String, Map<String, String>>> configTypes;
 
   /**
-   * A File pointing to the stack-level Kerberos descriptor file
-   *
-   * This may be null if a relevant file is not available.
-   */
-  private File stackKerberosDescriptorFile;
-
-  /**
    * A Collection of Files pointing to the service-level Kerberos descriptor files
    *
    * This may be null or empty if no relevant files are available.
@@ -71,18 +49,15 @@ public class StackVersionResponse implements Validable{
   private Collection<File> serviceKerberosDescriptorFiles;
   private Set<String> upgradePacks = Collections.emptySet();
 
-  public StackVersionResponse(String stackVersion, String minUpgradeVersion,
+  public StackVersionResponse(String stackVersion,
                               boolean active, String parentVersion,
                               Map<String, Map<String, Map<String, String>>> configTypes,
-                              File stackKerberosDescriptorFile,
                               Collection<File> serviceKerberosDescriptorFiles,
                               Set<String> upgradePacks, boolean valid, Collection<String> errorSet, String minJdk, String maxJdk) {
     setStackVersion(stackVersion);
-    setMinUpgradeVersion(minUpgradeVersion);
     setActive(active);
     setParentVersion(parentVersion);
     setConfigTypes(configTypes);
-    setKerberosDescriptorFile(stackKerberosDescriptorFile);
     setServiceKerberosDescriptorFiles(serviceKerberosDescriptorFiles);
     setUpgradePacks(upgradePacks);
     setValid(valid);
@@ -92,6 +67,7 @@ public class StackVersionResponse implements Validable{
   }
 
   @Override
+  @ApiModelProperty(name = "valid")
   public boolean isValid() {
     return valid;
   }
@@ -99,25 +75,43 @@ public class StackVersionResponse implements Validable{
   @Override
   public void setValid(boolean valid) {
     this.valid = valid;
-  }  
+  }
 
-  private Set<String> errorSet = new HashSet<String>();
-  
+  private Set<String> errorSet = new HashSet<>();
+
   @Override
   public void addError(String error) {
     errorSet.add(error);
   }
 
   @Override
+  @ApiModelProperty(name = "stack-errors")
   public Collection<String> getErrors() {
     return errorSet;
-  }   
+  }
 
   @Override
   public void addErrors(Collection<String> errors) {
     this.errorSet.addAll(errors);
-  }  
-  
+  }
+
+  @ApiModelProperty(name = "min_jdk")
+  public String getMinJdk() { return minJdk; }
+
+  public void setMinJdk(String minJdk) {
+    this.minJdk = minJdk;
+  }
+
+  @ApiModelProperty(name = "max_jdk")
+  public String getMaxJdk() {
+    return maxJdk;
+  }
+
+  public void setMaxJdk(String maxJdk) {
+    this.maxJdk = maxJdk;
+  }
+
+  @ApiModelProperty(name = "stack_name")
   public String getStackName() {
     return stackName;
   }
@@ -126,6 +120,7 @@ public class StackVersionResponse implements Validable{
     this.stackName = stackName;
   }
 
+  @ApiModelProperty(name = "stack_version")
   public String getStackVersion() {
     return stackVersion;
   }
@@ -134,14 +129,7 @@ public class StackVersionResponse implements Validable{
     this.stackVersion = stackVersion;
   }
 
-  public String getMinUpgradeVersion() {
-    return minUpgradeVersion;
-  }
-
-  public void setMinUpgradeVersion(String minUpgradeVersion) {
-    this.minUpgradeVersion = minUpgradeVersion;
-  }
-
+  @ApiModelProperty(name = "active")
   public boolean isActive() {
     return active;
   }
@@ -150,6 +138,7 @@ public class StackVersionResponse implements Validable{
     this.active = active;
   }
 
+  @ApiModelProperty(name = "parent_stack_version")
   public String getParentVersion() {
     return parentVersion;
   }
@@ -157,6 +146,8 @@ public class StackVersionResponse implements Validable{
   public void setParentVersion(String parentVersion) {
     this.parentVersion = parentVersion;
   }
+
+  @ApiModelProperty(name = "config_types")
   public Map<String, Map<String, Map<String, String>>> getConfigTypes() {
     return configTypes;
   }
@@ -166,31 +157,13 @@ public class StackVersionResponse implements Validable{
   }
 
   /**
-   * Gets a File pointing to the stack-level Kerberos descriptor
-   *
-   * @return a File pointing to the stack-level Kerberos descriptor, or null if no relevant file is
-   * available
-   */
-  public File getStackKerberosDescriptorFile() {
-    return stackKerberosDescriptorFile;
-  }
-
-  /**
-   * Sets the stack-level Kerberos descriptor File
-   *
-   * @param stackKerberosDescriptorFile a File pointing to the stack-level Kerberos descriptor
-   */
-  public void setKerberosDescriptorFile(File stackKerberosDescriptorFile) {
-    this.stackKerberosDescriptorFile = stackKerberosDescriptorFile;
-  }
-
-  /**
    * Gets the Collection of Files pointing to the stack-specific service-level Kerberos descriptor
    * files
    *
    * @return a Collection of Files pointing to the stack-specific service-level Kerberos descriptor
    * files, or null if no relevant files are available
    */
+  @ApiModelProperty(hidden = true)
   public Collection<File> getServiceKerberosDescriptorFiles() {
     return serviceKerberosDescriptorFiles;
   }
@@ -204,18 +177,27 @@ public class StackVersionResponse implements Validable{
   public void setServiceKerberosDescriptorFiles(Collection<File> serviceKerberosDescriptorFiles) {
     this.serviceKerberosDescriptorFiles = serviceKerberosDescriptorFiles;
   }
-  
+
   /**
-   * @param upgradePacks the names of the upgrade packs for the stack version 
+   * @param upgradePacks the names of the upgrade packs for the stack version
    */
   public void setUpgradePacks(Set<String> upgradePacks) {
     this.upgradePacks = upgradePacks;
   }
-  
+
   /**
    * @return the upgrade pack names for the stack version
    */
+  @ApiModelProperty(name = "upgrade_packs")
   public Set<String> getUpgradePacks() {
     return upgradePacks;
+  }
+
+
+  /**
+   * Interface to help correct Swagger documentation generation
+   */
+  public interface StackVersionResponseSwagger extends ApiModel {
+    @ApiModelProperty(name = "Versions") StackVersionResponse getStackVersionResponse();
   }
 }

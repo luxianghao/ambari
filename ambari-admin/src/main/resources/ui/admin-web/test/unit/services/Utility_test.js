@@ -24,14 +24,21 @@ describe('Utility Service', function () {
     };
 
   beforeEach(function () {
-    module('ambariAdminConsole', function ($provide) {
-      $provide.value('$window', {});
+    module('ambariAdminConsole', function ($provide, $routeProvider) {
+      $provide.value('$window', {
+        localStorage: {
+          getItem: function() {return '{}';},
+          setItem: function() {}
+        },
+        location: {}
+      });
+      $routeProvider.otherwise(function(){return false;});
     });
     inject(function (_Utility_, _$httpBackend_, $rootScope, $controller, _Cluster_, _$q_) {
       Utility = _Utility_;
       httpBackend = _$httpBackend_;
       deferred = _$q_.defer();
-      spyOn(_Cluster_, 'getStatus').andReturn(deferred.promise);
+      spyOn(_Cluster_, 'getStatus').and.returnValue(deferred.promise);
       deferred.resolve({
         Clusters: {
           provisioning_state: 'INIT'
@@ -39,7 +46,7 @@ describe('Utility Service', function () {
       });
       scope = $rootScope.$new();
       scope.$apply();
-      ctrl = $controller('MainCtrl', {
+      ctrl = $controller('AppCtrl', {
         $scope: scope
       });
       httpBackend.whenGET(/\/persist\/user-pref-.*/).respond(200, {});
@@ -54,6 +61,7 @@ describe('Utility Service', function () {
       httpBackend.whenGET(/\/api\/v1\/views.+/).respond(200, {
         items: []
       });
+      httpBackend.whenGET("views/clusters/clusterInformation.html").respond(200, {});
     });
   });
 
@@ -74,7 +82,7 @@ describe('Utility Service', function () {
     });
 
     it('should pass the received value', function () {
-      expect(mock.callback.mostRecentCall.args[0].data).toEqual(obj);
+      expect(mock.callback.calls.mostRecent().args[0].data).toEqual(obj);
     });
 
   });
@@ -137,11 +145,11 @@ describe('Utility Service', function () {
         });
 
         it('success callback', function () {
-          expect(mock.successCallback.callCount).toEqual(item.successCallbackCallCount);
+          expect(mock.successCallback.calls.count()).toEqual(item.successCallbackCallCount);
         });
 
         it('error callback', function () {
-          expect(mock.errorCallback.callCount).toEqual(item.errorCallbackCallCount);
+          expect(mock.errorCallback.calls.count()).toEqual(item.errorCallbackCallCount);
         });
 
       });

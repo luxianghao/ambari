@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,6 +17,9 @@
  */
 package org.apache.ambari.server.security.encryption;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.security.GeneralSecurityException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
@@ -24,6 +27,7 @@ import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.InvalidParameterSpecException;
 import java.security.spec.KeySpec;
+
 import javax.crypto.Cipher;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
@@ -57,38 +61,7 @@ public class AESEncryptor {
       dcipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
       byte[] iv = ecipher.getParameters().getParameterSpec(IvParameterSpec.class).getIV();
       dcipher.init(Cipher.DECRYPT_MODE, secret, new IvParameterSpec(iv));
-    } catch (NoSuchAlgorithmException e) {
-      e.printStackTrace();
-    } catch (NoSuchPaddingException e) {
-      e.printStackTrace();
-    } catch (InvalidKeyException e) {
-      e.printStackTrace();
-    } catch (InvalidParameterSpecException e) {
-      e.printStackTrace();
-    } catch (InvalidAlgorithmParameterException e) {
-      e.printStackTrace();
-    }
-  }
-
-  AESEncryptor(SecretKey secret) {
-    try {
-      this.secret = new SecretKeySpec (secret.getEncoded(), "AES");
-
-      ecipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-      ecipher.init(Cipher.ENCRYPT_MODE, secret);
-
-      dcipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-      byte[] iv = ecipher.getParameters().getParameterSpec(IvParameterSpec.class).getIV();
-      dcipher.init(Cipher.DECRYPT_MODE, secret, new IvParameterSpec(iv));
-    } catch (NoSuchAlgorithmException e) {
-      e.printStackTrace();
-    } catch (NoSuchPaddingException e) {
-      e.printStackTrace();
-    } catch (InvalidKeyException e) {
-      e.printStackTrace();
-    } catch (InvalidParameterSpecException e) {
-      e.printStackTrace();
-    } catch (InvalidAlgorithmParameterException e) {
+    } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException | InvalidParameterSpecException | InvalidKeyException | NoSuchPaddingException e) {
       e.printStackTrace();
     }
   }
@@ -104,41 +77,40 @@ public class AESEncryptor {
       factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1");
       KeySpec spec = new PBEKeySpec(passPhrase.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH);
       key = factory.generateSecret(spec);
-    } catch (NoSuchAlgorithmException e) {
-      e.printStackTrace();
-    } catch (InvalidKeySpecException e) {
+    } catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
       e.printStackTrace();
     }
 
     return key;
   }
 
-  public EncryptionResult encrypt(String encrypt) throws Exception {
-    byte[] bytes = encrypt.getBytes("UTF8");
-    EncryptionResult atom = encrypt(bytes);
-    return atom;
+  public EncryptionResult encrypt(String encrypt) {
+    try {
+      byte[] bytes = encrypt.getBytes("UTF8");
+      EncryptionResult atom = encrypt(bytes);
+      return atom;
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
   }
 
-  public EncryptionResult encrypt(byte[] plain) throws Exception {
-    EncryptionResult atom = new EncryptionResult(salt, ecipher.getParameters().getParameterSpec(IvParameterSpec.class).getIV(), ecipher.doFinal(plain));
-    return atom;
+  public EncryptionResult encrypt(byte[] plain) {
+    try {
+      return new EncryptionResult(salt, ecipher.getParameters().getParameterSpec(IvParameterSpec.class).getIV(), ecipher.doFinal(plain));
+    } catch (GeneralSecurityException e) {
+      throw new RuntimeException(e);
+    }
   }
 
-  public String decrypt(String salt, String iv, String cipher) throws Exception {
-    byte[] decrypted = decrypt(salt.getBytes("UTF8"), iv.getBytes("UTF8"), cipher.getBytes("UTF8"));
-    return new String(decrypted, "UTF8");
-  }
+  public byte[] decrypt(byte[] salt, byte[] iv, byte[] encrypt) {
+    try {
+      SecretKey tmp = getKeyFromPassword(new String(passPhrase), salt);
+      secret = new SecretKeySpec(tmp.getEncoded(), "AES");
 
-  public byte[] decrypt(byte[] salt, byte[] iv, byte[] encrypt) throws Exception {
-    SecretKey tmp = getKeyFromPassword(new String(passPhrase), salt);
-    secret = new SecretKeySpec(tmp.getEncoded(), "AES");
-
-    dcipher.init(Cipher.DECRYPT_MODE, secret, new IvParameterSpec(iv));
-    return dcipher.doFinal(encrypt);
-  }
-
-  public byte[] decrypt(byte[] encrypt) throws Exception {
-    dcipher.init(Cipher.DECRYPT_MODE, secret);
-    return dcipher.doFinal(encrypt);
+      dcipher.init(Cipher.DECRYPT_MODE, secret, new IvParameterSpec(iv));
+      return dcipher.doFinal(encrypt);
+    } catch (GeneralSecurityException e) {
+      throw new RuntimeException(e);
+    }
   }
 }

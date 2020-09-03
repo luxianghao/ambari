@@ -18,17 +18,31 @@
 
 package org.apache.ambari.server.security.authorization;
 
-import com.google.inject.AbstractModule;
-import com.google.inject.Guice;
-import com.google.inject.Injector;
+import static org.easymock.EasyMock.anyObject;
+import static org.easymock.EasyMock.anyString;
+import static org.easymock.EasyMock.capture;
+import static org.easymock.EasyMock.eq;
+import static org.easymock.EasyMock.expect;
+import static org.easymock.EasyMock.expectLastCall;
+import static org.easymock.EasyMock.newCapture;
 
-import junit.framework.Assert;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 
+import javax.annotation.Nullable;
+import javax.persistence.EntityManager;
+
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.configuration.AmbariServerConfiguration;
+import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.hooks.HookContextFactory;
 import org.apache.ambari.server.hooks.HookService;
-import org.apache.ambari.server.hooks.users.UserHookService;
+import org.apache.ambari.server.ldap.service.AmbariLdapConfigurationProvider;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.dao.MemberDAO;
+import org.apache.ambari.server.orm.dao.PrincipalDAO;
 import org.apache.ambari.server.orm.dao.PrivilegeDAO;
 import org.apache.ambari.server.orm.dao.UserDAO;
 import org.apache.ambari.server.orm.entities.GroupEntity;
@@ -37,30 +51,30 @@ import org.apache.ambari.server.orm.entities.PermissionEntity;
 import org.apache.ambari.server.orm.entities.PrincipalEntity;
 import org.apache.ambari.server.orm.entities.PrivilegeEntity;
 import org.apache.ambari.server.orm.entities.UserEntity;
+import org.apache.ambari.server.security.encryption.Encryptor;
 import org.apache.ambari.server.state.stack.OsFamily;
 import org.easymock.Capture;
-import org.easymock.CaptureType;
+import org.easymock.EasyMock;
 import org.easymock.EasyMockSupport;
 import org.junit.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import javax.persistence.EntityManager;
+import com.google.inject.AbstractModule;
+import com.google.inject.Guice;
+import com.google.inject.Injector;
+import com.google.inject.TypeLiteral;
+import com.google.inject.name.Names;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-
-import static org.easymock.EasyMock.capture;
-import static org.easymock.EasyMock.expect;
-import static org.easymock.EasyMock.newCapture;
+import junit.framework.Assert;
 
 public class UsersTest extends EasyMockSupport {
 
+  private static final String SERVICEOP_USER_NAME = "serviceopuser";
+  private Injector injector;
 
   @Test
   public void testGetUserAuthorities() throws Exception {
-    Injector injector = getInjector();
+    createInjector();
 
     PrincipalEntity userPrincipalEntity = createMock(PrincipalEntity.class);
 
@@ -68,7 +82,7 @@ public class UsersTest extends EasyMockSupport {
     expect(userEntity.getPrincipal()).andReturn(userPrincipalEntity).times(1);
 
     UserDAO userDAO = injector.getInstance(UserDAO.class);
-    expect(userDAO.findUserByNameAndType("user1", UserType.LOCAL)).andReturn(userEntity).times(1);
+    expect(userDAO.findUserByName("user1")).andReturn(userEntity).times(1);
 
     PrincipalEntity groupPrincipalEntity = createMock(PrincipalEntity.class);
 
@@ -97,13 +111,13 @@ public class UsersTest extends EasyMockSupport {
     PrivilegeEntity clusterOperatorPrivilegeEntity = createMock(PrivilegeEntity.class);
     expect(clusterOperatorPrivilegeEntity.getPermission()).andReturn(clusterOperatorPrivilegePermissionEntity).times(1);
 
-    List<PrivilegeEntity> privilegeEntities = new ArrayList<PrivilegeEntity>();
+    List<PrivilegeEntity> privilegeEntities = new ArrayList<>();
     privilegeEntities.add(clusterUserPrivilegeEntity);
     privilegeEntities.add(clusterOperatorPrivilegeEntity);
 
     PrivilegeEntity clusterUserViewUserPrivilegeEntity = createMock(PrivilegeEntity.class);
 
-    List<PrivilegeEntity> rolePrivilegeEntities = new ArrayList<PrivilegeEntity>();
+    List<PrivilegeEntity> rolePrivilegeEntities = new ArrayList<>();
     rolePrivilegeEntities.add(clusterUserViewUserPrivilegeEntity);
 
     Capture<? extends List<PrincipalEntity>> principalEntitiesCapture = newCapture();
@@ -117,7 +131,7 @@ public class UsersTest extends EasyMockSupport {
     replayAll();
 
     Users user = injector.getInstance(Users.class);
-    Collection<AmbariGrantedAuthority> authorities = user.getUserAuthorities("user1", UserType.LOCAL);
+    Collection<AmbariGrantedAuthority> authorities = user.getUserAuthorities("user1");
 
     verifyAll();
 
@@ -136,19 +150,67 @@ public class UsersTest extends EasyMockSupport {
     Assert.assertTrue(authorities.contains(new AmbariGrantedAuthority(clusterUserViewUserPrivilegeEntity)));
   }
 
-  private Injector getInjector() {
-    return Guice.createInjector(new AbstractModule() {
+  /**
+   * User creation should complete without exception in case of unique user name
+   */
+  @Test
+  public void testCreateUser_NoDuplicates() throws Exception {
+    initForCreateUser(null);
+    Users users = injector.getInstance(Users.class);
+    users.createUser(SERVICEOP_USER_NAME, SERVICEOP_USER_NAME, SERVICEOP_USER_NAME);
+  }
+
+  /**
+   * User creation should throw {@link AmbariException} in case another user exists with the same name but
+   * different user type.
+   */
+  @Test(expected = AmbariException.class)
+  public void testCreateUser_Duplicate() throws Exception {
+    UserEntity existing = new UserEntity();
+    existing.setUserName(UserName.fromString(SERVICEOP_USER_NAME).toString());
+    existing.setUserId(1);
+    existing.setMemberEntities(Collections.emptySet());
+    PrincipalEntity principal = new PrincipalEntity();
+    principal.setPrivileges(Collections.emptySet());
+    existing.setPrincipal(principal);
+    initForCreateUser(existing);
+
+    Users users = injector.getInstance(Users.class);
+    users.createUser(SERVICEOP_USER_NAME, SERVICEOP_USER_NAME, SERVICEOP_USER_NAME);
+  }
+
+  private void initForCreateUser(@Nullable UserEntity existingUser) {
+    UserDAO userDao = createStrictMock(UserDAO.class);
+    expect(userDao.findUserByName(anyString())).andReturn(existingUser);
+    userDao.create(anyObject(UserEntity.class));
+    expectLastCall();
+    EntityManager entityManager = createNiceMock(EntityManager.class);
+    expect(entityManager.find(eq(PrincipalEntity.class), EasyMock.anyObject())).andReturn(null);
+    replayAll();
+    createInjector(userDao, entityManager);
+  }
+
+  private void createInjector() {
+    createInjector(createMock(UserDAO.class), createMock(EntityManager.class));
+  }
+
+  private void createInjector(final UserDAO mockUserDao, final EntityManager mockEntityManager) {
+    injector = Guice.createInjector(new AbstractModule() {
       @Override
       protected void configure() {
-        bind(EntityManager.class).toInstance(createMock(EntityManager.class));
+        bind(EntityManager.class).toInstance(mockEntityManager);
         bind(DBAccessor.class).toInstance(createMock(DBAccessor.class));
         bind(OsFamily.class).toInstance(createNiceMock(OsFamily.class));
-        bind(UserDAO.class).toInstance(createMock(UserDAO.class));
+        bind(UserDAO.class).toInstance(mockUserDao);
         bind(MemberDAO.class).toInstance(createMock(MemberDAO.class));
         bind(PrivilegeDAO.class).toInstance(createMock(PrivilegeDAO.class));
         bind(PasswordEncoder.class).toInstance(createMock(PasswordEncoder.class));
         bind(HookService.class).toInstance(createMock(HookService.class));
         bind(HookContextFactory.class).toInstance(createMock(HookContextFactory.class));
+        bind(PrincipalDAO.class).toInstance(createMock(PrincipalDAO.class));
+        bind(Configuration.class).toInstance(createNiceMock(Configuration.class));
+        bind(new TypeLiteral<Encryptor<AmbariServerConfiguration>>() {}).annotatedWith(Names.named("AmbariServerConfigurationEncryptor")).toInstance(Encryptor.NONE);
+        bind(AmbariLdapConfigurationProvider.class).toInstance(createMock(AmbariLdapConfigurationProvider.class));
       }
     });
   }

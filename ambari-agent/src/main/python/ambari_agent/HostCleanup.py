@@ -20,12 +20,12 @@ limitations under the License.
 # For compatibility with different OSes
 # Edit PYTHONPATH to be able to import common_functions
 import sys
-sys.path.append("/usr/lib/python2.6/site-packages/")
+sys.path.append("/usr/lib/ambari-agent/lib/")
 ########################################################
 
 import os
 import string
-import subprocess
+from ambari_commons import subprocess32
 import logging
 import shutil
 import platform
@@ -39,7 +39,7 @@ import glob
 import pwd
 import re
 from AmbariConfig import AmbariConfig
-from ambari_agent.Constants import AGENT_TMP_DIR
+from ambari_commons.constants import AGENT_TMP_DIR
 from ambari_commons import OSCheck, OSConst
 from ambari_commons.constants import AMBARI_SUDO_BINARY
 from ambari_commons.os_family_impl import OsFamilyImpl, OsFamilyFuncImpl
@@ -262,8 +262,8 @@ class HostCleanup:
     command = ALT_DISP_CMD.format(alt_name)
     out = None
     try:
-      p1 = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
-      p2 = subprocess.Popen(["grep", "priority"], stdin=p1.stdout, stdout=subprocess.PIPE)
+      p1 = subprocess32.Popen(shlex.split(command), stdout=subprocess32.PIPE)
+      p2 = subprocess32.Popen(["grep", "priority"], stdin=p1.stdout, stdout=subprocess32.PIPE)
       p1.stdout.close()
       out = p2.communicate()[0]
       logger.debug('alternatives --display ' + alt_name + '\n, out = ' + out)
@@ -373,8 +373,9 @@ class HostCleanup:
 
   def do_kill_processes_by_identifier(self, identifierList):
     pidList = []
-    cmd = "ps aux"
-    (returncode, stdoutdata, stderrdata) = self.run_os_command(cmd, True)
+    cmd = "ps auxww"
+    (returncode, stdoutdata, stderrdata) = self.run_os_command(cmd)
+    line_regexp = re.compile("\s\s+")
 
     if 0 == returncode and stdoutdata:
       lines = stdoutdata.split('\n')
@@ -384,7 +385,7 @@ class HostCleanup:
           identifier = identifier.strip()
           if identifier in line:
             logger.debug("Found " + line + " for " + identifier);
-            line = re.sub("\s\s+" , " ", line) #replace multi spaces with single space before calling the split
+            line = line_regexp.sub(" ", line) #replace multi spaces with single space before calling the split
             tokens = line.split(' ')
             logger.debug(tokens)
             logger.debug(len(tokens))
@@ -511,8 +512,13 @@ class HostCleanup:
     for folder in folders:
       for filename in os.listdir(folder):
         fileToCheck = os.path.join(folder, filename)
-        stat = os.stat(fileToCheck)
-        if stat.st_uid in userIds:
+        try:
+          stat = os.stat(fileToCheck)
+        except OSError:
+          stat = None
+          logger.warn("Cannot stat file, skipping: " + fileToCheck)
+
+        if stat and stat.st_uid in userIds:
           self.do_erase_dir_silent([fileToCheck])
           logger.info("Deleting file/folder: " + fileToCheck)
 
@@ -560,10 +566,10 @@ class HostCleanup:
     logger.info('Executing command: ' + str(cmd))
     if type(cmd) == str:
       cmd = shlex.split(cmd)
-    process = subprocess.Popen(cmd,
-                               stdout=subprocess.PIPE,
-                               stdin=subprocess.PIPE,
-                               stderr=subprocess.PIPE
+    process = subprocess32.Popen(cmd,
+                               stdout=subprocess32.PIPE,
+                               stdin=subprocess32.PIPE,
+                               stderr=subprocess32.PIPE
     )
     (stdoutdata, stderrdata) = process.communicate()
     return process.returncode, stdoutdata, stderrdata

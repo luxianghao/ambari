@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,7 +22,13 @@ import static org.easymock.EasyMock.createStrictMock;
 import static org.easymock.EasyMock.expect;
 import static org.easymock.EasyMock.replay;
 import static org.easymock.EasyMock.verify;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -36,30 +42,31 @@ import java.util.Set;
 import javax.persistence.EntityManager;
 
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.actionmanager.RequestFactory;
+import org.apache.ambari.server.H2DatabaseCleaner;
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.AmbariCustomCommandExecutionHelper;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.ClusterRequest;
 import org.apache.ambari.server.controller.ConfigurationRequest;
 import org.apache.ambari.server.controller.spi.ClusterController;
+import org.apache.ambari.server.events.publishers.STOMPUpdatePublisher;
+import org.apache.ambari.server.mpack.MpackManagerFactory;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.GuiceJpaInitializer;
 import org.apache.ambari.server.orm.InMemoryDefaultTestModule;
+import org.apache.ambari.server.orm.OrmTestHelper;
 import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.security.SecurityHelper;
 import org.apache.ambari.server.security.TestAuthenticationFactory;
+import org.apache.ambari.server.security.authorization.AuthorizationException;
 import org.apache.ambari.server.stack.StackManagerFactory;
-import org.apache.ambari.server.state.cluster.ClusterFactory;
 import org.apache.ambari.server.state.configgroup.ConfigGroup;
 import org.apache.ambari.server.state.configgroup.ConfigGroupFactory;
-import org.apache.ambari.server.state.host.HostFactory;
 import org.apache.ambari.server.state.stack.OsFamily;
+import org.apache.ambari.server.testutils.PartialNiceMockBinder;
 import org.junit.After;
-import org.junit.AfterClass;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.experimental.runners.Enclosed;
 import org.junit.runner.RunWith;
@@ -70,7 +77,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.persist.PersistService;
 import com.google.inject.persist.Transactional;
 
 import junit.framework.Assert;
@@ -88,9 +94,10 @@ public class ConfigHelperTest {
     private static ConfigHelper configHelper;
     private static AmbariManagementController managementController;
     private static AmbariMetaInfo metaInfo;
+    private static ConfigFactory configFactory;
 
-    @BeforeClass
-    public static void setup() throws Exception {
+    @Before
+    public void setup() throws Exception {
       // Set the authenticated user
       // TODO: remove this or replace the authenticated user to test authorization rules
       SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator("admin"));
@@ -102,14 +109,23 @@ public class ConfigHelperTest {
       configHelper = injector.getInstance(ConfigHelper.class);
       managementController = injector.getInstance(AmbariManagementController.class);
       metaInfo = injector.getInstance(AmbariMetaInfo.class);
+      configFactory = injector.getInstance(ConfigFactory.class);
+
+      StackId stackId = new StackId("HDP-2.0.6");
+      OrmTestHelper helper = injector.getInstance(OrmTestHelper.class);
+      helper.createStack(stackId);
+
+      RepositoryVersionEntity repositoryVersion = helper.getOrCreateRepositoryVersion(stackId, "2.0.6");
 
       clusterName = "c1";
-      clusters.addCluster(clusterName, new StackId("HDP-2.0.6"));
+      clusters.addCluster(clusterName, stackId);
       cluster = clusters.getCluster(clusterName);
       Assert.assertNotNull(cluster);
       clusters.addHost("h1");
       clusters.addHost("h2");
       clusters.addHost("h3");
+      clusters.getHosts().forEach(h -> clusters.updateHostMappings(h));
+
       Assert.assertNotNull(clusters.getHost("h1"));
       Assert.assertNotNull(clusters.getHost("h2"));
       Assert.assertNotNull(clusters.getHost("h3"));
@@ -124,7 +140,7 @@ public class ConfigHelperTest {
         put("fs.trash.interval", "30");
       }});
       cr.setPropertiesAttributes(new HashMap<String, Map<String, String>>() {{
-        Map<String, String> attrs = new HashMap<String, String>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("ipc.client.connect.max.retries", "1");
         attrs.put("fs.trash.interval", "2");
         put("attribute1", attrs);
@@ -146,6 +162,9 @@ public class ConfigHelperTest {
       cr2.setType("flume-conf");
       cr2.setVersionTag("version1");
 
+      cluster.addService("FLUME", repositoryVersion);
+      cluster.addService("OOZIE", repositoryVersion);
+      cluster.addService("HDFS", repositoryVersion);
 
       final ClusterRequest clusterRequest2 =
           new ClusterRequest(cluster.getClusterId(), clusterName,
@@ -164,7 +183,7 @@ public class ConfigHelperTest {
         put("namenode_heapsize", "1024");
       }});
       cr.setPropertiesAttributes(new HashMap<String, Map<String, String>>() {{
-        Map<String, String> attrs = new HashMap<String, String>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("dfs_namenode_name_dir", "3");
         attrs.put("namenode_heapsize", "4");
         put("attribute2", attrs);
@@ -218,11 +237,50 @@ public class ConfigHelperTest {
       managementController.updateClusters(new HashSet<ClusterRequest>() {{
         add(clusterRequest5);
       }}, null);
+
+      // hdfs-site/hadoop.caller.context.enabled
+      ConfigurationRequest cr6 = new ConfigurationRequest();
+      cr6.setClusterName(clusterName);
+      cr6.setType("hdfs-site");
+      cr6.setVersionTag("version1");
+      cr6.setProperties(new HashMap<String, String>() {{
+        put("hadoop.caller.context.enabled", "true");
+      }});
+      cr6.setPropertiesAttributes(null);
+
+      final ClusterRequest clusterRequest6 =
+              new ClusterRequest(cluster.getClusterId(), clusterName,
+                      cluster.getDesiredStackVersion().getStackVersion(), null);
+
+      clusterRequest6.setDesiredConfig(Collections.singletonList(cr6));
+      managementController.updateClusters(new HashSet<ClusterRequest>() {{
+        add(clusterRequest6);
+      }}, null);
+
+      // hdfs-site/hadoop.caller.context.enabled
+      ConfigurationRequest cr7 = new ConfigurationRequest();
+      cr7.setClusterName(clusterName);
+      cr7.setType("hdfs-site");
+      cr7.setVersionTag("version2");
+      cr7.setProperties(new HashMap<String, String>() {{
+        put("hadoop.caller.context.enabled", "false");
+      }});
+      cr7.setPropertiesAttributes(null);
+
+      final ClusterRequest clusterRequest7 =
+              new ClusterRequest(cluster.getClusterId(), clusterName,
+                      cluster.getDesiredStackVersion().getStackVersion(), null);
+
+      clusterRequest7.setDesiredConfig(Collections.singletonList(cr7));
+      managementController.updateClusters(new HashSet<ClusterRequest>() {{
+        add(clusterRequest7);
+      }}, null);
+
     }
 
-    @AfterClass
-    public static void tearDown() {
-      injector.getInstance(PersistService.class).stop();
+    @After
+    public void tearDown() throws AmbariException, SQLException {
+      H2DatabaseCleaner.clearDatabaseAndStopPersistenceService(injector);
 
       // Clear the authenticated user
       SecurityContextHolder.getContext().setAuthentication(null);
@@ -232,8 +290,8 @@ public class ConfigHelperTest {
     Long addConfigGroup(String name, String tag, List<String> hosts,
                         List<Config> configs) throws AmbariException {
 
-      Map<Long, Host> hostMap = new HashMap<Long, Host>();
-      Map<String, Config> configMap = new HashMap<String, Config>();
+      Map<Long, Host> hostMap = new HashMap<>();
+      Map<String, Config> configMap = new HashMap<>();
 
       Long hostId = 1L;
       for (String hostname : hosts) {
@@ -246,12 +304,11 @@ public class ConfigHelperTest {
         configMap.put(config.getType(), config);
       }
 
-      ConfigGroup configGroup = configGroupFactory.createNew(cluster, name,
+      ConfigGroup configGroup = configGroupFactory.createNew(cluster, null, name,
           tag, "", configMap, hostMap);
       LOG.info("Config group created with tag " + tag);
       configGroup.setTag(tag);
 
-      configGroup.persist();
       cluster.addConfigGroup(configGroup);
 
       return configGroup.getId();
@@ -277,7 +334,7 @@ public class ConfigHelperTest {
     @Test
     public void testProcessHiddenAttribute() throws Exception {
       StackInfo stackInfo = metaInfo.getStack("HDP", "2.0.5");
-      Map<String, Map<String, Map<String, String>>> configAttributes = new HashMap<String, Map<String, Map<String, String>>>();
+      Map<String, Map<String, Map<String, String>>> configAttributes = new HashMap<>();
       configAttributes.put("hive-site", stackInfo.getDefaultConfigAttributesForConfigType("hive-site"));
 
       Map<String, Map<String, String>> originalConfig_hiveClient = createHiveConfig();
@@ -339,14 +396,11 @@ public class ConfigHelperTest {
         add(clusterRequest6);
       }}, null);
 
-      final Config config = new ConfigImpl("ams-env");
-      config.setTag("version122");
-
-      Map<String, String> properties = new HashMap<String, String>();
+      Map<String, String> properties = new HashMap<>();
       properties.put("a", "b");
       properties.put("c", "d");
-      config.setProperties(properties);
 
+      final Config config = configFactory.createNew(cluster, "ams-env", "version122", properties, null);
       Long groupId = addConfigGroup("g1", "t1", new ArrayList<String>() {{
         add("h1");
       }}, new ArrayList<Config>() {{
@@ -381,7 +435,7 @@ public class ConfigHelperTest {
         put("fs.trash.interval", "30");
       }});
       cr.setPropertiesAttributes(new HashMap<String, Map<String, String>>() {{
-        Map<String, String> attrs = new HashMap<String, String>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("ipc.client.connect.max.retries", "1");
         attrs.put("fs.trash.interval", "2");
         put("attribute1", attrs);
@@ -404,7 +458,7 @@ public class ConfigHelperTest {
         put("namenode_heapsize", "1024");
       }});
       cr.setPropertiesAttributes(new HashMap<String, Map<String, String>>() {{
-        Map<String, String> attrs = new HashMap<String, String>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("dfs_namenode_name_dir", "3");
         attrs.put("namenode_heapsize", "4");
         put("attribute2", attrs);
@@ -419,19 +473,14 @@ public class ConfigHelperTest {
         add(clusterRequest3);
       }}, null);
 
-      final Config config1 = new ConfigImpl("core-site2");
-      config1.setTag("version122");
-
-      Map<String, String> properties = new HashMap<String, String>();
+      Map<String, String> properties = new HashMap<>();
       properties.put("a", "b");
       properties.put("c", "d");
-      config1.setProperties(properties);
+      final Config config1 = configFactory.createNew(cluster, "core-site2", "version122", properties, null);
 
-      final Config config2 = new ConfigImpl("global2");
-      config2.setTag("version122");
-      Map<String, String> properties2 = new HashMap<String, String>();
+      Map<String, String> properties2 = new HashMap<>();
       properties2.put("namenode_heapsize", "1111");
-      config2.setProperties(properties2);
+      final Config config2 = configFactory.createNew(cluster, "global2", "version122", properties2, null);
 
       Long groupId = addConfigGroup("g2", "t1", new ArrayList<String>() {{
         add("h1");
@@ -472,7 +521,7 @@ public class ConfigHelperTest {
         put("fs.trash.interval", "30");
       }});
       crr.setPropertiesAttributes(new HashMap<String, Map<String, String>>() {{
-        Map<String, String> attrs = new HashMap<String, String>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("ipc.client.connect.max.retries", "1");
         attrs.put("fs.trash.interval", "2");
         put("attribute1", attrs);
@@ -495,7 +544,7 @@ public class ConfigHelperTest {
         put("namenode_heapsize", "1024");
       }});
       crr.setPropertiesAttributes(new HashMap<String, Map<String, String>>() {{
-        Map<String, String> attrs = new HashMap<String, String>();
+        Map<String, String> attrs = new HashMap<>();
         attrs.put("dfs_namenode_name_dir", "3");
         attrs.put("namenode_heapsize", "4");
         put("attribute2", attrs);
@@ -511,24 +560,23 @@ public class ConfigHelperTest {
       }}, null);
 
 
-      final Config config1 = new ConfigImpl("core-site3");
-      config1.setTag("version122");
-
-      Map<String, String> attributes = new HashMap<String, String>();
+      Map<String, String> attributes = new HashMap<>();
       attributes.put("fs.trash.interval", "11");
       attributes.put("b", "y");
-      Map<String, Map<String, String>> config1Attributes = new HashMap<String, Map<String, String>>();
+      Map<String, Map<String, String>> config1Attributes = new HashMap<>();
       config1Attributes.put("attribute1", attributes);
-      config1.setPropertiesAttributes(config1Attributes);
 
-      final Config config2 = new ConfigImpl("global3");
-      config2.setTag("version122");
-      attributes = new HashMap<String, String>();
+      final Config config1 = configFactory.createNew(cluster, "core-site3", "version122",
+        new HashMap<>(), config1Attributes);
+
+      attributes = new HashMap<>();
       attributes.put("namenode_heapsize", "z");
       attributes.put("c", "q");
-      Map<String, Map<String, String>> config2Attributes = new HashMap<String, Map<String, String>>();
+      Map<String, Map<String, String>> config2Attributes = new HashMap<>();
       config2Attributes.put("attribute2", attributes);
-      config2.setPropertiesAttributes(config2Attributes);
+
+      final Config config2 = configFactory.createNew(cluster, "global3", "version122",
+        new HashMap<>(), config2Attributes);
 
       Long groupId = addConfigGroup("g3", "t1", new ArrayList<String>() {{
         add("h3");
@@ -544,7 +592,7 @@ public class ConfigHelperTest {
               configHelper.getEffectiveDesiredTags(cluster, "h3"));
 
       Assert.assertNotNull(effectiveAttributes);
-      Assert.assertEquals(10, effectiveAttributes.size());
+      Assert.assertEquals(8, effectiveAttributes.size());
 
       Assert.assertTrue(effectiveAttributes.containsKey("global3"));
       Map<String, Map<String, String>> globalAttrs = effectiveAttributes.get("global3");
@@ -576,19 +624,19 @@ public class ConfigHelperTest {
     @Test
     public void testCloneAttributesMap() throws Exception {
       // init
-      Map<String, Map<String, String>> targetAttributesMap = new HashMap<String, Map<String, String>>();
-      Map<String, String> attributesValues = new HashMap<String, String>();
+      Map<String, Map<String, String>> targetAttributesMap = new HashMap<>();
+      Map<String, String> attributesValues = new HashMap<>();
       attributesValues.put("a", "1");
       attributesValues.put("b", "2");
       attributesValues.put("f", "3");
       attributesValues.put("q", "4");
       targetAttributesMap.put("attr", attributesValues);
-      Map<String, Map<String, String>> sourceAttributesMap = new HashMap<String, Map<String, String>>();
-      attributesValues = new HashMap<String, String>();
+      Map<String, Map<String, String>> sourceAttributesMap = new HashMap<>();
+      attributesValues = new HashMap<>();
       attributesValues.put("a", "5");
       attributesValues.put("f", "6");
       sourceAttributesMap.put("attr", attributesValues);
-      attributesValues = new HashMap<String, String>();
+      attributesValues = new HashMap<>();
       attributesValues.put("f", "7");
       attributesValues.put("q", "8");
       sourceAttributesMap.put("attr1", attributesValues);
@@ -615,8 +663,8 @@ public class ConfigHelperTest {
     @Test
     public void testCloneAttributesMapSourceIsNull() throws Exception {
       // init
-      Map<String, Map<String, String>> targetAttributesMap = new HashMap<String, Map<String, String>>();
-      Map<String, String> attributesValues = new HashMap<String, String>();
+      Map<String, Map<String, String>> targetAttributesMap = new HashMap<>();
+      Map<String, String> attributesValues = new HashMap<>();
       attributesValues.put("a", "1");
       attributesValues.put("b", "2");
       attributesValues.put("f", "3");
@@ -644,12 +692,12 @@ public class ConfigHelperTest {
     public void testCloneAttributesMapTargetIsNull() throws Exception {
       // init
       Map<String, Map<String, String>> targetAttributesMap = null;
-      Map<String, Map<String, String>> sourceAttributesMap = new HashMap<String, Map<String, String>>();
-      Map<String, String> attributesValues = new HashMap<String, String>();
+      Map<String, Map<String, String>> sourceAttributesMap = new HashMap<>();
+      Map<String, String> attributesValues = new HashMap<>();
       attributesValues.put("a", "5");
       attributesValues.put("f", "6");
       sourceAttributesMap.put("attr", attributesValues);
-      attributesValues = new HashMap<String, String>();
+      attributesValues = new HashMap<>();
       attributesValues.put("f", "7");
       attributesValues.put("q", "8");
       sourceAttributesMap.put("attr1", attributesValues);
@@ -675,22 +723,23 @@ public class ConfigHelperTest {
 
     @Test
     public void testMergeAttributes() throws Exception {
-      Map<String, Map<String, String>> persistedAttributes = new HashMap<String, Map<String, String>>();
-      Map<String, String> persistedFinalAttrs = new HashMap<String, String>();
+      Map<String, Map<String, String>> persistedAttributes = new HashMap<>();
+      Map<String, String> persistedFinalAttrs = new HashMap<>();
       persistedFinalAttrs.put("a", "true");
       persistedFinalAttrs.put("c", "true");
       persistedFinalAttrs.put("d", "true");
       persistedAttributes.put("final", persistedFinalAttrs);
-      Map<String, Map<String, String>> confGroupAttributes = new HashMap<String, Map<String, String>>();
-      Map<String, String> confGroupFinalAttrs = new HashMap<String, String>();
+      Map<String, Map<String, String>> confGroupAttributes = new HashMap<>();
+      Map<String, String> confGroupFinalAttrs = new HashMap<>();
       confGroupFinalAttrs.put("b", "true");
       confGroupAttributes.put("final", confGroupFinalAttrs);
-      Map<String, String> confGroupProperties = new HashMap<String, String>();
+      Map<String, String> confGroupProperties = new HashMap<>();
       confGroupProperties.put("a", "any");
       confGroupProperties.put("b", "any");
       confGroupProperties.put("c", "any");
 
-      Config overrideConfig = new ConfigImpl(cluster, "type", confGroupProperties, confGroupAttributes, injector);
+      Config overrideConfig = configFactory.createNew(cluster, "type", null,
+          confGroupProperties, confGroupAttributes);
 
       Map<String, Map<String, String>> result
           = configHelper.overrideAttributes(overrideConfig, persistedAttributes);
@@ -706,19 +755,20 @@ public class ConfigHelperTest {
 
     @Test
     public void testMergeAttributesWithNoAttributeOverrides() throws Exception {
-      Map<String, Map<String, String>> persistedAttributes = new HashMap<String, Map<String, String>>();
-      Map<String, String> persistedFinalAttrs = new HashMap<String, String>();
+      Map<String, Map<String, String>> persistedAttributes = new HashMap<>();
+      Map<String, String> persistedFinalAttrs = new HashMap<>();
       persistedFinalAttrs.put("a", "true");
       persistedFinalAttrs.put("c", "true");
       persistedFinalAttrs.put("d", "true");
       persistedAttributes.put("final", persistedFinalAttrs);
-      Map<String, Map<String, String>> confGroupAttributes = new HashMap<String, Map<String, String>>();
-      Map<String, String> confGroupProperties = new HashMap<String, String>();
+      Map<String, Map<String, String>> confGroupAttributes = new HashMap<>();
+      Map<String, String> confGroupProperties = new HashMap<>();
       confGroupProperties.put("a", "any");
       confGroupProperties.put("b", "any");
       confGroupProperties.put("c", "any");
 
-      Config overrideConfig = new ConfigImpl(cluster, "type", confGroupProperties, confGroupAttributes, injector);
+      Config overrideConfig = configFactory.createNew(cluster, "type", null,
+          confGroupProperties, confGroupAttributes);
 
       Map<String, Map<String, String>> result
           = configHelper.overrideAttributes(overrideConfig, persistedAttributes);
@@ -733,18 +783,19 @@ public class ConfigHelperTest {
 
     @Test
     public void testMergeAttributesWithNullAttributes() throws Exception {
-      Map<String, Map<String, String>> persistedAttributes = new HashMap<String, Map<String, String>>();
-      Map<String, String> persistedFinalAttrs = new HashMap<String, String>();
+      Map<String, Map<String, String>> persistedAttributes = new HashMap<>();
+      Map<String, String> persistedFinalAttrs = new HashMap<>();
       persistedFinalAttrs.put("a", "true");
       persistedFinalAttrs.put("c", "true");
       persistedFinalAttrs.put("d", "true");
       persistedAttributes.put("final", persistedFinalAttrs);
-      Map<String, String> confGroupProperties = new HashMap<String, String>();
+      Map<String, String> confGroupProperties = new HashMap<>();
       confGroupProperties.put("a", "any");
       confGroupProperties.put("b", "any");
       confGroupProperties.put("c", "any");
 
-      Config overrideConfig = new ConfigImpl(cluster, "type", confGroupProperties, null, injector);
+      Config overrideConfig = configFactory.createNew(cluster, "type", null,
+          confGroupProperties, null);
 
       Map<String, Map<String, String>> result
           = configHelper.overrideAttributes(overrideConfig, persistedAttributes);
@@ -760,19 +811,42 @@ public class ConfigHelperTest {
     }
 
     @Test
+    public void testFilterInvalidPropertyValues() {
+      Map<PropertyInfo, String> properties = new HashMap<>();
+      PropertyInfo prop1 = new PropertyInfo();
+      prop1.setName("1");
+      PropertyInfo prop2 = new PropertyInfo();
+      prop1.setName("2");
+      PropertyInfo prop3 = new PropertyInfo();
+      prop1.setName("3");
+      PropertyInfo prop4 = new PropertyInfo();
+      prop1.setName("4");
+
+      properties.put(prop1, "/tmp");
+      properties.put(prop2, "null");
+      properties.put(prop3, "");
+      properties.put(prop4, null);
+
+      Set<String> resultSet = configHelper.filterInvalidPropertyValues(properties, "testlist");
+      Assert.assertEquals(1, resultSet.size());
+      Assert.assertEquals(resultSet.iterator().next(), "/tmp");
+    }
+
+    @Test
     public void testMergeAttributesWithNullProperties() throws Exception {
-      Map<String, Map<String, String>> persistedAttributes = new HashMap<String, Map<String, String>>();
-      Map<String, String> persistedFinalAttrs = new HashMap<String, String>();
+      Map<String, Map<String, String>> persistedAttributes = new HashMap<>();
+      Map<String, String> persistedFinalAttrs = new HashMap<>();
       persistedFinalAttrs.put("a", "true");
       persistedFinalAttrs.put("c", "true");
       persistedFinalAttrs.put("d", "true");
       persistedAttributes.put("final", persistedFinalAttrs);
-      Map<String, Map<String, String>> confGroupAttributes = new HashMap<String, Map<String, String>>();
-      Map<String, String> confGroupFinalAttrs = new HashMap<String, String>();
+      Map<String, Map<String, String>> confGroupAttributes = new HashMap<>();
+      Map<String, String> confGroupFinalAttrs = new HashMap<>();
       confGroupFinalAttrs.put("b", "true");
       confGroupAttributes.put("final", confGroupFinalAttrs);
 
-      Config overrideConfig = new ConfigImpl(cluster, "type", null, confGroupAttributes, injector);
+      Config overrideConfig = configFactory.createNew(cluster, "type", "version122",
+        new HashMap<>(), confGroupAttributes);
 
       Map<String, Map<String, String>> result
           = configHelper.overrideAttributes(overrideConfig, persistedAttributes);
@@ -806,11 +880,12 @@ public class ConfigHelperTest {
       Assert.assertTrue(propertiesAttributes.get("attribute1").containsKey("ipc.client.connect.max.retries"));
 
 
-      Map<String, String> updates = new HashMap<String, String>();
+      Map<String, String> updates = new HashMap<>();
       updates.put("new-property", "new-value");
       updates.put("fs.trash.interval", "updated-value");
       Collection<String> removals = Collections.singletonList("ipc.client.connect.max.retries");
-      configHelper.updateConfigType(cluster, managementController, "core-site", updates, removals, "admin", "Test note");
+      configHelper.updateConfigType(cluster, cluster.getCurrentStackVersion(), managementController,
+          "core-site", updates, removals, "admin", "Test note");
 
 
       Config updatedConfig = cluster.getDesiredConfigByType("core-site");
@@ -844,12 +919,12 @@ public class ConfigHelperTest {
       Assert.assertEquals("simple", properties.get("oozie.authentication.type"));
       Assert.assertEquals("false", properties.get("oozie.service.HadoopAccessorService.kerberos.enabled"));
 
-      Map<String, String> updates = new HashMap<String, String>();
+      Map<String, String> updates = new HashMap<>();
       updates.put("oozie.authentication.type", "kerberos");
       updates.put("oozie.service.HadoopAccessorService.kerberos.enabled", "true");
 
-      configHelper.updateConfigType(cluster, managementController, "oozie-site", updates, null, "admin", "Test " +
-          "note");
+      configHelper.updateConfigType(cluster, cluster.getCurrentStackVersion(), managementController,
+          "oozie-site", updates, null, "admin", "Test " + "note");
 
       Config updatedConfig = cluster.getDesiredConfigByType("oozie-site");
       // Config tag updated
@@ -873,10 +948,11 @@ public class ConfigHelperTest {
       Assert.assertEquals("embedded", properties.get("timeline.service.operating.mode"));
       Assert.assertEquals("false", properties.get("timeline.service.fifo.enabled"));
 
-      List<String> removals = new ArrayList<String>();
+      List<String> removals = new ArrayList<>();
       removals.add("timeline.service.operating.mode");
 
-      configHelper.updateConfigType(cluster, managementController, "ams-site", null, removals, "admin", "Test note");
+      configHelper.updateConfigType(cluster, cluster.getCurrentStackVersion(), managementController,
+          "ams-site", null, removals, "admin", "Test note");
 
       Config updatedConfig = cluster.getDesiredConfigByType("ams-site");
       // Config tag updated
@@ -892,21 +968,27 @@ public class ConfigHelperTest {
     @Test
     public void testCalculateIsStaleConfigs() throws Exception {
 
-      Map<String, HostConfig> schReturn = new HashMap<String, HostConfig>();
+      Map<String, HostConfig> schReturn = new HashMap<>();
       HostConfig hc = new HostConfig();
       // Put a different version to check for change
       hc.setDefaultVersionTag("version2");
       schReturn.put("flume-conf", hc);
 
+      ServiceComponent sc = createNiceMock(ServiceComponent.class);
+
       // set up mocks
       ServiceComponentHost sch = createNiceMock(ServiceComponentHost.class);
+      expect(sc.getDesiredStackId()).andReturn(cluster.getDesiredStackVersion()).anyTimes();
+
       // set up expectations
       expect(sch.getActualConfigs()).andReturn(schReturn).times(6);
       expect(sch.getHostName()).andReturn("h1").anyTimes();
-      expect(sch.getClusterId()).andReturn(1l).anyTimes();
+      expect(sch.getClusterId()).andReturn(cluster.getClusterId()).anyTimes();
       expect(sch.getServiceName()).andReturn("FLUME").anyTimes();
       expect(sch.getServiceComponentName()).andReturn("FLUME_HANDLER").anyTimes();
-      replay(sch);
+      expect(sch.getServiceComponent()).andReturn(sc).anyTimes();
+
+      replay(sc, sch);
       // Cluster level config changes
       Assert.assertTrue(configHelper.isStaleConfigs(sch, null));
 
@@ -918,11 +1000,13 @@ public class ConfigHelperTest {
       Assert.assertFalse(configHelper.isStaleConfigs(sch, null));
 
       // Cluster level same configs but group specific configs for host have been updated
-      List<String> hosts = new ArrayList<String>();
+      List<String> hosts = new ArrayList<>();
       hosts.add("h1");
-      List<Config> configs = new ArrayList<Config>();
-      ConfigImpl configImpl = new ConfigImpl("flume-conf");
-      configImpl.setTag("FLUME1");
+      List<Config> configs = new ArrayList<>();
+
+      Config configImpl = configFactory.createNew(cluster, "flume-conf", "FLUME1",
+        new HashMap<>(), null);
+
       configs.add(configImpl);
       addConfigGroup("configGroup1", "FLUME", hosts, configs);
 
@@ -954,7 +1038,108 @@ public class ConfigHelperTest {
       Assert.assertTrue(configHelper.isStaleConfigs(sch, null));
 
       verify(sch);
+  }
+
+  @Test
+  public void testCalculateRefreshCommands() throws Exception {
+
+    Map<String, HostConfig> schReturn = new HashMap<>();
+    HostConfig hc = new HostConfig();
+    // Put a different version to check for change
+    hc.setDefaultVersionTag("version1");
+    schReturn.put("hdfs-site", hc);
+
+    ServiceComponent sc = createNiceMock(ServiceComponent.class);
+
+    // set up mocks
+    ServiceComponentHost sch = createNiceMock(ServiceComponentHost.class);
+    expect(sc.getDesiredStackId()).andReturn(cluster.getDesiredStackVersion()).anyTimes();
+
+    // set up expectations
+    expect(sch.getActualConfigs()).andReturn(schReturn).anyTimes();
+    expect(sch.getHostName()).andReturn("h1").anyTimes();
+    expect(sch.getClusterId()).andReturn(cluster.getClusterId()).anyTimes();
+    expect(sch.getServiceName()).andReturn("HDFS").anyTimes();
+    expect(sch.getServiceComponentName()).andReturn("NAMENODE").anyTimes();
+    expect(sch.getServiceComponent()).andReturn(sc).anyTimes();
+
+    replay(sc, sch);
+
+    Assert.assertTrue(configHelper.isStaleConfigs(sch, null));
+    String refreshConfigsCommand = configHelper.getRefreshConfigsCommand(cluster, sch);
+    Assert.assertEquals("reload_configs", refreshConfigsCommand);
+    verify(sch);
+  }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testFindChangedKeys() throws AmbariException, AuthorizationException, NoSuchMethodException,
+        InvocationTargetException, IllegalAccessException {
+      final String configType = "hdfs-site";
+      final String newPropertyName = "new.property";
+
+      ConfigurationRequest newProperty = new ConfigurationRequest();
+      newProperty.setClusterName(clusterName);
+      newProperty.setType(configType);
+      newProperty.setVersionTag("version3");
+      newProperty.setProperties(new HashMap<String, String>() {{
+        put("hadoop.caller.context.enabled", "false");
+        put(newPropertyName, "true");
+      }});
+      newProperty.setPropertiesAttributes(null);
+
+      final ClusterRequest clusterRequestNewProperty =
+          new ClusterRequest(cluster.getClusterId(), clusterName,
+              cluster.getDesiredStackVersion().getStackVersion(), null);
+
+      clusterRequestNewProperty.setDesiredConfig(Collections.singletonList(newProperty));
+      managementController.updateClusters(new HashSet<ClusterRequest>() {{
+        add(clusterRequestNewProperty);
+      }}, null);
+
+
+      ConfigurationRequest removedNewProperty = new ConfigurationRequest();
+      removedNewProperty.setClusterName(clusterName);
+      removedNewProperty.setType(configType);
+      removedNewProperty.setVersionTag("version4");
+      removedNewProperty.setProperties(new HashMap<String, String>() {{
+        put("hadoop.caller.context.enabled", "false");
+      }});
+      removedNewProperty.setPropertiesAttributes(null);
+
+      final ClusterRequest clusterRequestRemovedNewProperty =
+          new ClusterRequest(cluster.getClusterId(), clusterName,
+              cluster.getDesiredStackVersion().getStackVersion(), null);
+
+      clusterRequestRemovedNewProperty.setDesiredConfig(Collections.singletonList(removedNewProperty));
+      managementController.updateClusters(new HashSet<ClusterRequest>() {{
+        add(clusterRequestRemovedNewProperty);
+      }}, null);
+
+      ConfigHelper configHelper = injector.getInstance(ConfigHelper.class);
+      Method method = ConfigHelper.class.getDeclaredMethod("findChangedKeys",
+          Cluster.class, String.class, Collection.class, Collection.class);
+      method.setAccessible(true);
+
+      // property value was changed
+      Collection<String> value = (Collection<String>) method.invoke(configHelper, cluster, configType,
+          Collections.singletonList("version1"), Collections.singletonList("version2"));
+      assertTrue(value.size() == 1);
+      assertEquals(configType + "/hadoop.caller.context.enabled", value.iterator().next());
+
+      // property was added
+      value = (Collection<String>) method.invoke(configHelper, cluster, configType,
+          Collections.singletonList("version2"), Collections.singletonList("version3"));
+      assertTrue(value.size() == 1);
+      assertEquals(configType + "/" + newPropertyName, value.iterator().next());
+
+      // property was removed
+      value = (Collection<String>) method.invoke(configHelper, cluster, configType,
+          Collections.singletonList("version3"), Collections.singletonList("version4"));
+      assertTrue(value.size() == 1);
+      assertEquals(configType + "/" + newPropertyName, value.iterator().next());
     }
+
   }
 
   public static class RunWithCustomModule {
@@ -969,20 +1154,21 @@ public class ConfigHelperTest {
           final AmbariMetaInfo mockMetaInfo = createNiceMock(AmbariMetaInfo.class);
           final ClusterController clusterController = createStrictMock(ClusterController.class);
 
+          PartialNiceMockBinder.newBuilder().addAmbariMetaInfoBinding().addFactoriesInstallBinding().addLdapBindings().build().configure(binder());
+
           bind(EntityManager.class).toInstance(createNiceMock(EntityManager.class));
           bind(DBAccessor.class).toInstance(createNiceMock(DBAccessor.class));
-          bind(ClusterFactory.class).toInstance(createNiceMock(ClusterFactory.class));
-          bind(HostFactory.class).toInstance(createNiceMock(HostFactory.class));
           bind(SecurityHelper.class).toInstance(createNiceMock(SecurityHelper.class));
           bind(OsFamily.class).toInstance(createNiceMock(OsFamily.class));
           bind(AmbariCustomCommandExecutionHelper.class).toInstance(createNiceMock(AmbariCustomCommandExecutionHelper.class));
-          bind(AmbariManagementController.class).toInstance(createNiceMock(AmbariManagementController.class));
           bind(AmbariMetaInfo.class).toInstance(mockMetaInfo);
-          bind(RequestFactory.class).toInstance(createNiceMock(RequestFactory.class));
           bind(Clusters.class).toInstance(createNiceMock(Clusters.class));
           bind(ClusterController.class).toInstance(clusterController);
           bind(StackManagerFactory.class).toInstance(createNiceMock(StackManagerFactory.class));
           bind(HostRoleCommandDAO.class).toInstance(createNiceMock(HostRoleCommandDAO.class));
+          bind(STOMPUpdatePublisher.class).toInstance(createNiceMock(STOMPUpdatePublisher.class));
+          bind(MpackManagerFactory.class).toInstance(createNiceMock(MpackManagerFactory.class));
+
         }
       });
 
@@ -1002,6 +1188,7 @@ public class ConfigHelperTest {
       Cluster mockCluster = createStrictMock(Cluster.class);
       StackId mockStackVersion = createStrictMock(StackId.class);
       AmbariMetaInfo mockAmbariMetaInfo = injector.getInstance(AmbariMetaInfo.class);
+      Service mockService = createStrictMock(Service.class);
       ServiceInfo mockServiceInfo = createStrictMock(ServiceInfo.class);
 
       PropertyInfo mockPropertyInfo1 = createStrictMock(PropertyInfo.class);
@@ -1009,8 +1196,8 @@ public class ConfigHelperTest {
 
       List<PropertyInfo> serviceProperties = Arrays.asList(mockPropertyInfo1, mockPropertyInfo2);
 
-      expect(mockCluster.getCurrentStackVersion()).andReturn(mockStackVersion).once();
-
+      expect(mockCluster.getService("SERVICE")).andReturn(mockService).once();
+      expect(mockService.getDesiredStackId()).andReturn(mockStackVersion).once();
       expect(mockStackVersion.getStackName()).andReturn("HDP").once();
       expect(mockStackVersion.getStackVersion()).andReturn("2.2").once();
 
@@ -1018,7 +1205,7 @@ public class ConfigHelperTest {
 
       expect(mockServiceInfo.getProperties()).andReturn(serviceProperties).once();
 
-      replay(mockAmbariMetaInfo, mockCluster, mockStackVersion, mockServiceInfo, mockPropertyInfo1, mockPropertyInfo2);
+      replay(mockAmbariMetaInfo, mockCluster, mockService, mockStackVersion, mockServiceInfo, mockPropertyInfo1, mockPropertyInfo2);
 
       mockAmbariMetaInfo.init();
 
@@ -1097,6 +1284,51 @@ public class ConfigHelperTest {
       Assert.assertEquals("included-type.xml", result.iterator().next().getFilename());
 
       verify(mockAmbariMetaInfo, mockStackVersion, mockServiceInfo, mockPropertyInfo1, mockPropertyInfo2);
+    }
+  }
+
+  public static class RunWithoutModules {
+    @Test
+    public void nullsAreEqual() {
+      assertTrue(ConfigHelper.valuesAreEqual(null, null));
+    }
+
+    @Test
+    public void equalStringsAreEqual() {
+      assertTrue(ConfigHelper.valuesAreEqual("asdf", "asdf"));
+      assertTrue(ConfigHelper.valuesAreEqual("qwerty", "qwerty"));
+    }
+
+    @Test
+    public void nullIsNotEqualWithNonNull() {
+      assertFalse(ConfigHelper.valuesAreEqual(null, "asdf"));
+      assertFalse(ConfigHelper.valuesAreEqual("asdf", null));
+    }
+
+    @Test
+    public void equalNumbersInDifferentFormsAreEqual() {
+      assertTrue(ConfigHelper.valuesAreEqual("1.234", "1.2340"));
+      assertTrue(ConfigHelper.valuesAreEqual("12.34", "1.234e1"));
+      assertTrue(ConfigHelper.valuesAreEqual("123L", "123l"));
+      assertTrue(ConfigHelper.valuesAreEqual("-1.234", "-1.2340"));
+      assertTrue(ConfigHelper.valuesAreEqual("-12.34", "-1.234e1"));
+      assertTrue(ConfigHelper.valuesAreEqual("-123L", "-123l"));
+      assertTrue(ConfigHelper.valuesAreEqual("1f", "1.0f"));
+      assertTrue(ConfigHelper.valuesAreEqual("0", "000"));
+
+      // these are treated as different by NumberUtils (due to different types not being equal)
+      assertTrue(ConfigHelper.valuesAreEqual("123", "123L"));
+      assertTrue(ConfigHelper.valuesAreEqual("0", "0.0"));
+    }
+
+    @Test
+    public void differentNumbersAreNotEqual() {
+      assertFalse(ConfigHelper.valuesAreEqual("1.234", "1.2341"));
+      assertFalse(ConfigHelper.valuesAreEqual("123L", "124L"));
+      assertFalse(ConfigHelper.valuesAreEqual("-1.234", "1.234"));
+      assertFalse(ConfigHelper.valuesAreEqual("-123L", "123L"));
+      assertFalse(ConfigHelper.valuesAreEqual("-1.234", "-1.2341"));
+      assertFalse(ConfigHelper.valuesAreEqual("-123L", "-124L"));
     }
   }
 }

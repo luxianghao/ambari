@@ -93,7 +93,7 @@ var urls = {
   },
 
   'common.service.hdfs.getNnCheckPointTime': {
-    'real': '/clusters/{clusterName}/services/HDFS/components/NAMENODE?fields=host_components/metrics/dfs/FSNamesystem/HAState,host_components/metrics/dfs/FSNamesystem/LastCheckpointTime',
+    'real': '/clusters/{clusterName}/services/HDFS/components/NAMENODE?fields=host_components/metrics/dfs/FSNamesystem/HAState,host_components/metrics/dfs/FSNamesystem/LastCheckpointTime,host_components/metrics/dfs/namenode/ClusterId',
     'mock': ''
   },
 
@@ -231,13 +231,8 @@ var urls = {
   },
 
   'common.request.polling': {
-    'real': '/clusters/{clusterName}/requests/{requestId}?fields=tasks/Tasks/request_id,tasks/Tasks/command,tasks/Tasks/command_detail,tasks/Tasks/start_time,tasks/Tasks/end_time,tasks/Tasks/exit_code,tasks/Tasks/host_name,tasks/Tasks/id,tasks/Tasks/role,tasks/Tasks/status,tasks/Tasks/structured_out,Requests/*&tasks/Tasks/stage_id={stageId}',
+    'real': '/clusters/{clusterName}/requests/{requestId}?fields=tasks/Tasks/request_id,tasks/Tasks/command,tasks/Tasks/command_detail,tasks/Tasks/ops_display_name,tasks/Tasks/start_time,tasks/Tasks/end_time,tasks/Tasks/exit_code,tasks/Tasks/host_name,tasks/Tasks/id,tasks/Tasks/role,tasks/Tasks/status,tasks/Tasks/structured_out,Requests/*&tasks/Tasks/stage_id={stageId}',
     'mock': '/data/background_operations/host_upgrade_tasks.json'
-  },
-
-  'service.ambari': {
-    'real': '/services/AMBARI?fields=components/RootServiceComponents',
-    'mock': '/data/services/ambari.json'
   },
 
   'ambari.service.load_server_version': {
@@ -303,8 +298,7 @@ var urls = {
       return {
         data: JSON.stringify({
           RequestInfo: {
-            query: data.query,
-            force_delete_components: true
+            query: data.query
           }
         })
       }
@@ -328,6 +322,32 @@ var urls = {
           }
         })
       };
+    }
+  },
+
+  'common.service.host_component.update': {
+    'real': '/clusters/{clusterName}/host_components',
+    'mock': '',
+    'type': 'PUT',
+    'format': function (data) {
+      return {
+        data: JSON.stringify({
+          RequestInfo: {
+            context: data.context,
+            operation_level: {
+              level: 'SERVICE',
+              cluster_name: data.clusterName,
+              service_name: data.serviceName
+            },
+            query: data.query
+          },
+          Body: {
+            HostRoles: {
+              state: data.state
+            }
+          }
+        })
+      }
     }
   },
 
@@ -539,12 +559,14 @@ var urls = {
     'mock': '/data/alerts/alert_instances_history.json'
   },
   'background_operations.get_most_recent': {
-    'real': '/clusters/{clusterName}/requests?to=end&page_size={operationsCount}&fields=Requests',
+    'real': '/clusters/{clusterName}/requests?to=end&page_size={operationsCount}&fields=' +
+    'Requests/end_time,Requests/id,Requests/progress_percent,Requests/request_context,' +
+    'Requests/request_status,Requests/start_time,Requests/cluster_name,Requests/user_name&minimal_response=true',
     'mock': '/data/background_operations/list_on_start.json',
     'testInProduction': true
   },
   'background_operations.get_by_request': {
-    'real': '/clusters/{clusterName}/requests/{requestId}?fields=*,tasks/Tasks/request_id,tasks/Tasks/command,tasks/Tasks/command_detail,tasks/Tasks/host_name,tasks/Tasks/id,tasks/Tasks/role,tasks/Tasks/status&minimal_response=true',
+    'real': '/clusters/{clusterName}/requests/{requestId}?fields=*,tasks/Tasks/request_id,tasks/Tasks/command,tasks/Tasks/command_detail,tasks/Tasks/ops_display_name,tasks/Tasks/host_name,tasks/Tasks/id,tasks/Tasks/role,tasks/Tasks/status&minimal_response=true',
     'mock': '/data/background_operations/task_by_request{requestId}.json',
     'testInProduction': true
   },
@@ -674,6 +696,57 @@ var urls = {
     }
   },
 
+  'service.item.updateHBaseReplication': {
+    'real': '/clusters/{clusterName}/requests',
+    'mock': '',
+    'format': function (data) {
+      return {
+        type: 'POST',
+        data: JSON.stringify({
+          RequestInfo: {
+            'context': Em.I18n.t('services.service.actions.run.updateHBaseReplication.context'),
+            'command': 'UPDATE_REPLICATION',
+            "parameters": {
+              "replication_cluster_keys": data.replication_cluster_keys,
+              "replication_peers": data.replication_peers
+            }
+          },
+          "Requests/resource_filters": [{
+            'service_name': 'HBASE',
+            'component_name': 'HBASE_MASTER',
+            'hosts': data.hosts
+          }]
+        })
+      }
+    }
+  },
+
+  'service.item.stopHBaseReplication': {
+    'real': '/clusters/{clusterName}/requests',
+    'mock': '',
+    'format': function (data) {
+      return {
+        type: 'POST',
+        data: JSON.stringify({
+          RequestInfo: {
+            'context': Em.I18n.t('services.service.actions.run.stopHBaseReplication.context'),
+            'command': 'STOP_REPLICATION',
+            "parameters": {
+              "replication_peers": data.replication_peers
+            }
+          },
+          "Requests/resource_filters": [{
+            'service_name': 'HBASE',
+            'component_name': 'HBASE_MASTER',
+            'hosts': data.hosts
+          }]
+        })
+      }
+    }
+  },
+
+
+
   'service.item.executeCustomCommand': {
     'real': '/clusters/{clusterName}/requests',
     'mock': '',
@@ -789,7 +862,6 @@ var urls = {
           Clusters: {
             desired_config: {
               "type": data.siteName,
-              "tag": 'version' + (new Date).getTime(),
               "properties": data.properties,
               "service_config_version_note": data.service_config_version_note
 
@@ -959,8 +1031,11 @@ var urls = {
     'mock': ''
   },
   'host.host_component.decommission_status_datanode': {
-    'real': '/clusters/{clusterName}/hosts/{hostName}/host_components/{componentName}?fields=metrics/dfs/namenode',
+    'real': '/clusters/{clusterName}/host_components?HostRoles/component_name=NAMENODE&HostRoles/host_name.in({hostNames})&fields=metrics/dfs/namenode',
     'mock': '/data/hosts/HDP2/decommission_state.json'
+  },
+  'host.host_component.decommission_status_regionserver': {
+    'real': '/clusters/{clusterName}/host_components?HostRoles/component_name=HBASE_MASTER&HostRoles/host_name={hostName}&fields=metrics/hbase/master/liveRegionServersHosts,metrics/hbase/master/deadRegionServersHosts&minimal_response=true'
   },
   'host.region_servers.in_inservice': {
     'real': '/clusters/{clusterName}/host_components?HostRoles/component_name=HBASE_REGIONSERVER&HostRoles/desired_admin_state=INSERVICE&fields=HostRoles/host_name&minimal_response=true',
@@ -1350,26 +1425,12 @@ var urls = {
       };
     }
   },
-  'settings.get.user_pref': {
-    'real': '/persist/{key}',
-    'mock': '/data/user_settings/{key}.json'
-  },
-  'settings.post.user_pref': {
-    'real': '/persist',
-    'mock': '',
-    'type': 'POST',
-    'format': function (data) {
-      return {
-        data: JSON.stringify(data.keyValuePair)
-      }
-    }
-  },
   'cluster.load_cluster_name': {
-    'real': '/clusters?fields=Clusters/security_type',
+    'real': '/clusters?fields=Clusters/security_type,Clusters/version,Clusters/cluster_id',
     'mock': '/data/clusters/info.json'
   },
   'cluster.load_last_upgrade': {
-    'real': '/clusters/{clusterName}/upgrades?fields=Upgrade/request_status,Upgrade/request_id,Upgrade/to_version,Upgrade/from_version,Upgrade/direction,Upgrade/upgrade_type,Upgrade/downgrade_allowed,Upgrade/skip_failures,Upgrade/skip_service_check_failures',
+    'real': '/clusters/{clusterName}/upgrades?fields=Upgrade/*',
     'mock': '/data/stack_versions/upgrades.json'
   },
   'cluster.update_upgrade_version': {
@@ -1428,6 +1489,10 @@ var urls = {
     'real': '/clusters/{clusterName}/hosts/{hostName}/host_components/NAMENODE',
     'mock': ''
   },
+  'admin.high_availability.getNnCheckPointsStatuses': {
+    'real': '/clusters/{clusterName}/host_components?HostRoles/component_name=NAMENODE&HostRoles/host_name.in({hostNames})&fields=HostRoles/desired_state,metrics/dfs/namenode&minimal_response=true',
+    'mock': ''
+  },
   'admin.high_availability.getJnCheckPointStatus': {
     'real': '/clusters/{clusterName}/hosts/{hostName}/host_components/JOURNALNODE?fields=metrics',
     'mock': ''
@@ -1468,7 +1533,6 @@ var urls = {
           Clusters: {
             desired_config: {
               "type": data.siteName,
-              "tag": 'version' + (new Date).getTime(),
               "properties": data.properties
             }
           }
@@ -1500,15 +1564,6 @@ var urls = {
   },
   'admin.get.all_configurations': {
     'real': '/clusters/{clusterName}/configurations?{urlParams}',
-    'mock': '',
-    'format': function () {
-      return {
-        timeout: 10000
-      };
-    }
-  },
-  'admin.security.add.cluster_configs': {
-    'real': '/clusters/{clusterName}' + '?fields=Clusters/desired_configs',
     'mock': '',
     'format': function () {
       return {
@@ -1590,6 +1645,10 @@ var urls = {
   },
   'admin.kerberize.cluster_descriptor': {
     'real': '/clusters/{clusterName}/kerberos_descriptors/COMPOSITE{queryParams}',
+    'mock': '/data/wizard/kerberos/stack_descriptors.json'
+  },
+  'admin.kerberize.cluster_descriptor.stack': {
+    'real': '/clusters/{clusterName}/kerberos_descriptors/STACK',
     'mock': '/data/wizard/kerberos/stack_descriptors.json'
   },
   'admin.kerberos.cluster.artifact.create': {
@@ -1689,12 +1748,22 @@ var urls = {
     'real': '/clusters/{clusterName}/upgrades/{upgradeId}/upgrade_groups/{groupId}/upgrade_items/{stageId}?fields=' +
     'UpgradeItem/group_id,' +
     'UpgradeItem/stage_id,' +
-    'tasks/Tasks/*&' +
+    'tasks/Tasks/command_detail,' +
+    'tasks/Tasks/host_name,' +
+    'tasks/Tasks/role,' +
+    'tasks/Tasks/request_id,' +
+    'tasks/Tasks/stage_id,' +
+    'tasks/Tasks/status,' +
+    'tasks/Tasks/structured_out&' +
     'minimal_response=true',
     'mock': '/data/stack_versions/upgrade_item.json'
   },
+  'admin.upgrade.upgrade_task': {
+    'real': '/clusters/{clusterName}/upgrades/{upgradeId}/upgrade_groups/{groupId}/upgrade_items/{stageId}/tasks/{taskId}',
+    'mock': ''
+  },
   'admin.upgrade.service_checks': {
-    'real': '/clusters/{clusterName}/upgrades/{upgradeId}/upgrade_groups?upgrade_items/UpgradeItem/status=COMPLETED&upgrade_items/tasks/Tasks/status.in(FAILED,ABORTED,TIMEDOUT)&upgrade_items/tasks/Tasks/command=SERVICE_CHECK&fields=upgrade_items/tasks/Tasks/command_detail,upgrade_items/tasks/Tasks/status&minimal_response=true'
+    'real': '/clusters/{clusterName}/upgrades/{upgradeId}/upgrade_groups?upgrade_items/UpgradeItem/status=COMPLETED&upgrade_items/tasks/Tasks/status.in(FAILED,ABORTED,TIMEDOUT)&upgrade_items/tasks/Tasks/command=SERVICE_CHECK&fields=upgrade_items/tasks/Tasks/command_detail,tasks/Tasks/ops_display_name,upgrade_items/tasks/Tasks/status&minimal_response=true'
   },
   'admin.upgrade.update.options': {
     'real': '/clusters/{clusterName}/upgrades/{upgradeId}',
@@ -1717,12 +1786,14 @@ var urls = {
     'type': 'POST',
     'format': function (data) {
       return {
+        timeout : 600000,
         data: JSON.stringify({
           "Upgrade": {
-            "repository_version": data.value,
+            "repository_version_id": data.id,
             "upgrade_type": data.type,
             "skip_failures": data.skipComponentFailures,
-            "skip_service_check_failures": data.skipSCFailures
+            "skip_service_check_failures": data.skipSCFailures,
+            "direction": "UPGRADE"
           }
         })
       }
@@ -1735,13 +1806,9 @@ var urls = {
     'format': function (data) {
       return {
         data: JSON.stringify({
-          "RequestInfo": {
-            "downgrade": "true"
-          },
           "Upgrade": {
-            "from_version": data.from,
-            "repository_version": data.value,
-            "upgrade_type": data.upgradeType
+            "upgrade_type": data.upgradeType,
+            "direction": "DOWNGRADE"
           }
         })
       }
@@ -1754,9 +1821,6 @@ var urls = {
     'format': function (data) {
       return {
         data: JSON.stringify({
-          "RequestInfo": {
-            "downgrade": data.isDowngrade
-          },
           "Upgrade": {
             "request_status": "ABORTED",
             "suspended": "false"
@@ -1772,9 +1836,6 @@ var urls = {
     'format': function (data) {
       return {
         data: JSON.stringify({
-          "RequestInfo": {
-            "downgrade": data.isDowngrade
-          },
           "Upgrade": {
             "request_status": "ABORTED",
             "suspended": "true"
@@ -1792,6 +1853,21 @@ var urls = {
         data: JSON.stringify({
           "Upgrade": {
             "request_status": "PENDING"
+          }
+        })
+      }
+    }
+  },
+  'admin.upgrade.revert': {
+    'real': '/clusters/{clusterName}/upgrades',
+    'mock': '/data/stack_versions/start_upgrade.json',
+    'type': 'POST',
+    'format': function (data) {
+      return {
+        timeout : 600000,
+        data: JSON.stringify({
+          "Upgrade": {
+            "revert_upgrade_id": data.upgradeId
           }
         })
       }
@@ -1846,7 +1922,23 @@ var urls = {
       return {
         data: JSON.stringify({
           "Repositories": {
-            "base_url": data.baseUrl
+            "base_url": data.baseUrl,
+            "repo_name": data.repoName
+          }
+        })
+      }
+    }
+  },
+
+  'admin.stack_versions.discard': {
+    'real': '/stacks/{stackName}/versions/{stackVersion}/repository_versions/{id}',
+    'mock': '',
+    'type': 'PUT',
+    'format': function (data) {
+      return {
+        data: JSON.stringify({
+          "RepositoryVersions":{
+            "hidden": "true"
           }
         })
       }
@@ -1854,7 +1946,7 @@ var urls = {
   },
 
   'admin.upgrade.pre_upgrade_check': {
-    'real': '/clusters/{clusterName}/rolling_upgrades_check?fields=*&UpgradeChecks/repository_version={value}&UpgradeChecks/upgrade_type={type}',
+    'real': '/clusters/{clusterName}/rolling_upgrades_check?fields=*&UpgradeChecks/repository_version_id={id}&UpgradeChecks/upgrade_type={type}',
     'mock': '/data/stack_versions/pre_upgrade_check.json'
   },
 
@@ -1886,6 +1978,36 @@ var urls = {
 
   'admin.kerberos_security.regenerate_keytabs': {
     'real': '/clusters/{clusterName}?regenerate_keytabs={type}',
+    'mock': '',
+    'type': 'PUT',
+    'format': function (data) {
+      return {
+        data: JSON.stringify({
+          "Clusters" : {
+            "security_type" : "KERBEROS"
+          }
+        })
+      }
+    }
+  },
+
+  'admin.kerberos_security.regenerate_keytabs.service' : {
+    'real': '/clusters/{clusterName}?regenerate_keytabs=all&regenerate_components={serviceName}&config_update_policy=none',
+    'mock': '',
+    'type': 'PUT',
+    'format': function (data) {
+      return {
+        data: JSON.stringify({
+          "Clusters" : {
+            "security_type" : "KERBEROS"
+          }
+        })
+      }
+    }
+  },
+
+  'admin.kerberos_security.regenerate_keytabs.host' : {
+    'real': '/clusters/{clusterName}?regenerate_keytabs=all&regenerate_hosts={hostName}&config_update_policy=none',
     'mock': '',
     'type': 'PUT',
     'format': function (data) {
@@ -1977,7 +2099,7 @@ var urls = {
     'type': 'DELETE'
   },
   'wizard.service_components': {
-    'real': '{stackUrl}/services?fields=StackServices/*,components/*,components/dependencies/Dependencies/scope,components/dependencies/Dependencies/service_name,artifacts/Artifacts/artifact_name',
+    'real': '{stackUrl}/services?fields=StackServices/*,components/*,components/dependencies/Dependencies/scope,components/dependencies/Dependencies/service_name,components/dependencies/Dependencies/type,artifacts/Artifacts/artifact_name',
     'mock': '/data/stacks/HDP-2.1/service_components.json'
   },
   'wizard.step9.installer.get_host_status': {
@@ -1985,7 +2107,7 @@ var urls = {
     'mock': '/data/wizard/deploy/5_hosts/get_host_state.json'
   },
   'wizard.step9.load_log': {
-    'real': '/clusters/{cluster}/requests/{requestId}?fields=tasks/Tasks/command,tasks/Tasks/command_detail,tasks/Tasks/exit_code,tasks/Tasks/start_time,tasks/Tasks/end_time,tasks/Tasks/host_name,tasks/Tasks/id,tasks/Tasks/role,tasks/Tasks/status&minimal_response=true',
+    'real': '/clusters/{cluster}/requests/{requestId}?fields=tasks/Tasks/command,tasks/Tasks/command_detail,tasks/Tasks/ops_display_name,tasks/Tasks/exit_code,tasks/Tasks/start_time,tasks/Tasks/end_time,tasks/Tasks/host_name,tasks/Tasks/id,tasks/Tasks/role,tasks/Tasks/status&minimal_response=true',
     'mock': '/data/wizard/deploy/5_hosts/poll_{numPolls}.json',
     'format': function () {
       return {
@@ -2188,11 +2310,22 @@ var urls = {
   },
 
   'preinstalled.checks.tasks': {
-    'real': '/requests/{requestId}?fields=tasks/Tasks,Requests/inputs,Requests/request_status',
+    'real': '/requests/{requestId}?fields=Requests/inputs,Requests/request_status,tasks/Tasks/host_name,' +
+    'tasks/Tasks/structured_out/host_resolution_check/hosts_with_failures,' +
+    'tasks/Tasks/structured_out/host_resolution_check/failed_count,' +
+    'tasks/Tasks/structured_out/installed_packages,' +
+    'tasks/Tasks/structured_out/last_agent_env_check,' +
+    'tasks/Tasks/structured_out/transparentHugePage,' +
+    'tasks/Tasks/stdout,' +
+    'tasks/Tasks/stderr,' +
+    'tasks/Tasks/error_log,' +
+    'tasks/Tasks/command_detail,' +
+    'tasks/Tasks/status' +
+    '&minimal_response=true',
     'mock': '/data/requests/host_check/1.json'
   },
 
-  'persist.get': {
+  'persist.get.text': {
     'real': '/persist/{key}',
     'mock': '',
     'type': 'GET',
@@ -2202,7 +2335,13 @@ var urls = {
       }
     }
   },
-  'persist.put': {
+
+  'persist.get': {
+    'real': '/persist/{key}',
+    'mock': '',
+    'type': 'GET'
+  },
+  'persist.post': {
     'real': '/persist',
     'mock': '',
     'type': 'POST',
@@ -2240,7 +2379,7 @@ var urls = {
   },
 
   'wizard.stacks_versions_definitions': {
-    'real': '/version_definitions?fields=VersionDefinition/stack_default,VersionDefinition/max_jdk,VersionDefinition/min_jdk,operating_systems/repositories/Repositories/*,operating_systems/OperatingSystems/*,VersionDefinition/stack_services,VersionDefinition/repository_version' +
+    'real': '/version_definitions?fields=VersionDefinition/stack_default,VersionDefinition/stack_repo_update_link_exists,VersionDefinition/max_jdk,VersionDefinition/min_jdk,operating_systems/repositories/Repositories/*,operating_systems/OperatingSystems/*,VersionDefinition/stack_services,VersionDefinition/repository_version' +
       '&VersionDefinition/show_available=true&VersionDefinition/stack_name={stackName}',
     'mock': '/data/wizard/stack/{stackName}_version_definitions.json'
   },
@@ -2286,7 +2425,7 @@ var urls = {
     mock: '/data/users/privileges_{userName}.json'
   },
   'router.login.clusters': {
-    'real': '/clusters?fields=Clusters/provisioning_state',
+    'real': '/clusters?fields=Clusters/provisioning_state,Clusters/security_type,Clusters/version,Clusters/cluster_id',
     'mock': '/data/clusters/info.json'
   },
   'router.login.message': {
@@ -2333,6 +2472,10 @@ var urls = {
     'real': '/clusters/{clusterName}/request_schedules/{request_schedule_id}',
     'mock': ''
   },
+  'request_schedule.get.pending': {
+    'real': '/clusters/{clusterName}/request_schedules?fields=*&(RequestSchedule/status.in(SCHEDULED,IN_PROGRESS))',
+    'mock': ''
+  },
   'restart.hostComponents': {
     'real': '/clusters/{clusterName}/requests',
     'mock': '',
@@ -2351,13 +2494,68 @@ var urls = {
     }
   },
 
-  'request.post': {
+  'restart.allServices': {
+    'real': '/clusters/{clusterName}/requests',
+    'mock': '',
+    'format': function (data) {
+      return {
+        type: 'POST',
+        data: JSON.stringify({
+          "RequestInfo": {
+            "command": "RESTART",
+            "context": 'Restart all services',
+            "operation_level": 'host_component'
+          },
+          "Requests/resource_filters": [
+            {
+              "hosts_predicate": "HostRoles/cluster_name=" + data.clusterName
+            }
+          ]
+        })
+      }
+    }
+  },
+
+  'restart.staleConfigs': {
     'real': "/clusters/{clusterName}/requests",
     'mock': "",
     'format': function (data) {
       return {
         type: 'POST',
-        data: JSON.stringify(data.data)
+        data: JSON.stringify({
+          "RequestInfo": {
+            "command": "RESTART",
+            "context": "Restart all required services",
+            "operation_level": "host_component"
+          },
+          "Requests/resource_filters": [
+            {
+              "hosts_predicate": "HostRoles/stale_configs=true&HostRoles/cluster_name=" + data.clusterName
+            }
+          ]
+        })
+      }
+    }
+  },
+
+  'restart.custom.filter': {
+    'real': "/clusters/{clusterName}/requests",
+    'mock': "",
+    'format': function (data) {
+      return {
+        type: 'POST',
+        data: JSON.stringify({
+          "RequestInfo": {
+            "command": "RESTART",
+            "context": data.context,
+            "operation_level": "host_component"
+          },
+          "Requests/resource_filters": [
+            {
+              "hosts_predicate": data.filter
+            }
+          ]
+        })
       }
     }
   },
@@ -2486,10 +2684,6 @@ var urls = {
       };
     }
   },
-  'host.status.counters': {
-    'real': '/clusters/{clusterName}?fields=Clusters/health_report,Clusters/total_hosts,alerts_summary_hosts&minimal_response=true',
-    'mock': '/data/hosts/HDP2/host_status_counters.json'
-  },
   'host.stack_versions.install': {
     'real': '/clusters/{clusterName}/hosts/{hostName}/stack_versions',
     'mock': '',
@@ -2517,6 +2711,11 @@ var urls = {
   },
   'components.get_category': {
     'real': '/clusters/{clusterName}/components?fields=ServiceComponentInfo/component_name,ServiceComponentInfo/service_name,ServiceComponentInfo/category,ServiceComponentInfo/recovery_enabled,ServiceComponentInfo/total_count&minimal_response=true',
+    'mock': ''
+  },
+  'components.get.staleConfigs': {
+    'real': '/clusters/{clusterName}/components?host_components/HostRoles/stale_configs=true' +
+    '&fields=host_components/HostRoles/host_name&minimal_response=true',
     'mock': ''
   },
   'components.update': {
@@ -2547,7 +2746,7 @@ var urls = {
     'mock': ''
   },
   'hosts.for_quick_links': {
-    'real': '/clusters/{clusterName}/hosts?Hosts/host_name.in({masterHosts})&fields=Hosts/public_host_name{urlParams}&minimal_response=true',
+    'real': '/clusters/{clusterName}/hosts?Hosts/host_name.in({hosts})&fields=Hosts/public_host_name{urlParams}&minimal_response=true',
     'mock': '/data/hosts/quick_links.json'
   },
   'hosts.confirmed.install': {
@@ -2555,7 +2754,7 @@ var urls = {
     'mock': ''
   },
   'hosts.confirmed': {
-    'real': '/clusters/{clusterName}/hosts?fields=Hosts/cpu_count,Hosts/disk_info,Hosts/total_mem,Hosts/os_type,Hosts/os_arch,Hosts/ip,Hosts/maintenance_state,host_components/HostRoles/state&minimal_response=true',
+    'real': '/clusters/{clusterName}/hosts?fields=host_components/HostRoles/state&minimal_response=true',
     'mock': '/data/hosts/HDP2/hosts.json'
   },
   'hosts.with_searchTerm': {
@@ -2680,6 +2879,14 @@ var urls = {
     'real': '/clusters/{clusterName}/hosts?fields=Hosts/cpu_count,Hosts/disk_info,Hosts/total_mem,Hosts/ip,Hosts/os_type,Hosts/os_arch,Hosts/public_host_name,host_components&minimal_response=true',
     'mock': ''
   },
+  'hosts.info.install': {
+    'real': '/hosts?Hosts/host_name.in({hostNames})&fields=Hosts/cpu_count,Hosts/disk_info,Hosts/total_mem,Hosts/ip,Hosts/os_type,Hosts/os_arch,Hosts/public_host_name&minimal_response=true',
+    'mock': ''
+  },
+  'hosts.ips': {
+    'real': '/hosts?Hosts/host_name.in({hostNames})&fields=Hosts/ip',
+    'mock': ''
+  },
   'hosts.host_components.pre_load': {
     real: '',
     mock: '/data/hosts/HDP2/hosts.json',
@@ -2706,7 +2913,7 @@ var urls = {
     }
   },
   'hosts.bulk.operations': {
-    real: '/clusters/{clusterName}/hosts?fields=Hosts/host_name,Hosts/maintenance_state,' +
+    real: '/clusters/{clusterName}/hosts?fields=Hosts/host_name,Hosts/host_state,Hosts/maintenance_state,' +
     'host_components/HostRoles/state,host_components/HostRoles/maintenance_state,' +
     'Hosts/total_mem,stack_versions/HostStackVersions,stack_versions/repository_versions/RepositoryVersions/repository_version,' +
     'stack_versions/repository_versions/RepositoryVersions/id,' +
@@ -2752,7 +2959,7 @@ var urls = {
     mock: '/data/configurations/service_version.json'
   },
   'service.serviceConfigVersions.get.multiple': {
-    real: '/clusters/{clusterName}/configurations/service_config_versions?service_name={serviceName}&service_config_version.in({serviceConfigVersions}){additionalParams}',
+    real: '/clusters/{clusterName}/configurations/service_config_versions?(service_name={serviceName}%26service_config_version.in({serviceConfigVersions})){additionalParams}',
     mock: '/data/configurations/service_version.json',
     format: function (data) {
       return {
@@ -2760,6 +2967,10 @@ var urls = {
         additionalParams: data.additionalParams || ''
       }
     }
+  },
+  'service.serviceConfigVersions.get.suggestions': {
+    real: '/clusters/{clusterName}/configurations/service_config_versions?fields={key}&minimal_response=true',
+    mock: ''
   },
   'service.serviceConfigVersion.revert': {
     'real': '/clusters/{clusterName}',
@@ -2865,6 +3076,16 @@ var urls = {
     mock: '/data/widget_layouts/{serviceName}/default_dashboard.json'
   },
 
+  'widget.layout.name.get': {
+    real: '/clusters/{clusterName}/widget_layouts?WidgetLayoutInfo/layout_name={name}',
+    mock: '/data/widget_layouts/{serviceName}/default_dashboard.json'
+  },
+
+  'widget.layout.delete': {
+    real: '/clusters/{clusterName}/widget_layouts/{layoutId}',
+    type: 'DELETE'
+  },
+
   'widget.layout.get': {
     real: '/clusters/{clusterName}/widget_layouts?{urlParams}',
     mock: '/data/widget_layouts/{serviceName}/default_dashboard.json'
@@ -2941,7 +3162,7 @@ var urls = {
   },
 
   'widgets.hostComponent.metrics.get': {
-    real: '/clusters/{clusterName}/host_components?HostRoles/component_name={componentName}{hostComponentCriteria}&fields={metricPaths}&format=null_padding',
+    real: '/clusters/{clusterName}/host_components?HostRoles/component_name={componentName}{hostComponentCriteria}&fields={metricPaths}&format=null_padding{selectedHostsParam}',
     mock: '/data/metrics/{serviceName}/Append_num_ops.json'
   },
 
@@ -2980,6 +3201,74 @@ var urls = {
   'service.components.load': {
     real: '/clusters/{clusterName}/services?fields=components&minimal_response=true',
     mock: '/data/services/components.json'
+  },
+
+  'nameNode.federation.formatNameNode': {
+    'real': '/clusters/{clusterName}/requests',
+    'mock': '',
+    'format': function (data) {
+      return {
+        type: 'POST',
+        data: JSON.stringify({
+          "RequestInfo": {
+            "command" : "FORMAT", "context" : "Format NameNode"
+          },
+          "Requests/resource_filters": [{
+            "service_name" : "HDFS",
+            "component_name" : "NAMENODE",
+            "hosts": data.host
+          }]
+        })
+      }
+    }
+  },
+
+  'nameNode.federation.formatZKFC': {
+    'real': '/clusters/{clusterName}/requests',
+    'mock': '',
+    'format': function (data) {
+      return {
+        type: 'POST',
+        data: JSON.stringify({
+          "RequestInfo": {
+            "command" : "FORMAT", "context" : "Format ZKFC"
+          },
+          "Requests/resource_filters": [{
+            "service_name" : "HDFS",
+            "component_name" : "ZKFC",
+            "hosts": data.host
+          }]
+        })
+      }
+    }
+  },
+  'nameNode.federation.bootstrapNameNode': {
+    'real': '/clusters/{clusterName}/requests',
+    'mock': '',
+    'format': function (data) {
+      return {
+        type: 'POST',
+        data: JSON.stringify({
+          "RequestInfo": {
+            "command" : "BOOTSTRAP_STANDBY", "context" : "Bootstrap NameNode"
+          },
+          "Requests/resource_filters": [{
+            "service_name" : "HDFS",
+            "component_name" : "NAMENODE",
+            "hosts": data.host
+          }]
+        })
+      }
+    }
+  },
+  'hiveServerInteractive.getStatus': {
+    real: '',
+    mock: '',
+    format: function (data) {
+      return {
+        url: 'http://' + data.hsiHost + ':' + data.port + '/leader'
+      }
+    }
   }
 };
 /**
@@ -3047,16 +3336,23 @@ var formatRequest = function (data) {
  */
 var doGetAsPost = function(opt) {
   var delimiterPos = opt.url.indexOf('?');
+  var fieldsIndex = opt.url.indexOf('&fields');
 
   opt.type = "POST";
   opt.headers["X-Http-Method-Override"] = "GET";
   if (delimiterPos !== -1) {
+    var query = fieldsIndex !== -1 ? opt.url.substring(delimiterPos + 1, fieldsIndex) : opt.url.substr(delimiterPos + 1);
     opt.data = JSON.stringify({
-      "RequestInfo": {"query" : opt.url.substr(delimiterPos + 1, opt.url.length)}
+      "RequestInfo": {"query" : query}
     });
-    opt.url = opt.url.substr(0, delimiterPos);
+    if (fieldsIndex !== -1) {
+      opt.url = opt.url.substr(0, delimiterPos) + '?' + opt.url.substr(fieldsIndex + 1) + '&_=' + App.dateTime();
+    } else {
+      opt.url = opt.url.substr(0, delimiterPos)  + '?_=' + App.dateTime();
+    }
+  } else {
+    opt.url += '?_=' + App.dateTime();
   }
-  opt.url += '?_=' + App.dateTime();
   return opt;
 };
 
@@ -3074,7 +3370,7 @@ var ajax = Em.Object.extend({
   MAX_GET_URL_LENGTH: 2048,
 
   consoleMsg: function(name, url) {
-    return Em.I18n.t('app.logger.ajax').format(name, url.substr(7, 100));
+    return Em.I18n.t('app.logger.ajax').format(name, url ? url.substr(7, 100) : '');
   },
 
   /**
@@ -3099,13 +3395,29 @@ var ajax = Em.Object.extend({
       return null;
     }
 
+    var loadingPopup = null;
+    var loadingPopupTimeout = null;
+    if(config.hasOwnProperty("showLoadingPopup") && config.showLoadingPopup === true) {
+      loadingPopupTimeout = setTimeout(function() {
+        loadingPopup = App.ModalPopup.show({
+          header: Em.I18n.t('common.loading.eclipses'),
+          backdrop: false,
+          primary: false,
+          secondary: false,
+          bodyClass: Em.View.extend({
+            template: Em.Handlebars.compile('{{view App.SpinnerView}}')
+          })
+        });
+      }, 500);
+    }
+
     // default parameters
     var params = {
       clusterName: (App.get('clusterName') || App.clusterStatus.get('clusterName'))
     };
 
     // extend default parameters with provided
-    if (config.data) {
+    if (config.hasOwnProperty("data") && config.data) {
       jQuery.extend(params, config.data);
     }
 
@@ -3148,6 +3460,12 @@ var ajax = Em.Object.extend({
       }
     };
     opt.complete = function () {
+      if (loadingPopupTimeout) {
+        clearTimeout(loadingPopupTimeout);
+      }
+      if(loadingPopup) {
+        Em.tryInvoke(loadingPopup, 'hide');
+      }
       App.logger.logTimerIfMoreThan(consoleMsg, 1000);
       if (config.callback) {
         config.callback();
@@ -3174,7 +3492,7 @@ var ajax = Em.Object.extend({
    * Upon error with one of these statuses modal should be displayed
    * @type {Array}
    */
-  statuses: ['500', '401', '407', '413'],
+  statuses: [500, 401, 407, 413],
 
   /**
    * defaultErrorHandler function is referred from App.ajax.send function and App.HttpClient.defaultErrorHandler function

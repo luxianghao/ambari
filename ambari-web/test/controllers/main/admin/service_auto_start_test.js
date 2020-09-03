@@ -28,74 +28,87 @@ describe('App.MainAdminServiceAutoStartController', function() {
     });
   });
 
-
-  describe('#valueChanged()', function() {
-
-    it('servicesAutoStart is changed', function() {
-      controller.reopen({
-        servicesAutoStart: true,
-        servicesAutoStartSaved: false,
-        tabs: []
-      });
-      controller.valueChanged();
-      expect(controller.get('isSaveDisabled')).to.be.false;
-    });
-
-    it('servicesAutoStart is not changed', function() {
-      controller.reopen({
-        servicesAutoStart: true,
-        servicesAutoStartSaved: true,
-        tabs: []
-      });
-      controller.valueChanged();
-      expect(controller.get('isSaveDisabled')).to.be.true;
-    });
-
-    it('components state is not changed', function() {
-      controller.reopen({
-        servicesAutoStart: true,
-        servicesAutoStartSaved: true,
-        tabs: [Em.Object.create({
-          components: [
-            Em.Object.create({
-              isChanged: false
-            })
-          ]
-        })]
-      });
-      controller.valueChanged();
-      expect(controller.get('isSaveDisabled')).to.be.true;
-    });
-
-    it('components state is changed', function() {
-      controller.reopen({
-        servicesAutoStart: true,
-        servicesAutoStartSaved: true,
-        tabs: [Em.Object.create({
-          components: [
-            Em.Object.create({
-              isChanged: true
-            })
-          ]
-        })]
-      });
-      controller.valueChanged();
-      expect(controller.get('isSaveDisabled')).to.be.false;
+  describe('#parseComponentConfigs', function() {
+    var components = [
+      {
+        service_name: 'S1',
+        component_name: 'C1',
+        recovery_enabled: 'true',
+        category: 'SLAVE',
+        total_count: 1
+      },
+      {
+        service_name: 'S1',
+        component_name: 'C2',
+        recovery_enabled: 'false',
+        total_count: 2,
+        category: 'SLAVE',
+      }
+    ];
+    it('should return parsed components, filter out not installed components', function() {
+      expect(controller.parseComponentConfigs(components)).to.be.eql([
+        Em.Object.create({
+          "componentName": "C1",
+          "displayName": "C1",
+          "isFirst": true,
+          "recoveryEnabled": true,
+          "serviceDisplayName": "S1"
+        }),
+        Em.Object.create({
+          "componentName": "C2",
+          "displayName": "C2",
+          "isFirst": false,
+          "recoveryEnabled": false,
+          "serviceDisplayName": "S1"
+        })
+      ]);
     });
   });
 
-  describe('#loadClusterConfig()', function() {
+  describe('#load', function() {
 
-    it('App.ajax.send should be called', function() {
-      controller.loadClusterConfig();
-      var args = testHelpers.findAjaxRequest('name', 'config.tags.site');
-      expect(args[0]).to.be.eql({
-        name: 'config.tags.site',
-        sender: controller,
-        data: {
-          site: 'cluster-env'
+    beforeEach(function() {
+      sinon.stub(App.router.get('configurationController'), 'getCurrentConfigsBySites').returns({
+        done: function(callback) {
+          callback([
+            {
+              properties: {
+                recovery_enabled: 'true'
+              }
+            }
+          ]);
         }
       });
+      sinon.stub(App.router.get('configurationController'), 'updateConfigTags').returns({
+        always: Em.clb
+      });
+      sinon.stub(controller, 'loadComponentsConfigs').returns({
+        then: Em.clb
+      });
+      controller.load();
+    });
+    afterEach(function() {
+      App.router.get('configurationController').getCurrentConfigsBySites.restore();
+      App.router.get('configurationController').updateConfigTags.restore();
+      controller.loadComponentsConfigs.restore();
+    });
+
+    it('clusterConfigs should be set', function() {
+      expect(controller.get('clusterConfigs')).to.be.eql({
+        recovery_enabled: 'true'
+      });
+    });
+
+    it('isGeneralRecoveryEnabled should be true', function() {
+      expect(controller.get('isGeneralRecoveryEnabled')).to.be.true;
+    });
+
+    it('isGeneralRecoveryEnabledCached should be true', function() {
+      expect(controller.get('isGeneralRecoveryEnabledCached')).to.be.true;
+    });
+
+    it('isLoaded should be true', function() {
+      expect(controller.get('isLoaded')).to.be.true;
     });
   });
 
@@ -114,24 +127,42 @@ describe('App.MainAdminServiceAutoStartController', function() {
 
   describe('#loadComponentsConfigsSuccess()', function() {
 
-    it('componentsConfigs should be set', function() {
-      controller.loadComponentsConfigsSuccess({items: {prop1: 'val1'}});
-      expect(controller.get('componentsConfigs')).to.be.eql({prop1: 'val1'});
+    beforeEach(function() {
+      sinon.stub(controller, 'parseComponentConfigs').returns({});
+      sinon.stub(App.StackServiceComponent, 'find').returns(Em.Object.create({
+        isRestartable: true
+      }));
+      controller.loadComponentsConfigsSuccess({items: [
+          {ServiceComponentInfo:{total_count: 0}},
+          {ServiceComponentInfo:{total_count: 1}}
+        ]});
+    });
+    afterEach(function() {
+      controller.parseComponentConfigs.restore();
+      App.StackServiceComponent.find.restore();
+    });
+
+    it('componentsConfigsCached should be set', function() {
+      expect(controller.get('componentsConfigsCached')).to.be.eql([{total_count: 1}]);
+    });
+
+    it('componentsConfigsGrouped should be set', function() {
+      expect(controller.get('componentsConfigsGrouped')).to.be.eql({});
     });
   });
 
   describe('#saveClusterConfigs()', function() {
-    var clusterConfigs = {};
-
     it('App.ajax.send should be called', function() {
-      controller.saveClusterConfigs(clusterConfigs);
+      controller.saveClusterConfigs({recovery_enabled: 'false'}, true);
       var args = testHelpers.findAjaxRequest('name', 'admin.save_configs');
       expect(args[0]).to.be.eql({
         name: 'admin.save_configs',
         sender: controller,
         data: {
           siteName: 'cluster-env',
-          properties: clusterConfigs
+          properties: {
+            recovery_enabled: "true"
+          }
         }
       });
     });
@@ -154,173 +185,77 @@ describe('App.MainAdminServiceAutoStartController', function() {
     });
   });
 
-  describe('#createRecoveryComponent()', function() {
-
-    it('should return recovery component', function() {
-      var serviceComponentInfo = {
-        component_name: 'c1',
-        recovery_enabled: 'true',
-        service_name: 's1'
-      };
-      expect(controller.createRecoveryComponent(serviceComponentInfo)).to.be.an.object;
-    });
-  });
-
-  describe('#createTab()', function() {
-
-    it('should return tab', function() {
-      var serviceComponentInfo = {
-        component_name: 'c1',
-        recovery_enabled: 'true',
-        service_name: 's1'
-      };
-      expect(controller.createTab(serviceComponentInfo, {})).to.be.an.object;
-    });
-  });
-
-  describe('#filterTabsByRecovery()', function() {
-
-    it('should return empty when no components were changed', function() {
-      var tabs = [Em.Object.create({
-        components: [
-          Em.Object.create({
-            isChanged: false
-          })
-        ]
-      })];
-      expect(controller.filterTabsByRecovery(tabs, true)).to.be.empty;
-    });
-
-    it('should return enabled components ', function() {
-      var tabs = [Em.Object.create({
-        components: [
-          Em.Object.create({
-            isChanged: true,
-            recoveryEnabled: true
-          })
-        ]
-      })];
-      expect(controller.filterTabsByRecovery(tabs, true)).to.have.length(1);
-    });
-
-    it('should return disabled components ', function() {
-      var tabs = [Em.Object.create({
-        components: [
-          Em.Object.create({
-            isChanged: true,
-            recoveryEnabled: false
-          })
-        ]
-      })];
-      expect(controller.filterTabsByRecovery(tabs, false)).to.have.length(1);
-    });
-  });
-
-  describe('#syncStatus()', function() {
-    var mock = {
-      getConfigsByTags: function() {
-        return {
-          done: function(callback) {
-            callback([{properties: {}}]);
-          }
-        }
-      },
-      saveToDB: Em.K
-    };
-
+  describe('#syncStatus', function() {
     beforeEach(function() {
-      sinon.stub(App.router, 'get').returns(mock);
-      sinon.spy(mock, 'saveToDB');
-      sinon.stub(controller, 'valueChanged');
+      sinon.stub(controller, 'propertyDidChange');
     });
-
     afterEach(function() {
-      App.router.get.restore();
-      mock.saveToDB.restore();
-      controller.valueChanged.restore();
+      controller.propertyDidChange.restore();
     });
 
-    it('should save servicesAutoStart to local DB', function() {
-      controller.setProperties({
-        servicesAutoStart: true
-      });
-      controller.syncStatus();
-      expect(mock.saveToDB.getCall(0).args[0]).to.be.eql([{
-        properties: {
-          recovery_enabled: 'true'
+    it('should apply new values', function() {
+      controller.set('isGeneralRecoveryEnabled', true);
+      controller.set('componentsConfigsCached', [
+        {
+          component_name: 'C1',
+          recovery_enabled: 'false'
         }
-      }]);
-    });
-
-    it('recoveryEnabledSaved should be synced with recoveryEnabled', function() {
-      controller.reopen({
-        servicesAutoStart: true,
-        tabs: [Em.Object.create({
-          components: [
-            Em.Object.create({
-              recoveryEnabled: true,
-              recoveryEnabledSaved: false
-            })
-          ]
-        })]
-      });
+      ]);
+      controller.set('componentsConfigsGrouped', [
+        Em.Object.create({
+          componentName: 'C1',
+          recoveryEnabled: true
+        })
+      ]);
       controller.syncStatus();
-      expect(controller.get('tabs')[0].get('components')[0].get('recoveryEnabledSaved')).to.be.true;
-    });
-
-    it('valueChanged should be called', function() {
-      controller.syncStatus();
-      expect(controller.valueChanged).to.be.calledonce;
+      expect(controller.get('componentsConfigsCached')[0].recovery_enabled).to.be.equal('true');
+      expect(controller.get('isGeneralRecoveryEnabledCached')).to.be.true;
     });
   });
 
-  describe('#revertStatus()', function() {
-
-    it('component recoveryEnabled should be reverted', function() {
-      controller.reopen({
-        tabs: [Em.Object.create({
-          components: [
-            Em.Object.create({
-              recoveryEnabled: true,
-              recoveryEnabledSaved: false
-            })
-          ]
-        })]
-      });
-      controller.revertStatus();
-      expect(controller.get('tabs')[0].get('components')[0].get('recoveryEnabled')).to.be.false;
+  describe('#restoreCachedValues', function() {
+    beforeEach(function() {
+      sinon.stub(controller, 'parseComponentConfigs').returns([]);
+      controller.set('isGeneralRecoveryEnabledCached', true);
+      controller.restoreCachedValues();
+    });
+    afterEach(function() {
+      controller.parseComponentConfigs.restore();
     });
 
-    it('servicesAutoStart should be reverted', function() {
-      controller.reopen({
-        servicesAutoStart: true,
-        servicesAutoStartSaved: false
-      });
-      controller.revertStatus();
-      expect(controller.get('servicesAutoStart')).to.be.false;
+    it('isGeneralRecoveryEnabled should be true', function() {
+      expect(controller.get('isGeneralRecoveryEnabled')).to.be.true;
+    });
+
+    it('componentsConfigsGrouped should be set', function() {
+      expect(controller.get('componentsConfigsGrouped')).to.be.eql([]);
     });
   });
 
-  describe('#enableAll()', function() {
+  describe('#filterComponentsByChange', function() {
 
-    it('should set each recoveryEnabled to true', function() {
+    it('should return checked components', function() {
       var components = [
-        Em.Object.create({recoveryEnabled: false})
+        Em.Object.create({
+          recoveryEnabled: true,
+          componentName: 'C1'
+        })
       ];
-      controller.enableAll({context: Em.Object.create({components: components})});
-      expect(components[0].get('recoveryEnabled')).to.be.true;
+      controller.set('componentsConfigsCachedMap', {'C1': false});
+      expect(controller.filterComponentsByChange(components, true)).to.be.eql(['C1']);
     });
-  });
 
-  describe('#disableAll()', function() {
-
-    it('should set each recoveryEnabled to false', function() {
+    it('should return unchecked components', function() {
       var components = [
-        Em.Object.create({recoveryEnabled: true})
+        Em.Object.create({
+          recoveryEnabled: false,
+          componentName: 'C1'
+        })
       ];
-      controller.disableAll({context: Em.Object.create({components: components})});
-      expect(components[0].get('recoveryEnabled')).to.be.false;
+      controller.set('componentsConfigsCachedMap', {'C1': true});
+      expect(controller.filterComponentsByChange(components, false)).to.be.eql(['C1']);
     });
   });
+
 
 });

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -27,9 +27,10 @@ import org.apache.ambari.server.events.publishers.AlertEventPublisher;
 import org.apache.ambari.server.orm.dao.AlertDefinitionDAO;
 import org.apache.ambari.server.orm.entities.AlertDefinitionEntity;
 import org.apache.ambari.server.state.Alert;
+import org.apache.ambari.server.state.AlertState;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
-import org.apache.commons.lang.math.NumberUtils;
+import org.apache.ambari.server.state.alert.AlertHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,6 +75,9 @@ public abstract class AlertRunnable implements Runnable {
    */
   @Inject
   private AlertEventPublisher m_alertEventPublisher;
+
+  @Inject
+  protected AlertHelper alertHelper;
 
   /**
    * Constructor.
@@ -136,30 +140,28 @@ public abstract class AlertRunnable implements Runnable {
   }
 
   /**
-   * Converts the given value to an integer safely.
+   * Builds an {@link Alert} instance.
    *
-   * @param value
-   * @param defaultValue
-   * @return
+   * @param cluster
+   *          the cluster the alert is for (not {@code null}).
+   * @param myDefinition
+   *          the alert's definition (not {@code null}).
+   * @param alertState
+   *          the state of the alert (not {@code null}).
+   * @param message
+   *          the alert text.
+   * @return and alert.
    */
-  int getThresholdValue(Object value, int defaultValue) {
-    if (null == value) {
-      return defaultValue;
-    }
+  protected Alert buildAlert(Cluster cluster, AlertDefinitionEntity myDefinition,
+      AlertState alertState, String message) {
+    Alert alert = new Alert(myDefinition.getDefinitionName(), null, myDefinition.getServiceName(),
+        myDefinition.getComponentName(), null, alertState);
 
-    if (value instanceof Number) {
-      return ((Number) value).intValue();
-    }
+    alert.setLabel(myDefinition.getLabel());
+    alert.setText(message);
+    alert.setTimestamp(System.currentTimeMillis());
+    alert.setClusterId(cluster.getClusterId());
 
-    if (!(value instanceof String)) {
-      value = value.toString();
-    }
-
-    if (!NumberUtils.isNumber((String) value)) {
-      return defaultValue;
-    }
-
-    Number number = NumberUtils.createNumber((String) value);
-    return number.intValue();
+    return alert;
   }
 }

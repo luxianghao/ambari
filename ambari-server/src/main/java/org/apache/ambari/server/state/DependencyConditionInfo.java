@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,6 +19,7 @@
 package org.apache.ambari.server.state;
 
 import java.util.Map;
+
 import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.XmlSeeAlso;
 import javax.xml.bind.annotation.XmlTransient;
@@ -53,6 +54,19 @@ class PropertyExists implements DependencyConditionInfo {
    * property of the conditional dependency
    */
   protected String property;
+
+  /**
+   * type of conditional dependency
+   */
+  protected String type = this.getClass().getSimpleName();
+
+  public String getType() {
+    return type;
+  }
+
+  public void setType(String type) {
+    this.type = type;
+  }
 
   @XmlElement
   public String getProperty() {

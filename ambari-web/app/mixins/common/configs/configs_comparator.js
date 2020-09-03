@@ -46,13 +46,10 @@ App.ConfigsComparator = Em.Mixin.create({
       } else {
         compareServiceVersions = [this.get('compareServiceVersion').get('version')];
       }
+      this.set('isCompareMode', true);
       this.getCompareVersionConfigs(compareServiceVersions).done(function (json) {
         allConfigs.setEach('isEditable', false);
         self.initCompareConfig(allConfigs, json);
-        self.setProperties({
-          compareServiceVersion: null,
-          isCompareMode: true
-        });
         dfd.resolve(true);
       }).fail(function () {
         self.set('compareServiceVersion', null);
@@ -91,17 +88,19 @@ App.ConfigsComparator = Em.Mixin.create({
         if (serviceName === 'YARN' && configuration.type === 'capacity-scheduler') {
           this.addCompareCSConfigs(configuration, serviceVersionMap, item);
         } else {
-          for (var prop in configuration.properties) {
-            serviceVersionMap[item.service_config_version][prop + '-' + configuration.type] = {
-              name: prop,
+          for (const prop in configuration.properties) {
+            const name = JSON.parse('"' + prop + '"');
+            serviceVersionMap[item.service_config_version][name + '-' + configuration.type] = {
+              name: name,
               value: configuration.properties[prop],
               type: configuration.type,
               tag: configuration.tag,
               version: configuration.version,
-              service_config_version: item.service_config_version
+              service_config_version: item.service_config_version,
+              filename: App.config.getOriginalFileName(configuration.type)
             };
-            if (Em.isNone(configNamesMap[prop])) {
-              allConfigs.push(this.getMockConfig(prop, serviceName, App.config.getOriginalFileName(configuration.type)));
+            if (Em.isNone(configNamesMap[name])) {
+              allConfigs.push(this.getMockConfig(name, serviceName, App.config.getOriginalFileName(configuration.type)));
             }
           }
         }
@@ -127,7 +126,7 @@ App.ConfigsComparator = Em.Mixin.create({
    */
   addCompareConfigs: function(compareNonDefaultVersions, allConfigs, serviceVersionMap) {
     var compareVersionNumber = this.get('compareServiceVersion.version');
-
+    var serviceName = this.get('content.serviceName');
     if (compareNonDefaultVersions) {
       allConfigs.forEach(function (serviceConfig) {
         if (Em.get(serviceConfig, 'isRequiredByAgent') !== false) {
@@ -135,13 +134,25 @@ App.ConfigsComparator = Em.Mixin.create({
         }
       }, this);
     } else {
+      var serviceCfgVersionMap = serviceVersionMap[this.get('compareServiceVersion.version')] || {};
+      var allConfigsMap = {};
       allConfigs.forEach(function (serviceConfig) {
+        var id = serviceConfig.name + '-' + App.config.getConfigTagFromFileName(serviceConfig.filename);
+        allConfigsMap[id] = serviceConfig;
         if (Em.get(serviceConfig, 'isRequiredByAgent') !== false) {
-          var serviceCfgVersionMap = serviceVersionMap[this.get('compareServiceVersion.version')];
-          var compareConfig = serviceCfgVersionMap[serviceConfig.name + '-' + App.config.getConfigTagFromFileName(serviceConfig.filename)];
+          var compareConfig = serviceCfgVersionMap[id];
           this.setCompareDefaultGroupConfig(serviceConfig, compareConfig);
         }
       }, this);
+      if (allConfigs.length !== Object.keys(serviceCfgVersionMap).length) {
+        Object.keys(serviceCfgVersionMap).forEach(id => {
+          if (!allConfigsMap[id]) {
+            var mockConfig = this.getMockConfig(serviceCfgVersionMap[id].name, serviceName, serviceCfgVersionMap[id].filename);
+            this.setCompareDefaultGroupConfig(mockConfig, serviceCfgVersionMap[id]);
+            allConfigs.push(mockConfig);
+          }
+        });
+      }
     }
   },
 
@@ -196,6 +207,10 @@ App.ConfigsComparator = Em.Mixin.create({
 
     Em.set(serviceConfig, 'isComparison', true);
 
+    if (!Em.get(serviceConfig, 'isCustomGroupConfig')) {
+      Em.set(serviceConfig, 'hasCompareDiffs', false);
+    }
+
     if (compareConfig && selectedConfig) {
       compareConfigs.push(this.getComparisonConfig(serviceConfig, compareConfig));
       compareConfigs.push(this.getComparisonConfig(serviceConfig, selectedConfig));
@@ -222,8 +237,8 @@ App.ConfigsComparator = Em.Mixin.create({
    * @method getMockComparisonConfig
    */
   getMockComparisonConfig: function (serviceConfig, compareServiceVersion) {
-    var compareObject = $.extend(true, {isComparison: false},  serviceConfig);
-    compareObject.setProperties({
+    var compareObject = $.extend(true, {isComparison: false}, serviceConfig);
+    Em.setProperties(compareObject, {
       isEditable: false,
       serviceVersion: App.ServiceConfigVersion.find(this.get('content.serviceName') + "_" + compareServiceVersion),
       isMock: true,
@@ -276,16 +291,20 @@ App.ConfigsComparator = Em.Mixin.create({
 
     Em.set(serviceConfig, 'compareConfigs', []);
     Em.set(serviceConfig, 'isComparison', true);
-
     //if config isn't reconfigurable then it can't have changed value to compare
     if (compareConfig) {
       compareObject = this.getComparisonConfig(serviceConfig, compareConfig);
       Em.set(serviceConfig, 'hasCompareDiffs', Em.get(serviceConfig, 'isMock') || this.hasCompareDiffs(serviceConfig, compareObject));
       Em.get(serviceConfig, 'compareConfigs').push(compareObject);
       // user custom property or property that was added during upgrade
-    } else if (Em.get(serviceConfig, 'isUserProperty') || (!isEmptyProp && Em.get(serviceConfig, 'isRequiredByAgent') !== false)) {
-      Em.get(serviceConfig, 'compareConfigs').push(this.getMockComparisonConfig(serviceConfig, this.get('compareServiceVersion.version')));
-      Em.set(serviceConfig, 'hasCompareDiffs', true);
+    } else {
+      if (Em.get(serviceConfig, 'value') !== 'Undefined') {
+        var addToComparison = !Em.get(serviceConfig, 'isCustomGroupConfig') && (Em.get(serviceConfig, 'isUserProperty') || !isEmptyProp && !compareConfig && Em.get(serviceConfig, 'isRequiredByAgent') !== false);
+        if (addToComparison) {
+          Em.get(serviceConfig, 'compareConfigs').push(this.getMockComparisonConfig(serviceConfig, this.get('compareServiceVersion.version')));
+          Em.set(serviceConfig, 'hasCompareDiffs', true);
+        }
+      }
     }
 
     return serviceConfig;

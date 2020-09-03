@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,12 +18,12 @@
 
 package org.apache.ambari.server.view.events;
 
+import java.util.Collections;
+import java.util.Map;
+
 import org.apache.ambari.view.ViewDefinition;
 import org.apache.ambari.view.ViewInstanceDefinition;
 import org.apache.ambari.view.events.Event;
-
-import java.util.Collections;
-import java.util.Map;
 
 /**
  * View event implementation.
@@ -80,7 +80,7 @@ public class EventImpl implements Event {
     this.id                  = id;
     this.viewSubject         = viewSubject;
     this.viewInstanceSubject = viewInstanceSubject;
-    this.properties          = properties == null ? Collections.<String, String>emptyMap() :
+    this.properties          = properties == null ? Collections.emptyMap() :
         Collections.unmodifiableMap(properties);
   }
 
@@ -92,6 +92,7 @@ public class EventImpl implements Event {
    *
    * @return the id
    */
+  @Override
   public String getId() {
     return id;
   }
@@ -101,6 +102,7 @@ public class EventImpl implements Event {
    *
    * @return the properties
    */
+  @Override
   public Map<String, String> getProperties() {
     return properties;
   }
@@ -110,6 +112,7 @@ public class EventImpl implements Event {
    *
    * @return the view subject
    */
+  @Override
   public ViewDefinition getViewSubject() {
     return viewSubject;
   }
@@ -119,6 +122,7 @@ public class EventImpl implements Event {
    *
    * @return the instance subject; null if this is a view level event
    */
+  @Override
   public ViewInstanceDefinition getViewInstanceSubject() {
     return viewInstanceSubject;
   }

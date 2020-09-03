@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,8 +18,9 @@
 
 package org.apache.ambari.server.metadata;
 
-import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.state.Cluster;
@@ -30,14 +31,16 @@ import org.slf4j.LoggerFactory;
 
 import com.google.inject.Inject;
 import com.google.inject.Injector;
+import com.google.inject.Singleton;
 
 /**
  * RoleCommandOrderProvider which caches RoleCommandOrder objects for a cluster to avoid the cost of construction of
  * RoleCommandOrder objects each time.
  */
+@Singleton
 public class CachedRoleCommandOrderProvider implements RoleCommandOrderProvider {
 
-  private static Logger LOG = LoggerFactory.getLogger(CachedRoleCommandOrderProvider.class);
+  private static final Logger LOG = LoggerFactory.getLogger(CachedRoleCommandOrderProvider.class);
 
   @Inject
   private Injector injector;
@@ -45,7 +48,7 @@ public class CachedRoleCommandOrderProvider implements RoleCommandOrderProvider 
   @Inject
   private Clusters clusters;
 
-  private Map<Integer, RoleCommandOrder> rcoMap = new HashMap<>();
+  private Map<Integer, RoleCommandOrder> rcoMap = new ConcurrentHashMap<>();
 
   @Inject
   public CachedRoleCommandOrderProvider() {
@@ -73,7 +76,7 @@ public class CachedRoleCommandOrderProvider implements RoleCommandOrderProvider 
       if (cluster != null && cluster.getService("GLUSTERFS") != null) {
         hasGLUSTERFS = true;
       }
-    } catch (AmbariException e) {
+    } catch (AmbariException ignored) {
     }
 
     try {
@@ -82,7 +85,7 @@ public class CachedRoleCommandOrderProvider implements RoleCommandOrderProvider 
         cluster.getService("HDFS").getServiceComponent("JOURNALNODE") != null) {
         isNameNodeHAEnabled = true;
       }
-    } catch (AmbariException e) {
+    } catch (AmbariException ignored) {
     }
 
     try {
@@ -91,22 +94,46 @@ public class CachedRoleCommandOrderProvider implements RoleCommandOrderProvider 
         cluster.getService("YARN").getServiceComponent("RESOURCEMANAGER").getServiceComponentHosts().size() > 1) {
         isResourceManagerHAEnabled = true;
       }
-    } catch (AmbariException e) {
+    } catch (AmbariException ignored) {
     }
 
-    int clusterCacheId = new HashCodeBuilder().append(cluster.getClusterId()).append(hasGLUSTERFS).append(isNameNodeHAEnabled).append
-      (isResourceManagerHAEnabled).toHashCode();
+    int clusterCacheId = new HashCodeBuilder()
+      .append(cluster != null ? cluster.getClusterId() : -1)
+      .append(hasGLUSTERFS)
+      .append(isNameNodeHAEnabled)
+      .append(isResourceManagerHAEnabled)
+      .toHashCode();
 
     RoleCommandOrder rco = rcoMap.get(clusterCacheId);
     if (rco == null) {
       rco = injector.getInstance(RoleCommandOrder.class);
-      rco.setHasGLUSTERFS(hasGLUSTERFS);
-      rco.setIsNameNodeHAEnabled(isNameNodeHAEnabled);
-      rco.setIsResourceManagerHAEnabled(isResourceManagerHAEnabled);
-      rco.initialize(cluster);
+
+      LinkedHashSet<String> sectionKeys = new LinkedHashSet<>();
+
+      if (hasGLUSTERFS) {
+        sectionKeys.add(RoleCommandOrder.GLUSTERFS_DEPS_KEY);
+      } else {
+        sectionKeys.add(RoleCommandOrder.NO_GLUSTERFS_DEPS_KEY);
+      }
+
+      if (isNameNodeHAEnabled) {
+        sectionKeys.add(RoleCommandOrder.NAMENODE_HA_DEPS_KEY);
+      }
+
+      if (isResourceManagerHAEnabled) {
+        sectionKeys.add(RoleCommandOrder.RESOURCEMANAGER_HA_DEPS_KEY);
+      }
+
+      rco.initialize(cluster, sectionKeys);
       rcoMap.put(clusterCacheId, rco);
     }
     return rco;
   }
 
+  /**
+   * Clear all entries - used after an upgrade
+   */
+  public void clearRoleCommandOrderCache() {
+    rcoMap.clear();
+  }
 }

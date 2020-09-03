@@ -24,6 +24,9 @@ UPGRADE_TYPE_ROLLING = "rolling"
 UPGRADE_TYPE_NON_ROLLING = "nonrolling"
 UPGRADE_TYPE_HOST_ORDERED = "host_ordered"
 
+AGENT_TMP_DIR = "/var/lib/ambari-agent/tmp"
+
+LOGFEEDER_CONF_DIR = "/usr/lib/ambari-logsearch-logfeeder/conf"
 
 class SERVICE:
   """
@@ -51,3 +54,4 @@ class SERVICE:
   YARN = "YARN"
   ZEPPELIN = "ZEPPELIN"
   ZOOKEEPER = "ZOOKEEPER"
+  HBASE = "HBASE"

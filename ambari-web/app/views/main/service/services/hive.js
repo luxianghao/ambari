@@ -22,23 +22,20 @@ App.MainDashboardServiceHiveView = App.MainDashboardServiceView.extend({
   templateName: require('templates/main/service/services/hive'),
   serviceName: 'HIVE',
 
-  viewsToShow: {
-  'AUTO_HIVE_INSTANCE': {},
-  'TEZ_CLUSTER_INSTANCE': {
-    overwriteLabel: 'app.debugHiveQuery'
-  }},
+  viewsToShow: {},
+
   viewLinks: function() {
     var viewsToShow = this.get('viewsToShow');
     var links = [];
-    App.router.get('mainViewsController.ambariViews').forEach(function(item) {
-      var view = viewsToShow[item.get('instanceName')];
-      if (view) {
+    App.router.get('mainViewsController.ambariViews').forEach(function(viewInstance) {
+      var viewMeta = viewsToShow[viewInstance.get('instanceName')];
+      if (viewMeta) {
         var link = {
-          href: item.href,
-          label: item.label
+          viewInstance: viewInstance,
+          label: viewInstance.get('label')
         };
-        if (view.overwriteLabel) {
-          link.label = Em.I18n.t(view.overwriteLabel);
+        if (viewMeta.overwriteLabel) {
+          link.label = Em.I18n.t(viewMeta.overwriteLabel);
         }
         links.push(link);
       }
@@ -59,48 +56,11 @@ App.MainDashboardServiceHiveView = App.MainDashboardServiceView.extend({
   },
 
   /**
-   * view for JDBC connection String
-   */
-  summaryValueView: Em.View.extend({
-    tagName: 'span',
-    attributeBindings: ['title'],
-
-    didInsertElement: function() {
-      this.setEllipsis();
-      this.setTooltip();
-    },
-
-    /**
-     * sets the Hive JDBC connection text with ellipsis
-     */
-    setEllipsis: function() {
-      var $ = this.$();
-      var text = $.text();
-      var MAX_LENGTH = 96;
-      var ellipsis = '...';
-      var length = MAX_LENGTH > text.length ? text.length : MAX_LENGTH;
-      var start = Math.max(length - ellipsis.length, ellipsis.length);
-      text = text.slice(0, start);
-      text += ellipsis;
-      $.text(text);
-    },
-
-    /**
-     * sets the tooltip for Hive JDBC connection string
-     */
-    setTooltip: function() {
-      var $ = this.$();
-      Em.run.next(function () {
-        $.tooltip();
-      });
-    }
-  }),
-
-  /**
    * View for clipboard image that copies JDBC connection string
    */
   clipBoardView: Em.View.extend({
     tagName: 'a',
+    classNames: ['clip-board'],
     href: "javascript:void(null)",
     attributeBindings: ['data-clipboard-text', 'data-clipboard-action', "href"],
     didInsertElement: function() {

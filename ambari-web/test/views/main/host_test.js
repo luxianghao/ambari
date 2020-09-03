@@ -22,14 +22,23 @@ require('views/main/host');
 
 function getView() {
   return App.MainHostView.create({
-    controller: App.MainHostController.create({
+    pageContent: Em.A([]),
+    controller: Em.Object.create({
+      updateStatusCounters: sinon.spy(),
       updater: Em.Object.create({
         tableUpdaterMap: {
           'Hosts': 'updateHost'
         },
         updateHost: Em.K
       }),
-      name: 'ctrl1'
+      name: 'ctrl1',
+      startIndex: 1,
+      paginationProps: [
+        {
+          name: 'displayLength',
+          value: 100
+        }
+      ]
     })
   });
 }
@@ -74,12 +83,14 @@ describe('App.MainHostView', function () {
       cases.forEach(function (item) {
         sinon.stub(view, item.methodName, Em.K);
       });
+      sinon.stub(view, 'overlayObserver');
     });
 
     afterEach(function () {
       cases.forEach(function (item) {
         view[item.methodName].restore();
       });
+      view.overlayObserver.restore();
     });
 
     cases.forEach(function (item) {
@@ -88,6 +99,11 @@ describe('App.MainHostView', function () {
         view.propertyDidChange(item.propertyToChange);
         expect(view[item.methodName].callCount).to.equal(item.callCount);
       });
+    });
+
+    it('overlayObserver should be called', function () {
+      view.didInsertElement();
+      expect(view.overlayObserver.calledOnce).to.be.true;
     });
   });
 
@@ -344,11 +360,15 @@ describe('App.MainHostView', function () {
     beforeEach(function() {
       sinon.stub(view, 'clearFilterConditionsFromLocalStorage').returns(true);
       sinon.stub(view, 'addObserver');
+      sinon.stub(view, 'saveStartIndex');
+      sinon.stub(view, 'updatePaging');
     });
 
     afterEach(function() {
       view.clearFilterConditionsFromLocalStorage.restore();
       view.addObserver.restore();
+      view.saveStartIndex.restore();
+      view.updatePaging.restore();
     });
 
     it("filterChangeHappened should be true", function() {
@@ -361,6 +381,11 @@ describe('App.MainHostView', function () {
       view.set('controller.startIndex', 10);
       view.willInsertElement();
       expect(view.get('startIndex')).to.be.equal(10);
+    });
+
+    it("displayLength should be 10", function() {
+      view.willInsertElement();
+      expect(view.get('displayLength')).to.be.equal(100);
     });
 
     it("addObserver should be called", function() {
@@ -479,7 +504,7 @@ describe('App.MainHostView', function () {
     it("App.db.setSelectedHosts should be called", function() {
       view.set('selectedHosts', []);
       view.updateCheckedFlags();
-      expect(App.db.setSelectedHosts.calledWith('ctrl1', [])).to.be.true;
+      expect(App.db.setSelectedHosts.calledWith([])).to.be.true;
     });
 
     it("addObserver should be called", function() {
@@ -576,7 +601,7 @@ describe('App.MainHostView', function () {
     });
 
     it("App.db.setSelectedHosts should be called", function() {
-      expect(App.db.setSelectedHosts.calledWith('ctrl1', [])).to.be.true;
+      expect(App.db.setSelectedHosts.calledWith([])).to.be.true;
     });
 
     it("filterSelected should be called", function() {
@@ -923,239 +948,6 @@ describe('App.MainHostView', function () {
         hostView.set('content.diskUsage', 100);
         hostView.propertyDidChange('usageStyle');
         expect(hostView.get('usageStyle')).to.be.equal('width:100%');
-      });
-    });
-  });
-
-  describe("#updateHostsCount()", function () {
-
-    it("should update host counter in categories", function() {
-      view.reopen({
-        categories: [
-          Em.Object.create({healthStatus: ''}),
-          Em.Object.create({healthStatus: 'HEALTHY'}),
-          Em.Object.create({healthStatus: 'UNKNOWN', hostsCount: 0, hasHosts: false})
-        ]
-      });
-      view.set('controller.hostsCountMap', {
-        TOTAL: 10,
-        HEALTHY: 1
-      });
-      view.updateHostsCount();
-      expect(view.get('categories').mapProperty('hostsCount')).to.be.eql([10, 1, 0]);
-      expect(view.get('categories').mapProperty('hasHosts')).to.be.eql([true, true, false]);
-    });
-  });
-
-  describe("#categoryObject", function () {
-    var categoryObject;
-
-    beforeEach(function() {
-      categoryObject = view.get('categoryObject').create();
-    });
-
-    describe("#label", function () {
-
-      it("should return label", function() {
-        categoryObject.set('hostsCount', 1);
-        categoryObject.set('value', 'val1');
-        expect(categoryObject.get('label')).to.be.equal('val1 (1)');
-      });
-    });
-  });
-
-  describe("#statusFilter", function () {
-    var statusFilter;
-
-    beforeEach(function () {
-      statusFilter = view.get('statusFilter').create({
-        parentView: Em.Object.create({
-          resetFilterByColumns: Em.K,
-          refresh: Em.K,
-          updateFilter: Em.K
-        })
-      });
-    });
-
-    describe("#comboBoxLabel", function () {
-      beforeEach(function() {
-        sinon.stub(statusFilter, 'onCategoryChange');
-      });
-
-      afterEach(function() {
-        statusFilter.onCategoryChange.restore();
-      });
-
-      var testCases = [
-        {
-          value: 'val1',
-          categories: [Em.Object.create({isActive: true, hostsCount: 1, value: "val1"})],
-          totalCount: 10,
-          expected: 'val1 (1)'
-        },
-        {
-          value: 'val1',
-          categories: [Em.Object.create({isActive: false, hostsCount: 1})],
-          totalCount: 10,
-          expected: Em.I18n.t('common.all') + ' (10)'
-        },
-        {
-          value: '',
-          categories: [],
-          totalCount: 10,
-          expected: Em.I18n.t('common.all') + ' (10)'
-        }
-      ];
-
-      testCases.forEach(function(test) {
-        it("value=" + test.value +
-           " categories=" + JSON.stringify(test.categories) +
-           " totalCount=" + test.totalCount, function () {
-          statusFilter.setProperties({
-            value: test.value,
-            categories: test.categories
-          });
-          statusFilter.set('parentView.totalCount', test.totalCount);
-          expect(statusFilter.get('comboBoxLabel')).to.be.equal(test.expected);
-        });
-      });
-    });
-
-    describe("#onCategoryChange()", function () {
-
-      it("should set class", function() {
-        statusFilter.setProperties({
-          value: 'val1',
-          categories: [
-            Em.Object.create({
-              healthStatus: 'val1',
-              class: 'cl1',
-              healthClass: 'hcl1'
-            })
-          ]
-        });
-        expect(statusFilter.get('class')).to.be.equal('cl1 hcl1');
-        expect(statusFilter.get('categories')[0].get('isActive')).to.be.true;
-      });
-    });
-
-    describe("#showClearFilter()", function () {
-
-      beforeEach(function() {
-        sinon.stub(statusFilter, 'selectCategory');
-        sinon.stub(statusFilter, 'onCategoryChange');
-      });
-
-      afterEach(function() {
-        statusFilter.selectCategory.restore();
-        statusFilter.onCategoryChange.restore();
-      });
-
-      it("selectCategory should be called", function() {
-        statusFilter.setProperties({
-          value: 'val1',
-          categories: [
-            Em.Object.create({
-              healthStatus: 'val1'
-            })
-          ]
-        });
-        statusFilter.showClearFilter();
-        expect(statusFilter.selectCategory.getCall(0).args).to.be.eql([
-          {
-            context: Em.Object.create({
-              healthStatus: 'val1'
-            })
-          }
-        ]);
-      });
-    });
-
-    describe("#selectCategory()", function () {
-      var category = Em.Object.create({
-        healthStatus: 'val1',
-        column: 1,
-        isHealthStatus: false,
-        filterValue: 'val1',
-        type: 't1'
-      });
-
-      beforeEach(function() {
-        sinon.stub(statusFilter.get('parentView'), 'resetFilterByColumns');
-        sinon.stub(statusFilter.get('parentView'), 'refresh');
-        sinon.stub(statusFilter.get('parentView'), 'updateFilter');
-        sinon.stub(statusFilter, 'onCategoryChange');
-      });
-
-      afterEach(function() {
-        statusFilter.get('parentView').resetFilterByColumns.restore();
-        statusFilter.get('parentView').refresh.restore();
-        statusFilter.get('parentView').updateFilter.restore();
-        statusFilter.onCategoryChange.restore();
-      });
-
-      it("value should be set", function() {
-        statusFilter.selectCategory({context: category});
-        expect(statusFilter.get('value')).to.be.equal('val1');
-      });
-
-      it("resetFilterByColumns should be called", function() {
-        statusFilter.selectCategory({context: category});
-        expect(statusFilter.get('parentView').resetFilterByColumns.calledWith([0, 7, 8, 9])).to.be.true;
-      });
-
-      it("updateFilter should be called, isHealthStatus=false", function() {
-        category.set('isHealthStatus', false);
-        statusFilter.selectCategory({context: category});
-        expect(statusFilter.get('parentView').updateFilter.calledWith(1, 'val1', 't1')).to.be.true;
-      });
-
-      it("updateFilter should be called, isHealthStatus=true", function() {
-        category.set('isHealthStatus', true);
-        category.set('healthStatus', 'val1');
-        statusFilter.selectCategory({context: category});
-        expect(statusFilter.get('parentView').updateFilter.calledWith(0, 'val1', 'string')).to.be.true;
-      });
-
-      it("refresh should be called, isHealthStatus=true", function() {
-        category.set('isHealthStatus', true);
-        category.set('healthStatus', null);
-        statusFilter.selectCategory({context: category});
-        expect(statusFilter.get('parentView').refresh.calledOnce).to.be.true;
-      });
-    });
-
-    describe("#clearFilter()", function () {
-
-      beforeEach(function() {
-        sinon.stub(statusFilter, 'showClearFilter');
-        sinon.stub(statusFilter, 'onCategoryChange');
-      });
-
-      afterEach(function() {
-        statusFilter.showClearFilter.restore();
-        statusFilter.onCategoryChange.restore();
-      });
-
-      it("isActive should be false", function() {
-        statusFilter.set('categories', [Em.Object.create()]);
-        statusFilter.clearFilter();
-        expect(statusFilter.get('categories')[0].get('isActive')).to.be.false;
-      });
-
-      it("value should be empty", function() {
-        statusFilter.clearFilter();
-        expect(statusFilter.get('value')[0]).to.be.empty;
-      });
-
-      it("class should be empty", function() {
-        statusFilter.clearFilter();
-        expect(statusFilter.get('class')).to.be.empty;
-      });
-
-      it("showClearFilter should be called", function() {
-        statusFilter.clearFilter();
-        expect(statusFilter.showClearFilter.calledOnce).to.be.true;
       });
     });
   });

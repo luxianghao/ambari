@@ -18,18 +18,7 @@
 
 {{#if view.isLoaded}}
   <div id="host-details">
-    <div class="host-details-header">
-      <div class="status-info">
-        <span rel="HealthTooltip" {{bindAttr class="view.content.healthClass view.content.healthIconClass"}} data-placement="bottom" {{bindAttr data-original-title="view.content.healthToolTip" }}></span><span
-              class='host-title'>{{unbound view.content.hostName}}</span>
-        {{#unless view.isActive}}
-          <span class="host-maintenance-notice pull-right"><span class="icon-medkit"></span> {{t hosts.host.passive.mode}}</span>
-        {{/unless}}
-      </div>
-      <div><a href="javascript:void(null)" id="host-details-back-btn" data-toggle="modal" {{action back}}><i
-              class="glyphicon glyphicon-arrow-left"></i>&nbsp;{{t common.back}}</a></div>
-    </div>
-    <div class="content">
+       <div class="content">
       {{view App.MainHostMenuView hostBinding="view.content"}}
         <div class="service-button">
           <div class="btn-group display-inline-block">
@@ -51,6 +40,11 @@
 
                   <div class="dropdown-menu-wrap">
                     <ul class="dropdown-menu">
+                    {{#if view.hasManyClientsWithConfigs}}
+                      <li>
+                         <a id="all-clients-on-host-link" {{action "downloadAllClientConfigs" target="controller" href=true}}>{{t host.host.details.downloadAllClients}}</a>
+                      </li>
+                    {{/if}}
                       {{#each client in view.clientsWithConfigs}}
                         <li>
                           <a {{action "downloadClientConfigs" client target="controller" href=true}}>{{client.displayName}}</a>
@@ -60,6 +54,9 @@
                   </div>
                 </li>
               {{/if}}
+              <li>
+                <a {{action "confirmRecoverHost" target="controller"}}><i class="icon-time"></i> {{t hosts.host.details.recoverHost}} </a>
+              </li>
             </ul>
           </div>
         </div>

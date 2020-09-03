@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -61,10 +61,10 @@ public class PropertyInfo {
 
   @XmlElement(name = "property-type")
   @XmlList
-  private Set<PropertyType> propertyTypes = new HashSet<PropertyType>();
+  private Set<PropertyType> propertyTypes = new HashSet<>();
 
   @XmlAnyElement
-  private List<Element> propertyAttributes = new ArrayList<Element>();
+  private List<Element> propertyAttributes = new ArrayList<>();
 
   @XmlElement(name = "value-attributes")
   private ValueAttributesInfo propertyValueAttributes =
@@ -73,11 +73,27 @@ public class PropertyInfo {
   @XmlElementWrapper(name="depends-on")
   @XmlElement(name = "property")
   private Set<PropertyDependencyInfo> dependsOnProperties =
-    new HashSet<PropertyDependencyInfo>();
+    new HashSet<>();
 
   @XmlElementWrapper(name="property_depended_by")
   private Set<PropertyDependencyInfo> dependedByProperties =
-    new HashSet<PropertyDependencyInfo>();
+    new HashSet<>();
+
+  /**
+   * The list of properties that use this property.
+   * Password properties may be used by other properties in
+   * the same config type or different config type, typically
+   * when asking for user name and password pairs.
+   */
+  @XmlElementWrapper(name="used-by")
+  @XmlElement(name = "property")
+  private Set<PropertyDependencyInfo> usedByProperties =
+          new HashSet<>();
+
+  @XmlElementWrapper(name="supported-refresh-commands")
+  @XmlElement(name="refresh-command")
+  private Set<RefreshCommand> supportedRefreshCommands = new HashSet<>();
+
 
   //This method is called after all the properties (except IDREF) are unmarshalled for this object,
   //but before this object is set to the parent object.
@@ -97,6 +113,10 @@ public class PropertyInfo {
 
   public void setName(String name) {
     this.name = name;
+  }
+
+  public Set<PropertyDependencyInfo> getUsedByProperties() {
+    return usedByProperties;
   }
 
   public String getValue() {
@@ -163,10 +183,17 @@ public class PropertyInfo {
   }
 
   public Map<String, String> getAttributesMap() {
-    Map<String, String> attributes = new HashMap<String, String>();
+    Map<String, String> attributes = new HashMap<>();
     for (Element propertyAttribute : propertyAttributes) {
       attributes.put(propertyAttribute.getTagName(), propertyAttribute.getFirstChild().getNodeValue());
     }
+
+    // inject "hidden" property_value_attribute into property_attributes, see AMBARI-17223
+    String hidden = getPropertyValueAttributes().getHidden();
+    if (hidden != null) {
+      attributes.putIfAbsent("hidden", hidden);
+    }
+
     return attributes;
   }
 
@@ -176,6 +203,10 @@ public class PropertyInfo {
 
   public Set<PropertyDependencyInfo> getDependsOnProperties() {
     return dependsOnProperties;
+  }
+
+  public void setPropertyValueAttributes(ValueAttributesInfo propertyValueAttributes) {
+    this.propertyValueAttributes = propertyValueAttributes;
   }
 
   public Set<PropertyDependencyInfo> getDependedByProperties() {
@@ -188,6 +219,30 @@ public class PropertyInfo {
 
   public void setRequireInput(boolean requireInput) {
     this.requireInput = requireInput;
+  }
+
+  public List<Element> getPropertyAttributes() {
+    return propertyAttributes;
+  }
+
+  public void setPropertyAttributes(List<Element> propertyAttributes) {
+    this.propertyAttributes = propertyAttributes;
+  }
+
+  public Set<RefreshCommand> getSupportedRefreshCommands() {
+    return supportedRefreshCommands;
+  }
+
+  public void setSupportedRefreshCommands(Set<RefreshCommand> supportedRefreshCommands) {
+    this.supportedRefreshCommands = supportedRefreshCommands;
+  }
+
+  /**
+   * Willcard properties should not be included to stack configurations.
+   * @return
+   */
+  public boolean shouldBeConfigured() {
+    return !getName().contains("*");
   }
 
   @Override
@@ -262,10 +317,13 @@ public class PropertyInfo {
   public enum PropertyType {
     PASSWORD,
     USER,
+    UID,
     GROUP,
+    GID,
     TEXT,
     ADDITIONAL_USER_PROPERTY,
     NOT_MANAGED_HDFS_PATH,
-    VALUE_FROM_PROPERTY_FILE
+    VALUE_FROM_PROPERTY_FILE,
+    KERBEROS_PRINCIPAL
   }
 }

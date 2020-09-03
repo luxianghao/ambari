@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,13 +18,13 @@
 
 package org.apache.ambari.server.audit;
 
+import static org.hamcrest.core.IsEqual.equalTo;
+import static org.junit.Assert.assertThat;
+
 import org.apache.ambari.server.audit.event.OperationStatusAuditEvent;
 import org.junit.Test;
 
 import nl.jqno.equalsverifier.EqualsVerifier;
-
-import static org.hamcrest.core.IsEqual.equalTo;
-import static org.junit.Assert.assertThat;
 
 public class OperationStatusAuditEventTest {
 
@@ -34,10 +34,13 @@ public class OperationStatusAuditEventTest {
     Long testRequestId = 100L;
     String testStatus = "IN PROGRESS";
 
+    String testRemoteIp = "127.0.0.1";
+
     OperationStatusAuditEvent evnt = OperationStatusAuditEvent.builder()
       .withTimestamp(System.currentTimeMillis())
       .withRequestId(testRequestId.toString())
       .withStatus(testStatus)
+      .withRemoteIp(testRemoteIp)
       .withUserName("testuser")
       .withRequestContext("Start Service")
       .build();
@@ -46,7 +49,7 @@ public class OperationStatusAuditEventTest {
     String actualAuditMessage = evnt.getAuditMessage();
 
     // Then
-    String expectedAuditMessage = String.format("User(testuser), Operation(Start Service), Status(%s), RequestId(%s)", testStatus, testRequestId);
+    String expectedAuditMessage = String.format("User(testuser), RemoteIp(127.0.0.1), Operation(Start Service), Status(%s), RequestId(%s)", testStatus, testRequestId);
 
     assertThat(actualAuditMessage, equalTo(expectedAuditMessage));
   }

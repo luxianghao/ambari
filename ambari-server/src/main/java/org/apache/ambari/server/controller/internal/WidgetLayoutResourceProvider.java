@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,7 +17,17 @@
  */
 package org.apache.ambari.server.controller.internal;
 
-import com.google.inject.Inject;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.ObjectNotFoundException;
 import org.apache.ambari.server.StaticallyInject;
@@ -42,16 +52,9 @@ import org.apache.ambari.server.orm.entities.WidgetLayoutUserWidgetEntity;
 import org.apache.commons.lang.ObjectUtils;
 import org.apache.commons.lang.StringUtils;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
 
 /**
  * Resource provider for widget layout resources.
@@ -69,43 +72,37 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
   public static final String WIDGETLAYOUT_WIDGETS_PROPERTY_ID = PropertyHelper.getPropertyId("WidgetLayoutInfo", "widgets");
   public static final String WIDGETLAYOUT_USERNAME_PROPERTY_ID = PropertyHelper.getPropertyId("WidgetLayoutInfo", "user_name");
   public static final String WIDGETLAYOUT_DISPLAY_NAME_PROPERTY_ID = PropertyHelper.getPropertyId("WidgetLayoutInfo", "display_name");
-  public static enum SCOPE {
+  public enum SCOPE {
     CLUSTER,
     USER
   }
 
   @SuppressWarnings("serial")
-  private static Set<String> pkPropertyIds = new HashSet<String>() {
-    {
-      add(WIDGETLAYOUT_ID_PROPERTY_ID);
-    }
-  };
+  private static final Set<String> pkPropertyIds = ImmutableSet.<String>builder()
+    .add(WIDGETLAYOUT_ID_PROPERTY_ID)
+    .build();
 
   @SuppressWarnings("serial")
-  private static ReadWriteLock lock = new ReentrantReadWriteLock();
+  private static final ReadWriteLock lock = new ReentrantReadWriteLock();
 
   @SuppressWarnings("serial")
-  public static Set<String> propertyIds = new HashSet<String>() {
-    {
-      add(WIDGETLAYOUT_ID_PROPERTY_ID);
-      add(WIDGETLAYOUT_SECTION_NAME_PROPERTY_ID);
-      add(WIDGETLAYOUT_LAYOUT_NAME_PROPERTY_ID);
-      add(WIDGETLAYOUT_CLUSTER_NAME_PROPERTY_ID);
-      add(WIDGETLAYOUT_WIDGETS_PROPERTY_ID);
-      add(WIDGETLAYOUT_SCOPE_PROPERTY_ID);
-      add(WIDGETLAYOUT_USERNAME_PROPERTY_ID);
-      add(WIDGETLAYOUT_DISPLAY_NAME_PROPERTY_ID);
-    }
-  };
+  public static final Set<String> propertyIds = ImmutableSet.<String>builder()
+    .add(WIDGETLAYOUT_ID_PROPERTY_ID)
+    .add(WIDGETLAYOUT_SECTION_NAME_PROPERTY_ID)
+    .add(WIDGETLAYOUT_LAYOUT_NAME_PROPERTY_ID)
+    .add(WIDGETLAYOUT_CLUSTER_NAME_PROPERTY_ID)
+    .add(WIDGETLAYOUT_WIDGETS_PROPERTY_ID)
+    .add(WIDGETLAYOUT_SCOPE_PROPERTY_ID)
+    .add(WIDGETLAYOUT_USERNAME_PROPERTY_ID)
+    .add(WIDGETLAYOUT_DISPLAY_NAME_PROPERTY_ID)
+    .build();
 
   @SuppressWarnings("serial")
-  public static Map<Type, String> keyPropertyIds = new HashMap<Type, String>() {
-    {
-      put(Type.WidgetLayout, WIDGETLAYOUT_ID_PROPERTY_ID);
-      put(Type.Cluster, WIDGETLAYOUT_CLUSTER_NAME_PROPERTY_ID);
-      put(Type.User, WIDGETLAYOUT_USERNAME_PROPERTY_ID);
-    }
-  };
+  public static final Map<Type, String> keyPropertyIds = ImmutableMap.<Type, String>builder()
+    .put(Type.WidgetLayout, WIDGETLAYOUT_ID_PROPERTY_ID)
+    .put(Type.Cluster, WIDGETLAYOUT_CLUSTER_NAME_PROPERTY_ID)
+    .put(Type.User, WIDGETLAYOUT_USERNAME_PROPERTY_ID)
+    .build();
 
   @Inject
   private static WidgetDAO widgetDAO;
@@ -118,7 +115,7 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
    *
    */
   public WidgetLayoutResourceProvider(AmbariManagementController managementController) {
-    super(propertyIds, keyPropertyIds, managementController);
+    super(Type.WidgetLayout, propertyIds, keyPropertyIds, managementController);
   }
 
   @Override
@@ -128,7 +125,7 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
       ResourceAlreadyExistsException,
       NoSuchParentResourceException {
 
-    Set<Resource> associatedResources = new HashSet<Resource>();
+    Set<Resource> associatedResources = new HashSet<>();
 
     for (final Map<String, Object> properties : request.getProperties()) {
       WidgetLayoutEntity widgetLayoutEntity = createResources(new Command<WidgetLayoutEntity>() {
@@ -162,14 +159,14 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
           entity.setUserName(userName);
           entity.setDisplayName(properties.get(WIDGETLAYOUT_DISPLAY_NAME_PROPERTY_ID).toString());
 
-          List<WidgetLayoutUserWidgetEntity> widgetLayoutUserWidgetEntityList = new LinkedList<WidgetLayoutUserWidgetEntity>();
+          List<WidgetLayoutUserWidgetEntity> widgetLayoutUserWidgetEntityList = new LinkedList<>();
           int order=0;
           for (Object widgetObject : widgetsSet) {
             HashMap<String, Object> widget = (HashMap) widgetObject;
             long id = Integer.parseInt(widget.get("id").toString());
             WidgetEntity widgetEntity = widgetDAO.findById(id);
             if (widgetEntity == null) {
-              throw new AmbariException("Widget with id " + widget.get("id").toString() + " does not exists");
+              throw new AmbariException("Widget with id " + widget.get("id") + " does not exists");
             }
             WidgetLayoutUserWidgetEntity widgetLayoutUserWidgetEntity = new WidgetLayoutUserWidgetEntity();
 
@@ -199,15 +196,12 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
   @Override
   public Set<Resource> getResources(Request request, Predicate predicate)
       throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
-    final Set<Resource> resources = new HashSet<Resource>();
-    final Set<String> requestedIds = getRequestPropertyIds(request, predicate);
+    final Set<Resource> resources = new HashSet<>();
     final Set<Map<String, Object>> propertyMaps = getPropertyMaps(predicate);
 
-    List<WidgetEntity> widgetEntities = new ArrayList<WidgetEntity>();
-    List<WidgetLayoutEntity> layoutEntities = new ArrayList<WidgetLayoutEntity>();
+    List<WidgetLayoutEntity> layoutEntities = new ArrayList<>();
 
     for (Map<String, Object> propertyMap: propertyMaps) {
-      String userName = getUserName(propertyMap);
       if (propertyMap.get(WIDGETLAYOUT_ID_PROPERTY_ID) != null) {
         final Long id;
         try {
@@ -228,7 +222,7 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
     for (WidgetLayoutEntity layoutEntity : layoutEntities) {
       Resource resource = new ResourceImpl(Type.WidgetLayout);
       resource.setProperty(WIDGETLAYOUT_ID_PROPERTY_ID, layoutEntity.getId());
-      String clusterName = null;
+      String clusterName;
       try {
         clusterName = getManagementController().getClusters().getClusterById(layoutEntity.getClusterId()).getClusterName();
       } catch (AmbariException e) {
@@ -241,11 +235,11 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
       resource.setProperty(WIDGETLAYOUT_USERNAME_PROPERTY_ID, layoutEntity.getUserName());
       resource.setProperty(WIDGETLAYOUT_DISPLAY_NAME_PROPERTY_ID, layoutEntity.getDisplayName());
 
-      List<HashMap> widgets = new ArrayList<HashMap>();
+      List<HashMap> widgets = new ArrayList<>();
       List<WidgetLayoutUserWidgetEntity> widgetLayoutUserWidgetEntityList = layoutEntity.getListWidgetLayoutUserWidgetEntity();
       for (WidgetLayoutUserWidgetEntity widgetLayoutUserWidgetEntity : widgetLayoutUserWidgetEntityList) {
         WidgetEntity widgetEntity = widgetLayoutUserWidgetEntity.getWidget();
-        HashMap<String, Object> widgetInfoMap = new HashMap<String, Object>();
+        HashMap<String, Object> widgetInfoMap = new HashMap<>();
         widgetInfoMap.put("WidgetInfo",WidgetResponse.coerce(widgetEntity));
         widgets.add(widgetInfoMap);
       }
@@ -298,16 +292,16 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
               widgetLayoutUserWidgetEntity.getWidget().getListWidgetLayoutUserWidgetEntity()
                       .remove(widgetLayoutUserWidgetEntity);
             }
-            entity.setListWidgetLayoutUserWidgetEntity(new LinkedList<WidgetLayoutUserWidgetEntity>());
+            entity.setListWidgetLayoutUserWidgetEntity(new LinkedList<>());
 
-            List<WidgetLayoutUserWidgetEntity> widgetLayoutUserWidgetEntityList = new LinkedList<WidgetLayoutUserWidgetEntity>();
+            List<WidgetLayoutUserWidgetEntity> widgetLayoutUserWidgetEntityList = new LinkedList<>();
             int order = 0;
             for (Object widgetObject : widgetsSet) {
               HashMap<String, Object> widget = (HashMap) widgetObject;
               long id = Integer.parseInt(widget.get("id").toString());
               WidgetEntity widgetEntity = widgetDAO.findById(id);
               if (widgetEntity == null) {
-                throw new AmbariException("Widget with id " + widget.get("id").toString() + " does not exists");
+                throw new AmbariException("Widget with id " + widget.get("id") + " does not exists");
               }
               WidgetLayoutUserWidgetEntity widgetLayoutUserWidgetEntity = new WidgetLayoutUserWidgetEntity();
 
@@ -337,7 +331,7 @@ public class WidgetLayoutResourceProvider extends AbstractControllerResourceProv
       throws SystemException, UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
     final Set<Map<String, Object>> propertyMaps = getPropertyMaps(predicate);
 
-    final List<WidgetLayoutEntity> entitiesToBeRemoved = new ArrayList<WidgetLayoutEntity>();
+    final List<WidgetLayoutEntity> entitiesToBeRemoved = new ArrayList<>();
     for (Map<String, Object> propertyMap : propertyMaps) {
       final Long id;
       try {

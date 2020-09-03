@@ -24,9 +24,10 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.configuration.Configuration;
-import org.apache.ambari.server.controller.PrereqCheckRequest;
+import org.apache.ambari.server.orm.dao.RepositoryVersionDAO;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 import org.apache.ambari.server.orm.models.HostComponentSummary;
+import org.apache.ambari.server.state.CheckHelper;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.ComponentInfo;
@@ -36,12 +37,22 @@ import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceComponent;
 import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.State;
-import org.apache.ambari.server.state.stack.PrereqCheckStatus;
-import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.server.state.repository.ClusterVersionSummary;
+import org.apache.ambari.server.state.repository.VersionDefinitionXml;
+import org.apache.ambari.spi.ClusterInformation;
+import org.apache.ambari.spi.RepositoryType;
+import org.apache.ambari.spi.RepositoryVersion;
+import org.apache.ambari.spi.upgrade.UpgradeCheckRequest;
+import org.apache.ambari.spi.upgrade.UpgradeCheckResult;
+import org.apache.ambari.spi.upgrade.UpgradeCheckStatus;
+import org.apache.ambari.spi.upgrade.UpgradeType;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 import org.powermock.api.mockito.PowerMockito;
@@ -61,17 +72,47 @@ public class ServicesUpCheckTest {
   private final Clusters clusters = Mockito.mock(Clusters.class);
   private AmbariMetaInfo ambariMetaInfo = Mockito.mock(AmbariMetaInfo.class);
 
-  @Test
-  public void testIsApplicable() throws Exception {
-    PrereqCheckRequest checkRequest = new PrereqCheckRequest("c1");
-    checkRequest.setRepositoryVersion("HDP-2.2.0.0");
-    checkRequest.setSourceStackId(new StackId("HDP", "2.2"));
-    checkRequest.setTargetStackId(new StackId("HDP", "2.2"));
-    ServicesUpCheck suc = new ServicesUpCheck();
-    Configuration config = Mockito.mock(Configuration.class);
-    suc.config = config;
+  @Mock
+  private ClusterVersionSummary m_clusterVersionSummary;
 
-    Assert.assertTrue(suc.isApplicable(checkRequest));
+  @Mock
+  private VersionDefinitionXml m_vdfXml;
+
+  @Mock
+  private RepositoryVersion m_repositoryVersion;
+
+  @Mock
+  private RepositoryVersionEntity m_repositoryVersionEntity;
+
+  @Mock
+  private RepositoryVersionDAO m_repositoryVersionDAO;
+
+  final Map<String, Service> m_services = new HashMap<>();
+
+  /**
+   *
+   */
+  @Before
+  public void setup() throws Exception {
+    MockitoAnnotations.initMocks(this);
+
+    m_services.clear();
+
+    StackId stackId = new StackId("HDP", "2.2");
+    String version = "2.2.0.0-1234";
+
+    Mockito.when(m_repositoryVersion.getId()).thenReturn(1L);
+    Mockito.when(m_repositoryVersion.getRepositoryType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersion.getStackId()).thenReturn(stackId.toString());
+    Mockito.when(m_repositoryVersion.getVersion()).thenReturn(version);
+    Mockito.when(m_repositoryVersionEntity.getType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(m_repositoryVersionEntity.getVersion()).thenReturn(version);
+    Mockito.when(m_repositoryVersionEntity.getStackId()).thenReturn(stackId);
+    Mockito.when(m_repositoryVersionEntity.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class), Mockito.any(AmbariMetaInfo.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services.keySet());
+
+    Mockito.when(m_repositoryVersionDAO.findByPK(Mockito.anyLong())).thenReturn(m_repositoryVersionEntity);
   }
 
   @Test
@@ -94,6 +135,16 @@ public class ServicesUpCheckTest {
       }
     };
 
+    servicesUpCheck.checkHelperProvider = new Provider<CheckHelper>() {
+      @Override
+      public CheckHelper get() {
+        MockCheckHelper mockCheckHelper = new MockCheckHelper();
+        mockCheckHelper.m_clusters = clusters;
+        mockCheckHelper.m_repositoryVersionDAO = m_repositoryVersionDAO;
+        mockCheckHelper.setMetaInfoProvider(servicesUpCheck.ambariMetaInfo);
+        return mockCheckHelper;
+      }
+    };
 
     Host host1 = Mockito.mock(Host.class);
     Host host2 = Mockito.mock(Host.class);
@@ -116,20 +167,28 @@ public class ServicesUpCheckTest {
     final Service tezService = Mockito.mock(Service.class);
     final Service amsService = Mockito.mock(Service.class);
 
-    HashMap<String, Service> clusterServices = new HashMap<String, Service>();
-    clusterServices.put("HDFS", hdfsService);
-    clusterServices.put("TEZ", tezService);
-    clusterServices.put("AMBARI_METRICS", amsService);
+    m_services.put("HDFS", hdfsService);
+    m_services.put("TEZ", tezService);
+    m_services.put("AMBARI_METRICS", amsService);
 
     Mockito.when(hdfsService.getName()).thenReturn("HDFS");
     Mockito.when(tezService.getName()).thenReturn("TEZ");
     Mockito.when(amsService.getName()).thenReturn("AMBARI_METRICS");
 
+    StackId stackId = new StackId("HDP", "2.2");
+    Mockito.when(hdfsService.getDesiredStackId()).thenReturn(stackId);
+    Mockito.when(tezService.getDesiredStackId()).thenReturn(stackId);
+    Mockito.when(amsService.getDesiredStackId()).thenReturn(stackId);
+
     Mockito.when(hdfsService.isClientOnlyService()).thenReturn(false);
     Mockito.when(tezService.isClientOnlyService()).thenReturn(true);
     Mockito.when(amsService.isClientOnlyService()).thenReturn(false);
 
-    Mockito.when(cluster.getServices()).thenReturn(clusterServices);
+    Mockito.when(cluster.getServices()).thenReturn(m_services);
+
+    Mockito.when(cluster.getService("HDFS")).thenReturn(hdfsService);
+    Mockito.when(cluster.getService("TEZ")).thenReturn(tezService);
+    Mockito.when(cluster.getService("AMBARI_METRICS")).thenReturn(amsService);
 
     Mockito.when(ambariMetaInfo.getComponent(Mockito.anyString(), Mockito.anyString(),
         Mockito.anyString(), Mockito.anyString())).thenAnswer(new Answer<ComponentInfo>() {
@@ -148,7 +207,7 @@ public class ServicesUpCheckTest {
 
     // Put Components inside Services
     // HDFS
-    Map<String, ServiceComponent> hdfsComponents = new HashMap<String, ServiceComponent>();
+    Map<String, ServiceComponent> hdfsComponents = new HashMap<>();
 
     ServiceComponent nameNode = Mockito.mock(ServiceComponent.class);
     Mockito.when(nameNode.getName()).thenReturn("NAMENODE");
@@ -175,7 +234,7 @@ public class ServicesUpCheckTest {
     Mockito.when(hdfsService.getServiceComponents()).thenReturn(hdfsComponents);
 
     // TEZ
-    Map<String, ServiceComponent> tezComponents = new HashMap<String, ServiceComponent>();
+    Map<String, ServiceComponent> tezComponents = new HashMap<>();
 
     ServiceComponent tezClient = Mockito.mock(ServiceComponent.class);
     Mockito.when(tezClient.getName()).thenReturn("TEZ_CLIENT");
@@ -187,7 +246,7 @@ public class ServicesUpCheckTest {
     Mockito.when(tezService.getServiceComponents()).thenReturn(tezComponents);
 
     // AMS
-    Map<String, ServiceComponent> amsComponents = new HashMap<String, ServiceComponent>();
+    Map<String, ServiceComponent> amsComponents = new HashMap<>();
 
     ServiceComponent metricsCollector = Mockito.mock(ServiceComponent.class);
     Mockito.when(metricsCollector.getName()).thenReturn("METRICS_COLLECTOR");
@@ -223,7 +282,7 @@ public class ServicesUpCheckTest {
     Mockito.when(hcsMetricsCollector.getHostId()).thenReturn(Long.valueOf(1));
     Mockito.when(hcsMetricsMonitor.getHostId()).thenReturn(Long.valueOf(1));
 
-    List<HostComponentSummary> allHostComponentSummaries = new ArrayList<HostComponentSummary>();
+    List<HostComponentSummary> allHostComponentSummaries = new ArrayList<>();
     allHostComponentSummaries.add(hcsNameNode);
     allHostComponentSummaries.add(hcsDataNode1);
     allHostComponentSummaries.add(hcsDataNode2);
@@ -246,57 +305,68 @@ public class ServicesUpCheckTest {
       Mockito.when(hcs.getDesiredState()).thenReturn(State.INSTALLED);
       Mockito.when(hcs.getCurrentState()).thenReturn(State.STARTED);
     }
-    PrerequisiteCheck check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+
+    ClusterInformation clusterInformation = new ClusterInformation("cluster", false, null, null, null);
+    UpgradeCheckRequest request = new UpgradeCheckRequest(clusterInformation, UpgradeType.ROLLING,
+        m_repositoryVersion, null, null);
+
+    UpgradeCheckResult check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.PASS, check.getStatus());
+    Assert.assertTrue(check.getFailedDetail().isEmpty());
 
     // Case 2. Change some desired states to STARTED, should still pass
     Mockito.when(hcsNameNode.getDesiredState()).thenReturn(State.STARTED);
     Mockito.when(hcsDataNode1.getDesiredState()).thenReturn(State.STARTED);
 
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.PASS, check.getStatus());
+    Assert.assertTrue(check.getFailedDetail().isEmpty());
 
     // Case 3. Ensure that ZKFC and AMS are ignored even if their current state is not STARTED
     Mockito.when(hcsZKFC.getCurrentState()).thenReturn(State.INSTALLED);
     Mockito.when(hcsMetricsCollector.getCurrentState()).thenReturn(State.INSTALLED);
     Mockito.when(hcsMetricsMonitor.getCurrentState()).thenReturn(State.INSTALLED);
 
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.PASS, check.getStatus());
+    Assert.assertTrue(check.getFailedDetail().isEmpty());
 
     // Case 4. Change HDFS current states to INSTALLED, should fail.
     Mockito.when(hcsNameNode.getCurrentState()).thenReturn(State.INSTALLED);
     Mockito.when(hcsDataNode1.getCurrentState()).thenReturn(State.INSTALLED);
 
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.FAIL, check.getStatus());
+    Assert.assertFalse(check.getFailedDetail().isEmpty());
 
     // Case 5. Change HDFS master to STARTED, but one slave to INSTALLED, should pass (2/3 are up).
     Mockito.when(hcsNameNode.getCurrentState()).thenReturn(State.STARTED);
     Mockito.when(hcsDataNode1.getCurrentState()).thenReturn(State.INSTALLED);
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.PASS, check.getStatus());
+    Assert.assertTrue(check.getFailedDetail().isEmpty());
 
     // Case 6. Change HDFS master to STARTED, but 2 slaves to INSTALLED, should fail (2/3 are down)
     Mockito.when(hcsNameNode.getCurrentState()).thenReturn(State.STARTED);
     Mockito.when(hcsDataNode1.getCurrentState()).thenReturn(State.INSTALLED);
     Mockito.when(hcsDataNode2.getCurrentState()).thenReturn(State.INSTALLED);
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.FAIL, check.getStatus());
     Assert.assertTrue(check.getFailReason().indexOf("50%") > -1);
+    Assert.assertFalse(check.getFailedDetail().isEmpty());
 
     // place the DN slaves into MM which will allow them to be skipped
     Mockito.when(host1.getMaintenanceState(Mockito.anyLong())).thenReturn(MaintenanceState.ON);
     Mockito.when(host3.getMaintenanceState(Mockito.anyLong())).thenReturn(MaintenanceState.ON);
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.PASS, check.getStatus());
+    Assert.assertTrue(check.getFailedDetail().isEmpty());
 
     // put everything back to normal, then fail NN
     Mockito.when(hcsNameNode.getCurrentState()).thenReturn(State.INSTALLED);
@@ -305,14 +375,16 @@ public class ServicesUpCheckTest {
     Mockito.when(host1.getMaintenanceState(Mockito.anyLong())).thenReturn(MaintenanceState.OFF);
     Mockito.when(host3.getMaintenanceState(Mockito.anyLong())).thenReturn(MaintenanceState.OFF);
 
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.FAIL, check.getStatus());
+    Assert.assertFalse(check.getFailedDetail().isEmpty());
 
     // put NN into MM; should still fail since it's a master
     Mockito.when(host1.getMaintenanceState(Mockito.anyLong())).thenReturn(MaintenanceState.ON);
-    check = new PrerequisiteCheck(null, null);
-    servicesUpCheck.perform(check, new PrereqCheckRequest("cluster"));
-    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    check = new UpgradeCheckResult(null, null);
+    check = servicesUpCheck.perform(request);
+    Assert.assertEquals(UpgradeCheckStatus.FAIL, check.getStatus());
+    Assert.assertFalse(check.getFailedDetail().isEmpty());
   }
 }

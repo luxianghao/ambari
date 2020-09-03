@@ -22,13 +22,48 @@ App.TrackRequestMixin = Em.Mixin.create({
 
   requestsInProgress: [],
 
+  init: function() {
+    this.set('requestsInProgress', []);
+    this._super([].slice.call(arguments));
+  },
+
   /**
    * register request to view to track his progress
    * @param {$.ajax} request
    * @method trackRequest
    */
   trackRequest: function (request) {
-    this.get('requestsInProgress').push(request);
+    var requestId = this.get('requestsInProgress').length;
+    var self = this;
+    this.get('requestsInProgress').pushObject({
+      request: request,
+      id: requestId,
+      status: Em.tryInvoke(request, 'state'),
+      completed: ['resolved', 'rejected'].contains(Em.tryInvoke(request, 'state'))
+    });
+    request.always(function() {
+      var requestInProgress = self.get('requestsInProgress').findProperty('id', requestId) || {};
+      Em.setProperties(requestInProgress, {
+        completed: true,
+        status: Em.tryInvoke(request, 'state')
+      });
+    });
+  },
+
+  /**
+   * This method used to put promise to requests queue which is waiting for another request to be put in tracking queue
+   * after tracking request promise will be completed. Basically it used for places where trackRequest called after
+   * tracked promise gets resolved.
+   *
+   * @param {$.ajax} request
+   */
+  trackRequestChain: function(request) {
+    var dfd = $.Deferred();
+    request.always(function() {
+      dfd.resolve();
+    });
+    this.trackRequest(request);
+    this.trackRequest(dfd);
   },
 
   /**
@@ -37,8 +72,9 @@ App.TrackRequestMixin = Em.Mixin.create({
    */
   abortRequests: function () {
     this.get('requestsInProgress').forEach(function(r) {
-      if (r && r.readyState !== 4) {
-        r.abort();
+      var request = r.request;
+      if (request && request.readyState !== undefined && request.readyState !== 4) {
+        request.abort();
       }
     });
     this.get('requestsInProgress').clear();

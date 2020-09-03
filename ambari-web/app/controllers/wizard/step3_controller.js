@@ -121,12 +121,6 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, App.Check
   }.property('content.hosts'),
 
   /**
-   * Timeout for "warning"-requests
-   * @type {number}
-   */
-  warningsTimeInterval: 60000,
-
-  /**
    * Are hosts warnings loaded
    * @type {bool}
    */
@@ -731,9 +725,9 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, App.Check
   },
 
   doCheckJDK: function () {
-    var hostsNames = (!this.get('content.installOptions.manualInstall')) ? this.get('bootHosts').filterProperty('bootStatus', 'REGISTERED').getEach('name').join(",") : this.get('bootHosts').getEach('name').join(",");
-    var javaHome = this.get('javaHome');
-    var jdkLocation = this.get('jdkLocation');
+    const hostsNames = this.get('bootHosts').filterProperty('bootStatus', 'REGISTERED').getEach('name').join(','),
+      javaHome = this.get('javaHome'),
+      jdkLocation = this.get('jdkLocation');
     App.ajax.send({
       name: 'wizard.step3.jdk_check',
       sender: this,
@@ -787,8 +781,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, App.Check
           hosts: hostsJDKContext,
           hostsLong: hostsJDKContext,
           hostsNames: hostsJDKNames,
-          category: 'jdk',
-          onSingleHost: false
+          category: 'jdk'
         });
       }
       this.set('jdkCategoryWarnings', jdkWarnings);
@@ -850,7 +843,7 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, App.Check
         function () {
           self._submitProceed();
         },
-        Em.I18n.t('installer.step3.hostWarningsPopup.hostHasWarnings'));
+        Em.I18n.t('installer.step3.hostWarningsPopup.hostHasWarnings'), null, Em.I18n.t('installer.step3.hostWarningsPopup.hostHasWarnings.header'), null, 'warning');
     }
     this._submitProceed();
   },
@@ -889,6 +882,8 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, App.Check
 
       autoHeight: false,
 
+      'data-qa': 'host-checks-modal',
+
       onPrimary: function () {
         self.set('checksUpdateStatus', null);
         this.hide();
@@ -908,7 +903,9 @@ App.WizardStep3Controller = Em.Controller.extend(App.ReloadPopupMixin, App.Check
         this.fitHeight();
       },
 
-      footerClass: App.WizardStep3HostWarningPopupFooter,
+      footerClass: App.WizardStep3HostWarningPopupFooter.reopen({
+        checkHostFinished: true
+      }),
 
       bodyClass: App.WizardStep3HostWarningPopupBody.reopen({
         checkHostFinished: true

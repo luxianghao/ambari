@@ -54,30 +54,57 @@ class TestUpdateRepo(TestCase):
                                                 "repo_ubuntu_template": "REPO_UBUNTU_TEMPLATE"
                                         }
                                  },
-                                 "hostLevelParams": {
-                                   "repo_info": '{"repositories":[{"base_url":"TEST_BASE_URL","repo_name":"TEST_REPO_NAME","repo_id":"TEST_REPO_ID"}]}'
-                                 }
+                                "repositoryFile": {
+                                    "resolved": True, 
+                                    "repoVersion": "2.4.3.0-227", 
+                                    "repositories": [
+                                        {
+                                            "mirrorsList": None, 
+                                            "ambariManaged": True, 
+                                            "baseUrl": "http://public-repo-1.hortonworks.com/HDP/centos6/2.x/updates/2.4.3.0/", 
+                                            "repoName": "HDP", 
+                                            "components": None, 
+                                            "osType": "redhat6", 
+                                            "distribution": None, 
+                                            "repoId": "HDP-2.4-repo-1"
+                                        }, 
+                                        {
+                                            "mirrorsList": None, 
+                                            "ambariManaged": True, 
+                                            "baseUrl": "http://public-repo-1.hortonworks.com/HDP-UTILS-1.1.0.20/repos/centos6", 
+                                            "repoName": "HDP-UTILS", 
+                                            "components": None, 
+                                            "osType": "redhat6", 
+                                            "distribution": None, 
+                                            "repoId": "HDP-UTILS-1.1.0.20-repo-1"
+                                        }
+                                    ], 
+                                    "feature": {
+                                        "m_isScoped": False, 
+                                        "m_isPreInstalled": False
+                                    }, 
+                                    "stackName": "HDP", 
+                                    "repoVersionId": 1
+                                }, 
                                }
 
     with Environment('/') as env:
       updateRepo.actionexecute(None)
 
     self.assertTrue(file_mock.called)
-    self.assertEquals(file_mock.call_args[0][0], "/etc/yum.repos.d/TEST_REPO_NAME.repo")
+    self.assertEquals(file_mock.call_args[0][0], "/etc/yum.repos.d/HDP.repo")
     self.assertEquals(structured_out_mock.call_args[0][0], {'repo_update': {'message': 'Repository files successfully updated!', 'exit_code': 0}})
 
     ###### invalid repo info
     file_mock.reset_mock()
     failed = False
     mock_config.return_value = { "configurations": {
-                                        "cluster-env": {
+                                        "clugit ster-env": {
                                                 "repo_suse_rhel_template": "REPO_SUSE_RHEL_TEST_TEMPLATE",
                                                 "repo_ubuntu_template": "REPO_UBUNTU_TEMPLATE"
                                         }
                                  },
-                                 "hostLevelParams": {
-                                   "repo_info": '{}'
-                                 }
+                                 "repositoryFile": {}
                                }
     try:
       with Environment('/') as env:

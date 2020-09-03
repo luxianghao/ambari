@@ -23,11 +23,13 @@ module.exports.config = {
       ignore: [
         /^(vendor|app\/data|app\/assets|test)/
       ],
-      pattern: /\.(js)$/
+      pattern: /\.(js)$/,
+      plugins: ['transform-object-assign']
     },
     assetsmanager: {
       copyTo: {
-        'stylesheets/fonts' : ['vendor/theme/fonts/*']
+        'stylesheets/fonts' : ['vendor/theme/fonts/*'],
+        'api-docs' : ['api-docs/*']
       }
     }
   },
@@ -81,7 +83,11 @@ module.exports.config = {
           'vendor/scripts/jquery.flexibleArea.js',
           'vendor/scripts/FileSaver.js',
           'vendor/scripts/Blob.js',
-          'vendor/scripts/pluralize.js'
+          'vendor/scripts/pluralize.js',
+          'vendor/scripts/sockjs.min.js',
+          'vendor/scripts/stomp.min.js',
+          'vendor/scripts/theme/bootstrap-ambari.js',
+          'vendor/scripts/theme/jszip.min.js'
         ]
       }
     },
@@ -97,6 +103,7 @@ module.exports.config = {
           'vendor/styles/bootstrap.css',
           'vendor/styles/font-awesome.css',
           'vendor/styles/font-awesome-ie7.css',
+          'vendor/styles/font-awesome-4.css',
           'vendor/styles/cubism.css',
           'vendor/styles/rickshaw.css',
           'vendor/styles/bootstrap-combobox.css',

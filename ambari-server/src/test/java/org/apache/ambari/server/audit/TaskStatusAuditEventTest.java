@@ -18,12 +18,12 @@
 
 package org.apache.ambari.server.audit;
 
+import static org.hamcrest.core.IsEqual.equalTo;
+import static org.junit.Assert.assertThat;
+
 import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.audit.event.TaskStatusAuditEvent;
 import org.junit.Test;
-
-import static org.hamcrest.core.IsEqual.equalTo;
-import static org.junit.Assert.assertThat;
 
 public class TaskStatusAuditEventTest {
 
@@ -31,6 +31,8 @@ public class TaskStatusAuditEventTest {
   public void testAuditMessage() throws Exception {
     // Given
     String testUserName = "USER1";
+
+    String testRemoteIp = "127.0.0.1";
     String testOperation = "START MYCOMPONENT";
     String testRequestDetails = "Start MyComponent";
     String testHostName = "ambari.example.com";
@@ -41,6 +43,7 @@ public class TaskStatusAuditEventTest {
     TaskStatusAuditEvent event = TaskStatusAuditEvent.builder()
       .withTimestamp(System.currentTimeMillis())
       .withUserName(testUserName)
+      .withRemoteIp(testRemoteIp)
       .withOperation(testOperation)
       .withRequestId(testRequestId.toString())
       .withDetails(testRequestDetails)
@@ -53,7 +56,7 @@ public class TaskStatusAuditEventTest {
     String actualAuditMessage = event.getAuditMessage();
 
     // Then
-    String expectedAuditMessage = String.format("User(%s), Operation(%s), Details(%s), Status(%s), RequestId(%d), TaskId(%d), Hostname(%s)", testUserName, testOperation, testRequestDetails, testStatus, testRequestId, testTaskId, testHostName);
+    String expectedAuditMessage = String.format("User(%s), RemoteIp(%s), Operation(%s), Details(%s), Status(%s), RequestId(%d), TaskId(%d), Hostname(%s)", testUserName, testRemoteIp, testOperation, testRequestDetails, testStatus, testRequestId, testTaskId, testHostName);
 
     assertThat(actualAuditMessage, equalTo(expectedAuditMessage));
 

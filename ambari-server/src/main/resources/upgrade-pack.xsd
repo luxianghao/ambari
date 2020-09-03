@@ -22,7 +22,7 @@
     This document describes the schema for an Upgrade Pack
     </xs:documentation>
   </xs:annotation>
-
+  
   <!-- FIXME case sensitivity -->
   <xs:simpleType name="upgrade-kind-type">
     <xs:restriction base="xs:string">
@@ -56,6 +56,7 @@
     </xs:restriction>
   </xs:simpleType>
   
+  <!-- Corresponds to the SecurityType enumeration -->
   <xs:simpleType name="security-type">
     <xs:restriction base="xs:string">
       <xs:enumeration value="none" />
@@ -63,9 +64,24 @@
     </xs:restriction>
   </xs:simpleType>
 
+  <!-- Corresponds to the KDCType enumeration -->
+  <xs:simpleType name="kdc-type">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="none" />
+      <xs:enumeration value="mit-kdc" />
+      <xs:enumeration value="active-directory" />
+      <xs:enumeration value="ipa" />
+    </xs:restriction>
+  </xs:simpleType>
+
   <xs:simpleType name="config-condition-comparison-type">
     <xs:restriction base="xs:string">
       <xs:enumeration value="equals" />
+      <xs:enumeration value="not-equals" />
+      <xs:enumeration value="contains" />
+      <xs:enumeration value="not-contains" />
+      <xs:enumeration value="exists" />
+      <xs:enumeration value="not-exists" />
     </xs:restriction>
   </xs:simpleType>
   
@@ -76,16 +92,18 @@
       <xs:extension base="abstract-condition-type">  
         <xs:attribute name="type" type="xs:Name" use="required"/>
         <xs:attribute name="property" type="xs:Name" use="required"/>
-        <xs:attribute name="value" type="xs:string" use="required"/>
+        <xs:attribute name="value" type="xs:string" use="optional"/>
+        <xs:attribute name="return_value_if_config_missing" type="xs:boolean" use="optional"/>
         <xs:attribute name="comparison" type="config-condition-comparison-type" use="required"/>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
-  
+
   <xs:complexType name="security">
     <xs:complexContent>
       <xs:extension base="abstract-condition-type">  
         <xs:attribute name="type" type="security-type" use="required"/>
+        <xs:attribute name="kdc-type" type="kdc-type" use="optional"/>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
@@ -105,13 +123,27 @@
                 </xs:simpleContent>
               </xs:complexType>
             </xs:element>
-            <xs:element name="check-properties" minOccurs="0" maxOccurs="unbounded">
-            </xs:element>
+            <xs:element name="check-properties" type="check-properties-type" minOccurs="0" maxOccurs="unbounded"/>
           </xs:sequence>
           <xs:attribute name="name" />
         </xs:complexType>
       </xs:element>
     </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="check-properties-type">
+    <xs:sequence>
+      <xs:element name="property" minOccurs="1" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:simpleContent>
+            <xs:extension base="xs:string">
+              <xs:attribute name="name" type="xs:string"/>
+            </xs:extension>
+          </xs:simpleContent>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+    <xs:attribute name="name" type="xs:string"/>
   </xs:complexType>
   
   <xs:complexType name="abstract-group-type" abstract="true">
@@ -142,6 +174,7 @@
           <xs:attribute name="name" type="xs:NMTOKEN" />
         </xs:complexType>
       </xs:element>
+      
     </xs:sequence>
     <xs:attribute name="name" type="xs:string" use="required" />
     <xs:attribute name="title" type="xs:string" use="required" />
@@ -152,11 +185,11 @@
       <xs:extension base="abstract-group-type">
         <xs:sequence>
           <xs:element name="execute-stage" minOccurs="1" maxOccurs="unbounded">
-            <xs:complexType>              
-              <xs:sequence minOccurs="0" maxOccurs="unbounded">
+            <xs:complexType>
+              <xs:sequence>
                 <xs:element name="condition" type="abstract-condition-type" minOccurs="0" maxOccurs="1"/>
                 <xs:element name="direction" type="direction-type" minOccurs="0" maxOccurs="1"/>
-                <xs:element name="scope" type="scope-type" minOccurs="0" maxOccurs="1"/>                
+                <xs:element name="scope" type="scope-type" minOccurs="0" maxOccurs="1"/>
                 <xs:element name="task" type="abstract-task-type" minOccurs="1" maxOccurs="1"/>
               </xs:sequence>              
               <xs:attribute name="title" type="xs:string" />
@@ -209,6 +242,12 @@
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
+  
+  <xs:complexType name="parallel-client">
+    <xs:complexContent>
+      <xs:extension base="abstract-group-type" />
+    </xs:complexContent>
+  </xs:complexType>
 
   <xs:complexType name="start">
     <xs:complexContent>
@@ -252,10 +291,12 @@
 
   <xs:complexType name="abstract-task-type" abstract="true">
     <xs:sequence>
+      <xs:element name="condition" type="abstract-condition-type" minOccurs="0" maxOccurs="1"/>
       <xs:element name="scope" minOccurs="0" type="scope-type" />
       <xs:element name="summary" minOccurs="0" />
     </xs:sequence>
     <xs:attribute name="sequential" use="optional" type="xs:boolean" />
+    <xs:attribute name="timeout-config" use="optional" type="xs:string" />
   </xs:complexType>
   
   <xs:complexType name="restart-task">
@@ -271,6 +312,15 @@
       <xs:extension base="abstract-task-type">
         <xs:sequence>
           <xs:element name="message" minOccurs="0" maxOccurs="unbounded" />
+          <xs:element name="parameter" minOccurs="0" maxOccurs="unbounded">
+            <xs:complexType>
+              <xs:simpleContent>
+                <xs:extension base="xs:string">
+                  <xs:attribute name="name" />
+                </xs:extension>
+              </xs:simpleContent>
+            </xs:complexType>
+          </xs:element>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
@@ -310,10 +360,18 @@
       <xs:extension base="abstract-server-task-type">
         <xs:sequence />
         <xs:attribute name="id" use="required"/>
+        <xs:attribute name="supports-patch" type="xs:boolean" />
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
   
+  <xs:complexType name="create_and_configure">
+    <xs:complexContent>
+      <xs:extension base="configure">
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
   <xs:complexType name="configure_function">
     <xs:complexContent>
       <xs:extension base="abstract-task-type">
@@ -322,7 +380,27 @@
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
-  
+
+  <xs:complexType name="add_component">
+    <xs:complexContent>
+      <xs:extension base="abstract-server-task-type">
+        <xs:sequence />
+        <xs:attribute name="service" type="xs:string" use="required"/>
+        <xs:attribute name="component" type="xs:string" use="required"/>
+        <xs:attribute name="host-service" type="xs:string" use="optional"/>
+        <xs:attribute name="host-component" type="xs:string" use="optional"/>
+        <xs:attribute name="hosts" use="required" type="host-target-type" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="regenerate_keytabs">
+    <xs:complexContent>
+      <xs:extension base="abstract-server-task-type">
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
   <xs:complexType name="order-type">
     <xs:sequence>
       <xs:element name="group" minOccurs="1" maxOccurs="unbounded" />
@@ -334,6 +412,13 @@
       <xs:element name="task" type="abstract-task-type" minOccurs="0" maxOccurs="unbounded"/>
     </xs:sequence>
   </xs:complexType>
+
+  <xs:complexType name="downgrade-directive-type">
+    <xs:sequence>
+      <xs:element name="task" type="abstract-task-type" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="copy-upgrade" use="optional" type="xs:boolean" />
+  </xs:complexType>
   
   <xs:complexType name="processing-type">
     <xs:sequence>
@@ -344,14 +429,15 @@
               <xs:complexType>
                 <xs:sequence>
                   <xs:element name="pre-upgrade" type="upgrade-directive-type" minOccurs="0"/>
-                  <xs:element name="pre-downgrade" type="upgrade-directive-type" minOccurs="0" />
+                  <xs:element name="pre-downgrade" type="downgrade-directive-type" minOccurs="0" />
                   <xs:element name="upgrade" type="upgrade-directive-type" minOccurs="1" />
                   <xs:element name="post-upgrade" type="upgrade-directive-type" minOccurs="0" />
-                  <xs:element name="post-downgrade" type="upgrade-directive-type" minOccurs="0" />
+                  <xs:element name="post-downgrade" type="downgrade-directive-type" minOccurs="0" />
                 </xs:sequence>
                 <!-- 
-                Want to use <xs:assert> to make sure that a pre-downgrade is available i
+                Want to use <xs:assert> to make sure that a pre-downgrade is available if
                 pre-upgrade is set.  It appears as though that is not yet available to jaxb.
+                See java implementation for the workaround for this.
                  -->
                 <xs:attribute name="name" type="xs:NMTOKEN" />
               </xs:complexType>
@@ -384,8 +470,15 @@
     
     <xs:complexType>
       <xs:sequence>
-        <xs:element name="target" type="xs:string" />
-        <xs:element name="target-stack" type="xs:string" />
+        <xs:choice>
+          <xs:element name="source" type="xs:string" />
+          <xs:element name="target" type="xs:string" />
+        </xs:choice>
+        <xs:choice>
+          <xs:element name="source-stack" type="xs:string" />
+          <xs:element name="target-stack" type="xs:string" />
+        </xs:choice>
+        <xs:element name="orchestration-options-class" minOccurs="0" type="xs:string" />
         <xs:element name="skip-failures" minOccurs="0" type="xs:boolean" />
         <xs:element name="skip-service-check-failures" minOccurs="0" type="xs:boolean" />
         <xs:element name="downgrade-allowed" minOccurs="0" type="xs:boolean" />

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import javax.persistence.Basic;
@@ -327,7 +328,7 @@ public class AlertTargetEntity {
    */
   protected void addAlertGroup(AlertGroupEntity alertGroup) {
     if (null == alertGroups) {
-      alertGroups = new HashSet<AlertGroupEntity>();
+      alertGroups = new HashSet<>();
     }
 
     alertGroups.add(alertGroup);
@@ -355,7 +356,7 @@ public class AlertTargetEntity {
    */
   protected void addAlertNotice(AlertNoticeEntity notice) {
     if (null == alertNotices) {
-      alertNotices = new ArrayList<AlertNoticeEntity>();
+      alertNotices = new ArrayList<>();
     }
 
     alertNotices.add(notice);
@@ -384,7 +385,7 @@ public class AlertTargetEntity {
   }
 
   /**
-   *
+   * {@inheritDoc}
    */
   @Override
   public boolean equals(Object object) {
@@ -398,21 +399,30 @@ public class AlertTargetEntity {
 
     AlertTargetEntity that = (AlertTargetEntity) object;
 
-    if (targetId != null ? !targetId.equals(that.targetId)
-        : that.targetId != null) {
-      return false;
+    // use the unique ID if it exists
+    if( null != targetId ){
+      return Objects.equals(targetId, that.targetId);
     }
 
-    return true;
-  }
+    return Objects.equals(targetId, that.targetId) &&
+        Objects.equals(targetName, that.targetName) &&
+        Objects.equals(notificationType, that.notificationType) &&
+        Objects.equals(isEnabled, that.isEnabled) &&
+        Objects.equals(description, that.description) &&
+        Objects.equals(isGlobal, that.isGlobal);
+    }
 
   /**
-   *
+   * {@inheritDoc}
    */
   @Override
   public int hashCode() {
-    int result = null != targetId ? targetId.hashCode() : 0;
-    return result;
+    // use the unique ID if it exists
+    if (null != targetId) {
+      return targetId.hashCode();
+    }
+
+    return Objects.hash(targetId, targetName, notificationType, isEnabled, description, isGlobal);
   }
 
   /**

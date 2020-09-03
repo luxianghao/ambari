@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,7 +18,6 @@
 package org.apache.ambari.server.orm.dao;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import javax.persistence.EntityManager;
@@ -27,7 +26,6 @@ import javax.persistence.TypedQuery;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.controller.ExtensionLinkRequest;
 import org.apache.ambari.server.orm.RequiresSession;
-import org.apache.ambari.server.orm.entities.ExtensionLinkEntity;
 import org.apache.ambari.server.orm.entities.ExtensionLinkEntity;
 
 import com.google.inject.Inject;
@@ -67,23 +65,26 @@ public class ExtensionLinkDAO {
   @RequiresSession
   public List<ExtensionLinkEntity> find(ExtensionLinkRequest request) {
     if (request.getLinkId() != null) {
-      ExtensionLinkEntity entity = findById(new Long(request.getLinkId()));
-      List<ExtensionLinkEntity> list = new ArrayList<ExtensionLinkEntity>();
+      ExtensionLinkEntity entity = findById(Long.parseLong(request.getLinkId()));
+      List<ExtensionLinkEntity> list = new ArrayList<>();
       list.add(entity);
       return list;
     }
 
     String stackName = request.getStackName();
-    String stackVersion = request.getStackName();
-    String extensionName = request.getStackName();
-    String extensionVersion = request.getStackName();
+    String stackVersion = request.getStackVersion();
+    String extensionName = request.getExtensionName();
+    String extensionVersion = request.getExtensionVersion();
 
     if (stackName != null && stackVersion != null) {
-      if (extensionName != null && extensionVersion != null) {
-        ExtensionLinkEntity entity = findByStackAndExtension(stackName, stackVersion, extensionName, extensionVersion);
-        List<ExtensionLinkEntity> list = new ArrayList<ExtensionLinkEntity>();
-        list.add(entity);
-        return list;
+      if (extensionName != null) {
+        if (extensionVersion != null) {
+          ExtensionLinkEntity entity = findByStackAndExtension(stackName, stackVersion, extensionName, extensionVersion);
+          List<ExtensionLinkEntity> list = new ArrayList<>();
+          list.add(entity);
+          return list;
+        }
+        return findByStackAndExtensionName(stackName, stackVersion, extensionName);
       }
       return findByStack(stackName, stackVersion);
     }
@@ -153,6 +154,23 @@ public class ExtensionLinkDAO {
   }
 
   /**
+   * Gets the extension link that match the specified stack name, stack version and extension name.
+   *
+   * @return the extension link matching the specified stack name, stack version and extension name if any.
+   */
+  @RequiresSession
+  public List<ExtensionLinkEntity> findByStackAndExtensionName(String stackName, String stackVersion, String extensionName) {
+    TypedQuery<ExtensionLinkEntity> query = entityManagerProvider.get().createNamedQuery(
+        "ExtensionLinkEntity.findByStackAndExtensionName", ExtensionLinkEntity.class);
+
+    query.setParameter("stackName", stackName);
+    query.setParameter("stackVersion", stackVersion);
+    query.setParameter("extensionName", extensionName);
+
+    return daoUtils.selectList(query);
+  }
+
+  /**
    * Gets the extension link that match the specified stack name, stack version, extension name and extension version.
    *
    * @return the extension link matching the specified stack name, stack version, extension name and extension version if any.
@@ -211,8 +229,7 @@ public class ExtensionLinkDAO {
    * {@link ExtensionLinkEntity#getLinkId()} in order to determine whether the entity
    * should be created or merged.
    *
-   * @param extension
-   *          the link to create or update (not {@code null}).
+   * @param link the link to create or update (not {@code null}).
    */
   public void createOrUpdate(ExtensionLinkEntity link)
       throws AmbariException {

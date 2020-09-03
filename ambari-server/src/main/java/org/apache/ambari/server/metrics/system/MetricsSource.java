@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,11 +15,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.ambari.server.metrics.system;
 
-public interface MetricsSource extends Runnable{
+import org.apache.ambari.server.metrics.system.impl.MetricsConfiguration;
+
+public interface MetricsSource{
+
   /**
-   * initialize sink
+   * Initialize the source, set up configs etc.
    **/
-  void init(AmbariMetricSink sink);
+  void init(MetricsConfiguration configuration, MetricsSink sink);
+
+  /**
+   * Start the source
+   **/
+  void start();
 }

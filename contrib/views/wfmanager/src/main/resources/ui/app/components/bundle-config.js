@@ -20,6 +20,7 @@ import {BundleGenerator} from '../domain/bundle/bundle-xml-generator';
 import {BundleXmlImporter} from '../domain/bundle/bundle-xml-importer';
 import { validator, buildValidations } from 'ember-cp-validations';
 import Constants from '../utils/constants';
+import SchemaVersions from '../domain/schema-versions';
 
 const Validations = buildValidations({
   'bundle.name': validator('presence', {
@@ -30,7 +31,7 @@ const Validations = buildValidations({
       validator('operand-length', {
         min : 1,
         dependentKeys: ['bundle','bundle.coordinators.[]'],
-        message : 'Alteast one coordinator is required',
+        message : 'At least one coordinator is required',
         disabled(model, attribute) {
           return !model.get('bundle');
         }
@@ -41,27 +42,27 @@ const Validations = buildValidations({
 
 export default Ember.Component.extend(Ember.Evented, Validations, {
   bundle : null,
+  schemaVersions : SchemaVersions.create({}),
   propertyExtractor : Ember.inject.service('property-extractor'),
   fileBrowser : Ember.inject.service('file-browser'),
   workspaceManager : Ember.inject.service('workspace-manager'),
+  jobConfigProperties: Ember.A([]),
+  isDefaultNameForBundleEnabled : false,
   initialize : function(){
-    var draftBundle = this.get('workspaceManager').restoreWorkInProgress(this.get('tabInfo.id'));
-    if(draftBundle){
-      this.set('bundle', JSON.parse(draftBundle));
-    }else{
-      this.set('bundle', this.createBundle());
-    }
+    var self = this;
+    this.set('errors', Ember.A([]));
+    this.get('workspaceManager').restoreWorkInProgress(this.get('tabInfo.id')).promise.then(function(draftBundle){
+      self.loadBundle(draftBundle);
+    }.bind(this)).catch(function(data){
+      self.loadBundle();
+    }.bind(this));
     this.get('fileBrowser').on('fileBrowserOpened',function(context){
       this.get('fileBrowser').setContext(context);
     }.bind(this));
     this.on('fileSelected',function(fileName){
       this.set(this.get('filePathModel'), fileName);
     }.bind(this));
-    if(Ember.isBlank(this.get('bundle.name'))){
-      this.set('bundle.name', Ember.copy(this.get('tabInfo.name')));
-    }
     this.set('showErrorMessage', false);
-    this.schedulePersistWorkInProgress();
   }.on('init'),
   onDestroy : function(){
     Ember.run.cancel(this.schedulePersistWorkInProgress);
@@ -86,6 +87,20 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
       this.sendAction('changeTabName', this.get('tabInfo'), this.get('bundle.name'));
     }
   }),
+  bundleFilePath : Ember.computed('tabInfo.filePath', function(){
+    return this.get('tabInfo.filePath');
+  }),
+  loadBundle(draftBundle){
+    if(draftBundle){
+      this.set('bundle', JSOG.parse(draftBundle));
+    }else{
+      this.set('bundle', this.createBundle());
+    }
+    if(Ember.isBlank(this.get('bundle.name')) && this.get('isDefaultNameForBundleEnabled')){
+      this.set('bundle.name', Ember.copy(this.get('tabInfo.name')));
+    }
+    this.schedulePersistWorkInProgress();
+  },
   schedulePersistWorkInProgress (){
     Ember.run.later(function(){
       this.persistWorkInProgress();
@@ -96,7 +111,7 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
     if(!this.get('bundle')){
       return;
     }
-    var json = JSON.stringify(this.get("bundle"));
+    var json = JSOG.stringify(this.get("bundle"));
     this.get('workspaceManager').saveWorkInProgress(this.get('tabInfo.id'), json);
   },
   createBundle (){
@@ -107,7 +122,12 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
         displayValue : '',
         type : 'date'
       },
-      coordinators : null
+      coordinators : null,
+      schemaVersions : {
+        bundleVersion : this.get('schemaVersions').getDefaultVersion('bundle')
+      },
+      xmlns : "uri:oozie:bundle:" +this.get('schemaVersions').getDefaultVersion('bundle'),
+      draftVersion: 'v1'
     });
   },
   importSampleBundle (){
@@ -126,18 +146,53 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
     return deferred;
   },
   importBundle (filePath){
+    if (!filePath) {
+      return;
+    }
+    this.set("isImporting", true);
+    filePath = this.appendFileName(filePath, 'bundle');
     this.set("bundleFilePath", filePath);
-    this.set("isImporting", false);
     var deferred = this.getBundleFromHdfs(filePath);
-    deferred.promise.then(function(data){
-      this.getBundleFromXml(data);
+    deferred.promise.then(function(response){
+      if(response.type === 'xml'){
+        this.getBundleFromXml(response.data);
+      }else{
+        this.getBundleFromJSON(response.data);
+      }
+      this.set('bundleFilePath', filePath);
       this.set("isImporting", false);
-    }.bind(this)).catch(function(){
+    }.bind(this)).catch(function(data){
+      console.error(data);
+      this.set("errorMsg", "There is some problem while importing.");
       this.set("isImporting", false);
       this.set("isImportingSuccess", false);
+      this.set("data", data);
     }.bind(this));
   },
+  getBundleFromJSON(draftBundle){
+    this.set('bundle', JSOG.parse(draftBundle));
+  },
   getBundleFromHdfs(filePath){
+    var url =  Ember.ENV.API_URL + "/readWorkflow?workflowPath="+filePath+"&jobType=BUNDLE";
+    var deferred = Ember.RSVP.defer();
+    Ember.$.ajax({
+      url: url,
+      method: 'GET',
+      dataType: "text",
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader("X-XSRF-HEADER", Math.round(Math.random()*100000));
+        xhr.setRequestHeader("X-Requested-By", "Ambari");
+      }
+    }).done(function(data, status, xhr){
+      var type = xhr.getResponseHeader("response-type") === "xml" ? 'xml' : 'json';
+      deferred.resolve({data : data, type : type});
+    }).fail(function(e){
+      console.error(e);
+      deferred.reject(e);
+    });
+    return deferred;
+  },
+  getFromHdfs(filePath){
     var url =  Ember.ENV.API_URL + "/readWorkflowXml?workflowXmlPath="+filePath;
     var deferred = Ember.RSVP.defer();
     Ember.$.ajax({
@@ -150,21 +205,62 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
       }
     }).done(function(data){
       deferred.resolve(data);
-    }).fail(function(){
-      deferred.reject();
+    }).fail(function(e){
+      console.error(e);
+      deferred.reject(e);
     });
     return deferred;
   },
   getBundleFromXml(bundleXml){
-    var bundleXmlImporter = BundleXmlImporter.create({});
-    var bundle = bundleXmlImporter.importBundle(bundleXml);
-    this.set("bundle", bundle);
+    var bundleXmlImporter = BundleXmlImporter.create();
+    var bundleObj = bundleXmlImporter.importBundle(bundleXml);
+    this.get("errors").clear();
+    this.get("errors").pushObjects(bundleObj.errors);
+    if (bundleObj.bundle) {
+      this.set("bundle", bundleObj.bundle);
+    }
+  },
+  getJobProperties(coordinatorPath){
+    var deferred = Ember.RSVP.defer();
+    coordinatorPath = this.appendFileName(coordinatorPath, 'coord');
+    this.getFromHdfs(coordinatorPath).promise.then((coordinatorXml)=>{
+      var x2js = new X2JS();
+      var coordProps = this.get('propertyExtractor').getDynamicProperties(coordinatorXml);
+      var coordinatorJson = x2js.xml_str2json(coordinatorXml);
+      var workflowPath = coordinatorJson['coordinator-app']['action']['workflow']['app-path'];
+      if(this.get('propertyExtractor').containsParameters(workflowPath)){
+        this.set('containsParameteriedPaths', true);
+        deferred.resolve(Array.from(coordProps.values()));
+      }else{
+        workflowPath = this.appendFileName(workflowPath, 'wf');
+        this.getFromHdfs(workflowPath).promise.then((workflowXml)=>{
+          var workflowProps = this.get('propertyExtractor').getDynamicProperties(workflowXml);
+          deferred.resolve(Array.from(coordProps.values()).concat(Array.from(workflowProps.values())));
+        });
+      }
+    }.bind(this)).catch((e)=>{
+      deferred.reject({trace :e, path: coordinatorPath});
+    });
+    return deferred;
+  },
+  appendFileName(filePath, type){
+    if(filePath.endsWith('.wfdraft')){
+      return filePath;
+    }else if(!filePath.endsWith('.xml') && type === 'bundle'){
+      return filePath = `${filePath}/bundle.xml`;
+    }else if(!filePath.endsWith('.xml') && type === 'coord'){
+      return filePath = `${filePath}/coordinator.xml`;
+    }else if(!filePath.endsWith('.xml') && type === 'wf'){
+      return filePath = `${filePath}/workflow.xml`;
+    }else{
+      return filePath;
+    }
   },
   actions : {
     closeFileBrowser(){
       this.set("showingFileBrowser", false);
       this.get('fileBrowser').getContext().trigger('fileSelected', this.get('filePath'));
-      if(this.get('bundleFilePath')){
+      if(this.get('filePathModel') === 'bundleFilePath'){
         this.importBundle(Ember.copy(this.get('bundleFilePath')));
         this.set('bundleFilePath', null);
       }
@@ -219,7 +315,13 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
       this.set('showingResetConfirmation', true);
     },
     resetBundle(){
-      this.set('bundle', this.createBundle());
+      this.get('errors').clear();
+      this.set('showingResetConfirmation', false);
+      if(this.get('bundleFilePath')){
+        this.importBundle(this.get('bundleFilePath'));
+      }else {
+        this.set('bundle', this.createBundle());
+      }
     },
     closeBundleSubmitConfig(){
       this.set("showingJobConfig", false);
@@ -231,10 +333,47 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
       }
       var bundleGenerator = BundleGenerator.create({bundle:this.get("bundle")});
       var bundleXml = bundleGenerator.process();
-      var dynamicProperties = this.get('propertyExtractor').getDynamicProperties(bundleXml);
-      var configForSubmit = {props : dynamicProperties, xml : bundleXml, params : this.get('bundle.parameters')};
-      this.set("bundleConfigs", configForSubmit);
-      this.set("showingJobConfig", true);
+      var propertyPromises = [];
+      this.$('#loading').show();
+      this.get('bundle.coordinators').forEach((coordinator) =>{
+        if(this.get('propertyExtractor').containsParameters(coordinator.appPath)){
+          this.set('containsParameteriedPaths', true);
+          return;
+        }
+        var deferred = this.getJobProperties(coordinator.appPath);
+        propertyPromises.push(deferred.promise);
+      }, this);
+      Ember.RSVP.Promise.all(propertyPromises).then(function(props){
+        var combinedProps = [];
+        var excludedProps = [];
+        props.forEach((prop, index)=>{
+          var coordinator = this.get('bundle.coordinators').objectAt(index);
+          if(coordinator.configuration && coordinator.configuration.property){
+            coordinator.configuration.property.forEach((config) => {
+              var idx = prop.indexOf('${'+config.name+'}');
+              if(idx >= 0){
+                excludedProps.push('${'+config.name+'}');
+              }
+            });
+          }
+          combinedProps = combinedProps.concat(prop);
+        });
+        var dynamicProperties = this.get('propertyExtractor').getDynamicProperties(bundleXml);
+        combinedProps.forEach((prop)=>{
+          if(excludedProps.indexOf(prop) >= 0){
+            return;
+          }
+          dynamicProperties.set(prop, prop);
+        });
+        this.$('#loading').hide();
+        var configForSubmit = {props : Array.from(dynamicProperties.values(), key => key), xml : bundleXml, params : this.get('bundle.parameters')};
+        this.set("bundleConfigs", configForSubmit);
+        this.set("showingJobConfig", true);
+      }.bind(this)).catch(function(e){
+        this.$('#loading').hide();
+        this.get("errors").pushObject({'message' : 'Could not process coordinator from ' + e.path});
+        throw new Error(e);
+      }.bind(this));
     },
     preview(){
       if(this.get('validations.isInvalid')) {
@@ -247,16 +386,42 @@ export default Ember.Component.extend(Ember.Evented, Validations, {
       this.set("previewXml", vkbeautify.xml(bundleXml));
       this.set("showingPreview", true);
     },
+    closePreview(){
+      this.set("showingPreview", false);
+    },
     importBundleTest(){
       var deferred = this.importSampleBundle();
       deferred.promise.then(function(data){
         this.getBundleFromXml(data);
-      }.bind(this)).catch(function(e){
-        throw new Error(e);
+      }.bind(this)).catch(function(data){
+        console.error(data);
+        this.set("errorMsg", "There is some problem while importing.");
+        this.set("data", data);
       });
     },
     openTab(type, path){
       this.sendAction('openTab', type, path);
+    },
+    showVersionSettings(value){
+      this.set('showVersionSettings', value);
+    },
+    save(){
+      if (Ember.isBlank(this.$('[name=bundle_title]').val())) {
+        return;
+      }
+      var isDraft = false, bundleXml;
+      if(this.get('validations.isInvalid')) {
+        isDraft = true;
+      }else{
+        var bundleGenerator = BundleGenerator.create({bundle:this.get("bundle")});
+        bundleXml = bundleGenerator.process();
+      }
+      var bundleJson = JSOG.stringify(this.get("bundle"));
+      this.set("configForSave",{json:bundleJson, xml:bundleXml, isDraft: isDraft});
+      this.set("showingSaveWorkflow", true);
+    },
+    closeSave(){
+      this.set("showingSaveWorkflow", false);
     }
   }
 });

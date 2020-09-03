@@ -29,36 +29,39 @@
           </div>
         </div>
         <div class="navbar-brand pull-right paddingtop8 col-xs-18">
+          <div class="dropdown inlineBlock">
+            <button class="btn btn-default dropdown-toggle borderRightRadiusNone" type="button" data-toggle="dropdown">Bundle
+            <span class="caret"></span></button>
+            <ul class="dropdown-menu">
+              <li>
+              <a  class="pointer" title="Import workflow" {{action "openFileBrowser" "bundleFilePath"}}>
+                <i class="fa fa-download marginright5"></i>Import
+              </a>
+            </li>
+            <li>
+              <a class="pointer" href="#" data-toggle="modal" data-target="#ConfirmDialog" title="Reset Bundle" {{action "confirmReset"}}>
+                <i class="fa fa-refresh marginright5"></i>Reset
+              </a>
+            </li>
+            <li>
+              <a class="pointer" href="#" data-toggle="modal" title="Preview Xml" {{action "preview"}}>
+                  <i class="fa fa-eye marginright5"></i>Preview xml
+                </a>
+              </li>
+            </ul>
+          </div>
           <div class="btn-group" role="group" aria-label="...">
-            <button type="button" class="btn btn-default"  data-toggle="modal" data-target="#ConfirmDialog" title="New Workflow" {{action "confirmReset"}}>
-              <i class="fa fa-refresh"> Reset</i>
-            </button>
-            <button  type="button" class="btn btn-default" title="Import workflow" {{action "openFileBrowser" "bundleFilePath"}}>
-              <i class="fa fa-download"> Import</i>
+            <button type="button" class="btn btn-default" title="Bundle Versions" {{action "showVersionSettings" true}}>
+              <i class="fa fa-cog marginright5"></i>Versions
             </button>
             <button  id="import-bundle-test" type="button" class="btn btn-default hide" title="Import Bundle Test" {{action "importBundleTest"}}>
               <i class="fa fa-download"></i>
             </button>
-            <div class="btn-group">
-              <div class="dropdown">
-                <button class="btn btn-default dropdown-toggle borderRadiusNone" type="button" data-toggle="dropdown"><i class="marginright5"></i>More
-                <span class="caret"></span></button>
-                <ul class="dropdown-menu">
-                  <li>
-                    <a href="javascript:void(0)" data-toggle="modal" data-target="#previewModal"  title="Preview Xml" {{action "preview"}}>
-                      <i class="fa fa-eye marginright5"></i>Preview xml
-                    </a>
-                  </li>
-                  <!-- <li>
-                    <a href="javascript:void(0)" data-toggle="modal" title="Download workflow" {{action "downloadWorkflowXml"}}>
-                      <i class="fa fa-download marginright5"></i>Download xml
-                    </a>
-                  </li> -->
-                </ul>
-              </div>
-            </div>
+            <button id="save-bundle" type="button" class="btn btn-default" title="Save coordinator in HDFS" {{action "save"}}>
+                <i class="fa fa-floppy-o"></i> Save
+            </button>
             <button type="button" class="btn btn-primary" title="Submit Bundle" {{action "submitBundle"}}>
-              <i class="fa fa-upload"> Submit</i>
+              <i class="fa fa-upload"></i> Submit
             </button>
           </div>
         </div>
@@ -66,6 +69,10 @@
     </div>
   </nav>
   <div class="container-fluid">
+    <div id='loading'>
+      {{spin-spinner lines=13 length=20 width=10}}
+    </div>
+    {{designer-errors errors=errors validationErrors=validationErrors errorMsg=errorMsg data=data}}
     <form class="form-horizontal">
       <div class="col-sm-12 paddingtop10">
         <div class="col-sm-8 centralize-panel">
@@ -93,13 +100,13 @@
                   <li class="list-group-item">No Coordinators Configured.</li>
                   {{/each}}
                 </ul>
-                {{#field-error model=this field='bundle.coordinators' showErrorMessage=true}}{{/field-error}}
+                {{#field-error model=this field='bundle.coordinators' showErrorMessage=showErrorMessage}}{{/field-error}}
 
               {{#if coordinatorCreateMode}}
-              {{#bundle-coord-config coordinator=currentCoordinator openTab="openTab" openFileBrowser="openFileBrowser" add="addCoordinator" cancel="cancelCoordinatorOperation" createMode=coordinatorCreateMode}}{{/bundle-coord-config}}
+              {{#bundle-coord-config coordinator=currentCoordinator openTab="openTab" openFileBrowser="openFileBrowser" add="addCoordinator" cancel="cancelCoordinatorOperation" createMode=coordinatorCreateMode errorMsg=errorMsg data=data appendFileName=appendFileName}}{{/bundle-coord-config}}
               {{/if}}
               {{#if coordinatorEditMode}}
-              {{#bundle-coord-config coordinator=currentCoordinator openTab="openTab" openFileBrowser="openFileBrowser" update="updateCoordinator" cancel="cancelCoordinatorOperation" editMode=coordinatorEditMode}}{{/bundle-coord-config}}
+              {{#bundle-coord-config coordinator=currentCoordinator openTab="openTab" openFileBrowser="openFileBrowser" update="updateCoordinator" cancel="cancelCoordinatorOperation" editMode=coordinatorEditMode errorMsg=errorMsg data=data appendFileName=appendFileName}}{{/bundle-coord-config}}
               {{/if}}
             </div>
           </div>
@@ -114,16 +121,22 @@
   </div>
 </div>
 {{#if showingFileBrowser}}
-  {{hdfs-browser closeFileBrowser="closeFileBrowser" selectFileCallback=selectFileCallback filePath=filePath}}
+  {{hdfs-browser closeFileBrowser="closeFileBrowser" selectFileCallback=selectFileCallback filePath=filePath hideUpload=true}}
 {{/if}}
 {{#if showingJobConfig}}
-  {{job-config type='bundle' closeJobConfigs="closeBundleSubmitConfig" jobFilePath=bundleFilePath openFileBrowser="openFileBrowser" closeFileBrowser="closeFileBrowser" jobConfigs=bundleConfigs}}
+  {{job-config type='bundle' closeJobConfigs="closeBundleSubmitConfig" jobFilePath=bundleFilePath openFileBrowser="openFileBrowser" closeFileBrowser="closeFileBrowser" jobConfigs=bundleConfigs containsParameteriedPaths=containsParameteriedPaths jobConfigProperties=jobConfigProperties}}
 {{/if}}
 {{#if showingResetConfirmation}}
   {{#confirmation-dialog title="Confirm Bundle Reset"
-  confirmationMessage="Any unsaved changes may be lost. Do you want to proceed resetting the bundle ?"
+  confirmationMessage="File will be reset to last saved version in the HDFS. Do you want to proceed?"
   okBtnText="Continue" cancelBtnText="Cancel" onOk="resetBundle"}}{{/confirmation-dialog}}
 {{/if}}
 {{#if showingPreview}}
-  {{#preview-dialog title="Bundle XML Preview" previewXml=previewXml}}{{/preview-dialog}}
+  {{#preview-dialog title="Bundle XML Preview" previewXml=previewXml closePreview="closePreview"}}{{/preview-dialog}}
+{{/if}}
+{{#if showVersionSettings}}
+  {{bundle-version-settings bundle=bundle showVersionSettings="showVersionSettings" }}
+{{/if}}
+{{#if showingSaveWorkflow}}
+  {{save-wf type='bundle' close="closeSave" jobFilePath=bundleFilePath openFileBrowser="openFileBrowser" closeFileBrowser="closeFileBrowser" jobConfigs=configForSave}}
 {{/if}}

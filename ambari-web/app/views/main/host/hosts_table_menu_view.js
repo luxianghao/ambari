@@ -70,7 +70,7 @@ App.HostTableMenuView = Em.View.extend({
   slaveItemView: Em.View.extend({
 
     tagName: 'li',
-    classNames: ['dropdown-submenu'],
+    classNames: ['dropdown-submenu', 'submenu-left'],
 
     /**
      * Get third-level menu items ingo for slave components
@@ -240,7 +240,7 @@ App.HostTableMenuView = Em.View.extend({
   hostItemView: Em.View.extend({
 
     tagName: 'li',
-    classNames: ['dropdown-submenu'],
+    classNames: ['dropdown-submenu', 'submenu-left'],
 
     label: Em.I18n.t('common.hosts'),
 
@@ -287,6 +287,13 @@ App.HostTableMenuView = Em.View.extend({
             operationData: O.create({
               action: 'REINSTALL',
               message: Em.I18n.t('hosts.table.menu.l2.reinstallFailedComponents')
+            })
+          }),
+          O.create({
+            label: Em.I18n.t('hosts.table.menu.l2.refreshConfigsClientComponents'),
+            operationData: O.create({
+                action: 'CONFIGURE',
+                message: Em.I18n.t('hosts.table.menu.l2.refreshConfigsClientComponents')
             })
           })
         ]);

@@ -32,12 +32,14 @@ App.HostComponent = DS.Model.extend({
   publicHostName: DS.attr('string'),
   service: DS.belongsTo('App.Service'),
   adminState: DS.attr('string'),
+  haNameSpace: DS.attr('string'),
+  clusterIdValue: DS.attr('string'),
 
   serviceDisplayName: Em.computed.truncate('service.displayName', 14, 11),
 
-  getDisplayName: Em.computed.truncate('displayName', 19, 16),
+  getDisplayName: Em.computed.truncate('displayName', 30, 25),
 
-  getDisplayNameAdvanced:Em.computed.truncate('displayNameAdvanced', 19, 16),
+  getDisplayNameAdvanced:Em.computed.truncate('displayNameAdvanced', 30, 25),
 
   summaryLabelClassName:function(){
     return 'label_for_'+this.get('componentName').toLowerCase();
@@ -51,7 +53,7 @@ App.HostComponent = DS.Model.extend({
    * @returns {bool}
    */
   isClient: function () {
-    return App.get('components.clients').contains(this.get('componentName'));
+    return App.HostComponent.isClient(this.get('componentName'));
   }.property('componentName'),
   /**
    * Determine if component is running now
@@ -73,7 +75,7 @@ App.HostComponent = DS.Model.extend({
    * @returns {bool}
    */
   isMaster: function () {
-    return App.get('components.masters').contains(this.get('componentName'));
+    return App.HostComponent.isMaster(this.get('componentName'));
   }.property('componentName', 'App.components.masters'),
 
   /**
@@ -81,7 +83,7 @@ App.HostComponent = DS.Model.extend({
    * @returns {bool}
    */
   isSlave: function () {
-    return App.get('components.slaves').contains(this.get('componentName'));
+    return App.HostComponent.isSlave(this.get('componentName'));
   }.property('componentName'),
   /**
    * Only certain components can be deleted.
@@ -114,7 +116,17 @@ App.HostComponent = DS.Model.extend({
    * User friendly host component status
    * @returns {String}
    */
-  isActive: Em.computed.equal('passiveState', 'OFF'),
+  isActive: function() {
+    let passiveState = this.get('passiveState');
+    if (passiveState === 'IMPLIED_FROM_HOST') {
+      passiveState = this.get('host.passiveState');
+    } else if (passiveState === 'IMPLIED_FROM_SERVICE') {
+      passiveState = this.get('service.passiveState');
+    } else if (passiveState === 'IMPLIED_FROM_SERVICE_AND_HOST') {
+      return this.get('service.passiveState') === 'OFF' && this.get('host.passiveState') === 'OFF';
+    }
+    return passiveState === 'OFF';
+  }.property('passiveState', 'host.passiveState', 'service.passiveState'),
 
   /**
    * Determine if passiveState is implied from host or/and service
@@ -132,16 +144,25 @@ App.HostComponent = DS.Model.extend({
   }.property('componentName', 'App.components.nonHDP'),
 
   /**
+   * @type {number}
+   */
+  warningCount: 0,
+  /**
+   * @type {number}
+   */
+  criticalCount: 0,
+
+  /**
    * Does component have Critical Alerts
    * @type {boolean}
    */
-  hasCriticalAlerts: false,
+  hasCriticalAlerts: Em.computed.gte('criticalCount', 0),
 
   /**
    * Number of the Critical and Warning alerts for current component
    * @type {number}
    */
-  alertsCount: 0,
+  alertsCount: Em.computed.sumProperties('warningCount', 'criticalCount'),
 
   statusClass: function () {
     return this.get('isActive') ? this.get('workStatus') : 'icon-medkit';
@@ -158,12 +179,26 @@ App.HostComponent = DS.Model.extend({
   },
 
   componentTextStatus: function () {
+    if (this.get('isClient') && this.get("workStatus") === 'INSTALLED') {
+      return Em.I18n.t('common.installed');
+    }
     return App.HostComponentStatus.getTextStatus(this.get("workStatus"));
   }.property('workStatus', 'isDecommissioning')
 });
 
 App.HostComponent.FIXTURES = [];
 
+App.HostComponent.isClient = function(componentName) {
+  return App.get('components.clients').contains(componentName);
+};
+
+App.HostComponent.isMaster = function(componentName) {
+  return App.get('components.masters').contains(componentName);
+};
+
+App.HostComponent.isSlave = function(componentName) {
+  return App.get('components.slaves').contains(componentName);
+};
 
 /**
  * get particular counter of host-component by name
@@ -182,6 +217,15 @@ App.HostComponent.getCount = function (componentName, type) {
     default:
       return 0;
   }
+};
+
+/**
+ * @param {string} componentName
+ * @param {string} hostName
+ * @returns {string}
+ */
+App.HostComponent.getId = function(componentName, hostName) {
+  return componentName + '_' + hostName;
 };
 
 App.HostComponentStatus = {
@@ -250,7 +294,7 @@ App.HostComponentStatus = {
       case this.disabled:
         return 'Disabled';
       case this.init:
-        return 'Install Pending';
+        return 'Install Pending...';
     }
     return 'Unknown';
   },
@@ -271,22 +315,65 @@ App.HostComponentStatus = {
 };
 
 App.HostComponentActionMap = {
-  getMap: function(ctx) {
-    var NN = ctx.get('controller.content.hostComponents').findProperty('componentName', 'NAMENODE');
-    var RM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RESOURCEMANAGER');
-    var RA = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RANGER_ADMIN');
-    var HM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQMASTER');
-    var HS = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQSTANDBY');
-    var HMComponent = App.MasterComponent.find('HAWQMASTER');
-    var HSComponent = App.MasterComponent.find('HAWQSTANDBY');
+  getMap: function (ctx) {
+    const NN = ctx.get('controller.content.hostComponents').findProperty('componentName', 'NAMENODE'),
+      RM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RESOURCEMANAGER'),
+      RA = ctx.get('controller.content.hostComponents').findProperty('componentName', 'RANGER_ADMIN'),
+      HM = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQMASTER'),
+      HS = ctx.get('controller.content.hostComponents').findProperty('componentName', 'HAWQSTANDBY'),
+      HMComponent = App.MasterComponent.find('HAWQMASTER'),
+      HSComponent = App.MasterComponent.find('HAWQSTANDBY'),
+      hasMultipleMasterComponentGroups = ctx.get('service.hasMultipleMasterComponentGroups'),
+      isClientsOnlyService = ctx.get('controller.isClientsOnlyService'),
+      isStartDisabled = ctx.get('controller.isStartDisabled'),
+      isStopDisabled = ctx.get('controller.isStopDisabled');
 
     return {
+      START_ALL: {
+        action: hasMultipleMasterComponentGroups ? '' : 'startService',
+        label: Em.I18n.t('services.service.start'),
+        cssClass: `glyphicon glyphicon-play ${isStartDisabled ? 'disabled' : 'enabled'}`,
+        isHidden: isClientsOnlyService,
+        disabled: isStartDisabled,
+        hasSubmenu: !isStartDisabled && hasMultipleMasterComponentGroups,
+        submenuOptions: !isStartDisabled && hasMultipleMasterComponentGroups ? this.getMastersSubmenu(ctx, 'startCertainHostComponents') : []
+      },
+      STOP_ALL: {
+        action: hasMultipleMasterComponentGroups ? '' : 'stopService',
+        label: Em.I18n.t('services.service.stop'),
+        cssClass: `glyphicon glyphicon-stop ${isStopDisabled ? 'disabled' : 'enabled'}`,
+        isHidden: isClientsOnlyService,
+        disabled: isStopDisabled,
+        hasSubmenu: !isStopDisabled && hasMultipleMasterComponentGroups,
+        submenuOptions: !isStopDisabled && hasMultipleMasterComponentGroups ? this.getMastersSubmenu(ctx, 'stopCertainHostComponents') : []
+      },
       RESTART_ALL: {
-        action: 'restartAllHostComponents',
+        action: hasMultipleMasterComponentGroups ? '' : 'restartAllHostComponents',
         context: ctx.get('serviceName'),
-        label: Em.I18n.t('restart.service.all'),
-        cssClass: 'glyphicon glyphicon-repeat',
-        disabled: false
+        label: hasMultipleMasterComponentGroups ? Em.I18n.t('common.restart') : Em.I18n.t('restart.service.all'),
+        cssClass: 'glyphicon glyphicon-time',
+        disabled: false,
+        hasSubmenu: hasMultipleMasterComponentGroups,
+        submenuOptions: hasMultipleMasterComponentGroups ? this.getMastersSubmenu(ctx, 'restartCertainHostComponents') : []
+      },
+      //Ongoing feature. Will later replace RESTART_ALL
+      RESTART_SERVICE: {
+        action: 'restartServiceAllComponents',
+        context: ctx.get('serviceName'),
+        label: Em.I18n.t('restart.service.rest.context').format(ctx.get('displayName')),
+        cssClass: 'glyphicon glyphicon-time',
+        disabled: false,
+        hasSubmenu: true,
+        submenuOptions: ctx.get('controller.restartOptions')
+      },
+      RESTART_NAMENODES: {
+        action: '',
+        label: Em.I18n.t('rollingrestart.dialog.title').format(pluralize(App.format.role('NAMENODE', false))),
+        cssClass: 'glyphicon glyphicon-time',
+        isHidden: !hasMultipleMasterComponentGroups,
+        disabled: false,
+        hasSubmenu: true,
+        submenuOptions: this.getMastersSubmenu(ctx, 'restartCertainHostComponents', ['NAMENODE'])
       },
       RUN_SMOKE_TEST: {
         action: 'runSmokeTest',
@@ -299,6 +386,12 @@ App.HostComponentActionMap = {
         label: Em.I18n.t('hosts.host.details.refreshConfigs'),
         cssClass: 'glyphicon glyphicon-refresh',
         disabled: false
+      },
+      REGENERATE_KEYTAB_FILE_OPERATIONS: {
+        action: 'regenerateKeytabFileOperations',
+        label: Em.I18n.t('admin.kerberos.button.regenerateKeytabs'),
+        cssClass: 'glyphicon glyphicon-repeat',
+        isHidden: !App.get('isKerberosEnabled')
       },
       REFRESHQUEUES: {
         action: 'refreshYarnQueues',
@@ -362,7 +455,7 @@ App.HostComponentActionMap = {
         customCommand: 'STARTDEMOLDAP',
         context: Em.I18n.t('services.service.actions.run.startLdapKnox.context'),
         label: Em.I18n.t('services.service.actions.run.startLdapKnox.context'),
-        cssClass: 'glyphicon glyphicon-play-sign',
+        cssClass: 'icon icon-play-sign',
         disabled: false
       },
       STOPDEMOLDAP: {
@@ -401,7 +494,8 @@ App.HostComponentActionMap = {
         action: 'deleteService',
         context: ctx.get('serviceName'),
         label: Em.I18n.t('services.service.actions.deleteService'),
-        cssClass: 'glyphicon glyphicon-remove'
+        cssClass: 'glyphicon glyphicon-remove',
+        isHidden: !App.get('services.supportsDeleteViaUI').contains(ctx.get('serviceName')) //hide the menu item when the service has a custom behavior setting in its metainfo.xml to disallow Delete Services via UI
       },
       IMMEDIATE_STOP_HAWQ_SERVICE: {
         action: 'executeHawqCustomCommand',
@@ -474,7 +568,60 @@ App.HostComponentActionMap = {
         cssClass: 'glyphicon glyphicon-play-circle',
         isHidden: false,
         disabled: false
+      },
+      TOGGLE_NN_FEDERATION: {
+        action: 'openNameNodeFederationWizard',
+        label: Em.I18n.t('admin.nameNodeFederation.button.enable'),
+        cssClass: 'icon icon-sitemap',
+        disabled: !App.get('isHaEnabled')
+      },
+      UPDATE_REPLICATION: {
+        action: 'updateHBaseReplication',
+        customCommand: 'UPDATE_REPLICATION',
+        context: Em.I18n.t('services.service.actions.run.updateHBaseReplication.context'),
+        label: Em.I18n.t('services.service.actions.run.updateHBaseReplication.label'),
+        cssClass: 'glyphicon glyphicon-refresh',
+        disabled: false
+      },
+      STOP_REPLICATION: {
+        action: 'stopHBaseReplication',
+        customCommand: 'STOP_REPLICATION',
+        context: Em.I18n.t('services.service.actions.run.stopHBaseReplication.context'),
+        label: Em.I18n.t('services.service.actions.run.stopHBaseReplication.label'),
+        cssClass: 'glyphicon glyphicon-refresh',
+        disabled: false
       }
     };
+  },
+
+  getMastersSubmenu: function (context, action, components) {
+    const serviceName = context.get('service.serviceName'),
+      groups = context.get('service.masterComponentGroups') || [],
+      allItem = {
+        action,
+        context: Object.assign({
+          label: Em.I18n.t('services.service.allComponents')
+        }, components ? {
+          components,
+          hosts: groups.mapProperty('hosts').reduce((acc, groupHosts) => [...acc, ...groupHosts], []).uniq()
+        } : {
+          serviceName
+        }),
+        disabled: false
+      },
+      groupItems = groups.map(group => {
+        return {
+          action,
+          context: {
+            label: group.title,
+            hosts: group.hosts,
+            components: components || group.components,
+            serviceName
+          },
+          disabled: false,
+          tooltip: group.title
+        };
+      });
+    return [allItem, ...groupItems];
   }
 };

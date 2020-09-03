@@ -18,6 +18,9 @@
 
 package org.apache.ambari.server.controller.internal;
 
+import java.util.Collections;
+import java.util.Set;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.HostRequest;
@@ -29,12 +32,9 @@ import org.apache.ambari.server.state.State;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collections;
-import java.util.Set;
-
 public class HostStatusHelper {
 
-  protected final static Logger LOG =
+  private static final Logger LOG =
     LoggerFactory.getLogger(HostStatusHelper.class);
 
   public static boolean isHostComponentLive(AmbariManagementController managementController,
@@ -56,7 +56,7 @@ public class HostStatusHelper {
 
       componentHostResponse = hostComponents.size() == 1 ? hostComponents.iterator().next() : null;
     } catch (AmbariException e) {
-      LOG.debug("Error checking " + componentName + " server host component state: ", e);
+      LOG.debug("Error checking {} server host component state: ", componentName, e);
       return false;
     }
 
@@ -72,9 +72,8 @@ public class HostStatusHelper {
     HostResponse hostResponse;
 
     try {
-      HostRequest hostRequest = new HostRequest(hostName, clusterName,
-        Collections.<String, String>emptyMap());
-      Set<HostResponse> hosts = HostResourceProvider.getHosts(managementController, hostRequest);
+      HostRequest hostRequest = new HostRequest(hostName, clusterName);
+      Set<HostResponse> hosts = HostResourceProvider.getHosts(managementController, hostRequest, null);
 
       hostResponse = hosts.size() == 1 ? hosts.iterator().next() : null;
     } catch (AmbariException e) {
@@ -83,6 +82,6 @@ public class HostStatusHelper {
     }
     //Cluster without host
     return hostResponse != null &&
-      !hostResponse.getHostState().equals(HostState.HEARTBEAT_LOST.name());
+      !hostResponse.getHostState().equals(HostState.HEARTBEAT_LOST);
   }
 }

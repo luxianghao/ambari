@@ -44,12 +44,14 @@
         <h5>{{selectedOption.displayName}}:</h5>
         <b>{{t admin.kerberos.wizard.step1.prerequisites.label}}</b> <br/> <br/>
         {{#each condition in selectedOption.preConditions}}
-          {{view App.CheckboxView
-            classNames="checkbox"
-            checkedBinding="condition.checked"
-            labelClassNames="kerberos-step1-prerequiste-checkboxes"
-            labelBinding="condition.displayText"
-          }}
+          {{#unless condition.hidden}}
+            {{view App.CheckboxView
+              classNames="checkbox"
+              checkedBinding="condition.checked"
+              labelClassNames="kerberos-step1-prerequiste-checkboxes"
+              labelBinding="condition.displayText"
+            }}
+          {{/unless}}
         {{/each}}
       </div>
     </div>
@@ -57,6 +59,7 @@
 </div>
 <div class="wizard-footer col-md-12">
   <div class="btn-area">
-    <a id="submit-kerberos-step1" class="btn btn-success pull-right" {{bindAttr disabled="isSubmitDisabled"}} {{action "next" target="controller"}}>{{t common.next}} &rarr;</a>
+    {{view App.WizardNextButton buttonId="submit-kerberos-step1" action="submit" target="controller"
+           data-qa="wizard-next"}}
   </div>
 </div>

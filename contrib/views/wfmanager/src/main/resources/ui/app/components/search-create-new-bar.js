@@ -88,16 +88,16 @@ export default Ember.Component.extend(Ember.Evented,{
                     'Status:SUSPENDED',
                     'Status:SUCCEEDED',
                     'Status:KILLED',
-                    'Status:FAILED'];
+                    'Status:FAILED',
+                    'Status:PREP'];
       var substringMatcher = function(strs) {
         return function findMatches(q, cb) {
           var searchTerm =  self.$('#search-field').tagsinput('input').val();
           var originalLength = strs.length;
-          if(self.get('jobType') === 'wf'){
-            strs.push('Status:PREP');
+          if(self.get('jobType') && self.get('jobType') !== 'wf'){
+            strs.pushObjects(['Status:PREPSUSPENDED','Status:PREPPAUSED','Status:DONEWITHERROR']);
           }
-          strs.push('Name:'+ searchTerm);
-          strs.push('User:'+ searchTerm);
+          strs.pushObjects(['Name:'+ searchTerm, 'User:'+ searchTerm, 'Job id:'+ searchTerm]);
           var newLength = strs.length;
           var matches, substrRegex;
           matches = [];
@@ -115,19 +115,20 @@ export default Ember.Component.extend(Ember.Evented,{
           typeaheadjs: {
             name: 'source',
             source: substringMatcher(source),
-            highlight : true,
-            limit : 10
+            highlight : true
           }
       });
       this.get('tags').forEach(function(value){
         this.$('#search-field').tagsinput('add', value);
       }.bind(this));
       this.$('#search-field').tagsinput('refresh');
+
       this.$('#search-field').on('itemAdded itemRemoved',function(){
         var searchTerms = this.$('#search-field').tagsinput('items');
         var filter = searchTerms.map(function(value){
+
           var eachTag = value.split(":");
-          return eachTag[0].toLowerCase()+"="+eachTag[1];
+          return self.mapSearchItems(eachTag[0])+"="+eachTag[1];
         });
         if(filter.length > 0){
           this.filter.tags = filter.join(";");
@@ -144,7 +145,14 @@ export default Ember.Component.extend(Ember.Evented,{
         }
       }.bind(this));
     }.on('didInsertElement'),
-
+    mapSearchItems(key){
+      key = key.replace(" ", "_").toLowerCase();
+      var keys = {"job_id":"id","jobid":"id"};
+      if(keys[key]){
+        return keys[key];
+      }
+      return key;
+    },
     filterByDate(date, dateType){
       var queryParam;
       if(dateType === 'start'){
@@ -153,14 +161,17 @@ export default Ember.Component.extend(Ember.Evented,{
         queryParam = "endCreatedTime";
       }
       if (date._isAMomentObject) {
-        var dateFilter = queryParam +"="+ date.format("YYYY-MM-DDThh:mm")+'Z';
+        var dateFilter = queryParam +"="+ date.format("YYYY-MM-DDTHH:mm")+'Z';
         this.filter[queryParam] = dateFilter;
       } else {
         delete this.filter[queryParam];
       }
       this.sendAction('onSearch', { type: this.get('jobType'), filter: this.getAllFilters() });
     },
-
+    doClearFilters(){
+      this.filter={};
+      this.sendAction('onSearch', { type: this.get('jobType'), filter: this.getAllFilters() });
+    },
     getAllFilters(){
       var allFilters = [];
       Object.keys(this.filter).forEach(function(value){
@@ -180,6 +191,12 @@ export default Ember.Component.extend(Ember.Evented,{
             elem.addClass("btn-primary");
             this.sendAction('onSearch', { type: type, filter: filter });
         },
+        onSearchClicked(){
+          var searchValue=this.$('.tt-input').val();
+          if(!Ember.isBlank(searchValue)) {
+            this.$('#search-field').tagsinput('add', 'Name:'+searchValue);
+          }
+        },
         refresh(){
           this.sendAction('onSearch', this.get('history').getSearchParams());
         },
@@ -190,10 +207,17 @@ export default Ember.Component.extend(Ember.Evented,{
             this.$("#endDate").trigger("dp.show");
           }
         },
+        clearFilters() {
+          this.$("#startDate").val('');
+          this.$("#endDate").val('');
+          this.$('#search-field').tagsinput('removeAll');
+          this.$('.tt-input').val('');
+          this.doClearFilters();
+        },
         onClear(type) {
           if (type ==='start' && this.get('startDate') === "") {
             this.filterByDate("", type);
-          } else if (type ==='start' && this.get('endDate') === "") {
+          } else if (type ==='end' && this.get('endDate') === "") {
             this.filterByDate("", type);
           }
 

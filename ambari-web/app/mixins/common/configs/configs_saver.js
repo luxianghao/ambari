@@ -18,6 +18,7 @@
 
 var App = require('app');
 var lazyLoading = require('utils/lazy_loading');
+var stringUtils = require('utils/string_utils');
 
 /**
  * Mixin for saving configs
@@ -46,7 +47,7 @@ App.ConfigsSaverMixin = Em.Mixin.create({
   heapsizeException: ['hadoop_heapsize', 'yarn_heapsize', 'nodemanager_heapsize', 'resourcemanager_heapsize',
     'apptimelineserver_heapsize', 'jobhistory_heapsize', 'nfsgateway_heapsize', 'accumulo_master_heapsize',
     'accumulo_tserver_heapsize', 'accumulo_monitor_heapsize', 'accumulo_gc_heapsize', 'accumulo_other_heapsize',
-    'hbase_master_heapsize', 'hbase_regionserver_heapsize', 'metrics_collector_heapsize'],
+    'hbase_master_heapsize', 'hbase_regionserver_heapsize', 'metrics_collector_heapsize', 'hive_heapsize'],
 
   /**
    * Regular expression for heapsize properties detection
@@ -135,12 +136,26 @@ App.ConfigsSaverMixin = Em.Mixin.create({
       if (configGroup && !configGroup.get('isDefault')) {
         var overriddenConfigs = this.getConfigsForGroup(configs, configGroup.get('name'));
 
-        if (Em.isArray(overriddenConfigs)) {
+        if (Em.isArray(overriddenConfigs) && this.isOverriddenConfigsModified(overriddenConfigs, configGroup)) {
           var successCallback = this.get('content.serviceName') === serviceName ? 'putConfigGroupChangesSuccess' : null;
           this.saveGroup(overriddenConfigs, configGroup, this.get('serviceConfigVersionNote'), successCallback);
         }
       }
     }, this);
+  },
+
+  /**
+   * @param {Array} overriddenConfigs
+   * @returns {boolean}
+   */
+  isOverriddenConfigsModified: function(overriddenConfigs, group) {
+    var hasChangedConfigs = overriddenConfigs.some(function(config) {
+      return config.get('savedValue') !== config.get('value') || config.get('savedIsFinal') !== config.get('isFinal');
+    });
+    var overriddenConfigsNames = overriddenConfigs.mapProperty('name');
+    return hasChangedConfigs || group.get('properties').some(function (property) {
+        return !overriddenConfigsNames.contains(Em.get(property, 'name'));
+      });
   },
 
   saveConfigsForDefaultGroup: function() {
@@ -317,9 +332,9 @@ App.ConfigsSaverMixin = Em.Mixin.create({
       return App.config.getOriginalFileName(type);
     });
 
-    // save modified original configs that have no group
+    // save modified original configs that have no group and are not Undefined label
     modifiedConfigs = this.saveSiteConfigs(modifiedConfigs.filter(function (config) {
-      return !config.get('group');
+      return !config.get('group') && !config.get('isUndefinedLabel');
     }));
 
     if (!Em.isArray(modifiedConfigs) || modifiedConfigs.length == 0) return null;
@@ -368,10 +383,10 @@ App.ConfigsSaverMixin = Em.Mixin.create({
   /*********************************** 3. GENERATING JSON TO SAVE *****************************/
 
   /**
-   * Map that contains last used timestamp per filename.
+   * Map that contains last used timestamp.
    * There is a case when two config groups can update same filename almost simultaneously
-   * so they have equal timestamp only and this causes collision. So to prevent this we need to check
-   * if specific filename with specific timestamp is not saved yet
+   * so they have equal timestamp and this causes collision. So to prevent this we need to check
+   * if specific filename with specific timestamp is not saved yet.
    *
    * @type {Object}
    */
@@ -389,19 +404,13 @@ App.ConfigsSaverMixin = Em.Mixin.create({
     var desired_config = [];
     if (Em.isArray(configsToSave) && Em.isArray(fileNamesToSave) && fileNamesToSave.length && configsToSave.length) {
       serviceConfigNote = serviceConfigNote || "";
-      var tagVersion = "version" + (new Date).getTime();
-      fileNamesToSave.forEach(function(fName) {
 
-        /** @see <code>_timeStamps<code> **/
-        if (this.get('_timeStamps')[fName] === tagVersion) {
-          tagVersion = "version" + ((new Date).getTime() + 1);
-        }
-        this.get('_timeStamps')[fName] = tagVersion;
+      fileNamesToSave.forEach(function(fName) {
 
         if (this.allowSaveSite(fName)) {
           var properties = configsToSave.filterProperty('filename', fName);
           var type = App.config.getConfigTagFromFileName(fName);
-          desired_config.push(this.createDesiredConfig(type, tagVersion, properties, serviceConfigNote, ignoreVersionNote));
+          desired_config.push(this.createDesiredConfig(type, properties, serviceConfigNote, ignoreVersionNote));
         }
       }, this);
     }
@@ -441,17 +450,15 @@ App.ConfigsSaverMixin = Em.Mixin.create({
   /**
    * generating common JSON object for desired config
    * @param {string} type - file name without '.xml'
-   * @param {string} tagVersion - version + timestamp
    * @param {App.ConfigProperty[]} properties - array of properties from model
    * @param {string} [serviceConfigNote='']
    * @param {boolean} [ignoreVersionNote=false]
    * @returns {{type: string, tag: string, properties: {}, properties_attributes: {}|undefined, service_config_version_note: string|undefined}}
    */
-  createDesiredConfig: function(type, tagVersion, properties, serviceConfigNote, ignoreVersionNote) {
-    Em.assert('type and tagVersion should be defined', type && tagVersion);
+  createDesiredConfig: function(type, properties, serviceConfigNote, ignoreVersionNote) {
+    Em.assert('type should be defined', type);
     var desired_config = {
       "type": type,
-      "tag": tagVersion,
       "properties": {}
     };
     if (!ignoreVersionNote) {
@@ -462,16 +469,17 @@ App.ConfigsSaverMixin = Em.Mixin.create({
       properties.forEach(function(property) {
 
         if (Em.get(property, 'isRequiredByAgent') !== false) {
-          desired_config.properties[Em.get(property, 'name')] = this.formatValueBeforeSave(property);
+          const name = stringUtils.unicodeEscape(Em.get(property, 'name'), /[\/]/g);
+          desired_config.properties[name] = this.formatValueBeforeSave(property);
           /**
            * add is final value
            */
           if (Em.get(property, 'isFinal')) {
-            attributes.final[Em.get(property, 'name')] = "true";
+            attributes.final[name] = "true";
           }
           if (Em.get(property,'propertyType') != null) {
             Em.get(property,'propertyType').map(function(propType) {
-              attributes[propType.toLowerCase()][Em.get(property,'name')] = "true";
+              attributes[propType.toLowerCase()][name] = "true";
             });
           }
         }
@@ -551,6 +559,7 @@ App.ConfigsSaverMixin = Em.Mixin.create({
         "cluster_name": App.get('clusterName') || this.get('clusterName'),
         "group_name": group.name,
         "tag": group.service_id,
+        "service_name": group.service_id,
         "description": group.description,
         "hosts": groupHosts,
         "service_config_version_note": configVersionNote || "",
@@ -686,7 +695,6 @@ App.ConfigsSaverMixin = Em.Mixin.create({
     }
 
     App.router.get('clusterController').updateClusterData();
-    App.router.get('updateController').updateComponentConfig(Em.K);
     var popupOptions = this.getSaveConfigsPopupOptions(result);
     if (currentService) {
       App.router.get('clusterController').triggerQuickLinksUpdate();

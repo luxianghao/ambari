@@ -139,8 +139,8 @@ App.AddHawqStandbyWizardStep3Controller = Em.Controller.extend({
 
   submit: function () {
     if (!this.get('isSubmitDisabled')) {
-      dataDir = this.get('hawqProps').items[0].properties['hawq_master_directory'];
-      hawqStandby = this.get('content.hawqHosts.newHawqStandby');
+      const dataDir = this.get('hawqProps').items[0].properties['hawq_master_directory'];
+      const hawqStandby = this.get('content.hawqHosts.newHawqStandby');
       App.showConfirmationPopup(
         function() {
           App.get('router.mainAdminKerberosController').getKDCSessionState(function() {
@@ -150,8 +150,7 @@ App.AddHawqStandbyWizardStep3Controller = Em.Controller.extend({
         Em.I18n.t('admin.addHawqStandby.wizard.step3.confirm.dataDir.body').format(dataDir, hawqStandby),
         null,
         Em.I18n.t('admin.addHawqStandby.wizard.step3.confirm.dataDir.title'),
-        "Confirm",
-        false
+        "Confirm"
       );
     }
   },

@@ -16,27 +16,43 @@
 
 What's New with Ambari?
 
-  * The latest release of Ambari is Ambari 2.4.2. This is a maintainenance release of Ambari 2.4.0.
+  * The latest release of Ambari is Ambari 2.7.3.
 
-  * Ambari 2.4.0 added the following features:
+  * Ambari 2.7.0 added the following features:
 
-    * Version Definition File (AMBARI-15636)
+    * The Ambari UI, Ambari Server, and Ambari Agent have been significantly reworked to more efficiently handle large cluster management
 
-    * Audit Logging (AMBARI-15241)
+    * In order to more efficiently manage large clusters, the AMS schema has been updated, and metric aggregation has been improved.
 
-    * Ambari Management Packs (AMBARI-14682)
+    * Updated default configurations, and configuration recommendations to ensure AMS is tuned well out of the box.
 
-    * Dynamic Stack Extensions (AMBARI-12885)
+    * Added support for easily adding and managing new HDFS namespaces.
 
-    * Stack Featurization (AMBARI-13363)
+    * Added support for managing ViewFS mount table configuration.
 
-    * Spark2 Service (AMBARI-16753)
+    * Added FreeIPA as a supported KDC implementation.
 
-    * Ambari Infra Service (AMBARI-17822)
+    * Added support for a new Isilon Management Pack that can be used to easily install HDP on an existing Isilon OneFS implementation.
 
-    * Zeppelin Service  (AMBARI-15265)
+    * Ambari Infra Solr now uses Solr 7.
 
-    * Logsearch Service - Beta Release (AMBARI-15139)
+    * Amazon Linux is now a supported deployment platform.
+
+    * Commonly customized properties are now confgurable all in one place during the installation, making it much easier to quickly configure your installation.
+
+    * Added the ability for teams to quickly see who initiated operations like Add Service, Add Host, Enable HA, etc.
+
+    * Added the ability for teams to quickly see who performed operations like restarting services, etc.
+
+    * Made it easier to find hosts when adding services to a large cluster with many components deployed to it.
+
+    * Added the ability to bulk add and delete components to multiple hosts.
+
+    * Added the ability to delete hosts in bulk.
+
+    * Created a new API portal in the Ambari Server to quickly understand and try out the Ambari API. Navigate to http://ambari.server:8080/api-docs to view the portal.
+
+    * Made it easer to setup SSO for Ambari, Atlas, and Ranger.
 
 Getting Ambari Source
 
@@ -51,7 +67,7 @@ JIRA
 
 User Guide
 
-  Take a look at {{{https://cwiki.apache.org/confluence/display/AMBARI/Installation+Guide+for+Ambari+2.4.2} how to install a Hadoop cluster using Ambari 2.4.2}}.
+  Take a look at {{{https://cwiki.apache.org/confluence/display/AMBARI/Installation+Guide+for+Ambari+2.7.3} how to install a Hadoop cluster using Ambari 2.7.3}}.
 
 Stay Tuned
 

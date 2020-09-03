@@ -24,33 +24,39 @@ App.WizardStep1View = Em.View.extend({
   templateName: require('templates/wizard/step1'),
 
   didInsertElement: function () {
-    $("[rel=skip-validation-tooltip]").tooltip({ placement: 'right'});
-    $("[rel=use-redhat-tooltip]").tooltip({ placement: 'right'});
-    $('.add-os-button,.redhat-label').tooltip();
-    this.$().on('mouseover', '.version-contents-body .table-hover > tbody > tr', function () {
-      App.tooltip($(this).find('.action .icon'), {placement: 'bottom'});
-      App.tooltip($(this).find('.icon-undo'), {placement: 'bottom'});
-    });
-    if (this.get('controller.selectedStack.showAvailable')) {
-      // first time load
-      if (this.get('controller.selectedStack.useRedhatSatellite')) {
-        // restore `use local repo` on page refresh
-        this.get('controller').useLocalRepo();
-      }
-    } else {
-      var selected = this.get('controller.content.stacks') && this.get('controller.content.stacks').findProperty('showAvailable');
-      if (!selected) {
-        // network disconnection
-        Em.trySet(this, 'controller.selectedStack.useLocalRepo', true);
-        Em.trySet(this, 'controller.selectedStack.usePublicRepo', false);
-      }
+    if (this.get('controller.isLoadingComplete') && this.get('state') === 'inDOM') {
+      Em.run.next(() => {
+        $("[rel=skip-validation-tooltip]").tooltip({ placement: 'right'});
+        $("[rel=use-redhat-tooltip]").tooltip({ placement: 'right'});
+        $('.add-os-button,.redhat-label').tooltip();
+        this.$().on('mouseover', '.version-contents-body .table-hover > tbody > tr', function () {
+          App.tooltip($(this).find('.action .icon'), {placement: 'bottom'});
+          App.tooltip($(this).find('.icon-undo'), {placement: 'bottom'});
+        });
+        if (this.get('controller.selectedStack.showAvailable')) {
+          // first time load
+          if (this.get('controller.selectedStack.useRedhatSatellite')) {
+            // restore `use local repo` on page refresh
+            this.get('controller').useLocalRepo();
+          }
+        } else {
+          var selected = this.get('controller.content.stacks') && this.get('controller.content.stacks').findProperty('showAvailable');
+          if (!selected) {
+            // network disconnection
+            Em.trySet(this, 'controller.selectedStack.useLocalRepo', true);
+            Em.trySet(this, 'controller.selectedStack.usePublicRepo', false);
+          }
+        }
+      });
     }
-  },
+  }.observes('controller.isLoadingComplete'),
 
   willDestroyElement: function () {
     $("[rel=skip-validation-tooltip]").tooltip('destroy');
     $("[rel=use-redhat-tooltip]").tooltip('destroy');
     $('.add-os-button,.redhat-label').tooltip('destroy');
+    $('.icon-undo').tooltip('destroy');
+    $('.action .icon').tooltip('destroy');
   },
 
   /**
@@ -68,12 +74,55 @@ App.WizardStep1View = Em.View.extend({
     });
   },
 
+  removeOS() {
+    $('.action .icon').tooltip('destroy');
+    return this.get('controller').removeOS(...arguments);
+  },
+
+  editableRepoView: Em.View.extend({
+    templateName: require('templates/wizard/step1/editable_repo'),
+    classNames: ['editable-repo'],
+    /**
+     * @type {boolean}
+     */
+    isEditing: false,
+
+    /**
+     * @type {?App.Repository}
+     */
+    repository: null,
+
+    /**
+     * @type {boolean}
+     */
+    showEditIcon: Em.computed.and('controller.selectedStack.useRedhatSatellite', '!isEditing'),
+
+    /**
+     * @type {boolean}
+     */
+    showRevertIcon: function() {
+      return this.get('isEditing') && (this.get('repository.repoId') !== this.get('repository.originalRepoId'));
+    }.property('isEditing', 'repository.repoId'),
+
+    didInsertElement: function() {
+      this.set('isEditing', false);
+    }.observes('controller.selectedStack.useRedhatSatellite'),
+
+    revertToOriginal: function() {
+      this.set('repository.repoId', this.get('repository.originalRepoId'))
+    },
+
+    editRepoId: function() {
+      this.set('isEditing', true);
+    }
+  }),
+
   /**
    * Disable submit button flag
    *
    * @type {bool}
    */
-  isSubmitDisabled: Em.computed.or('invalidFormatUrlExist', 'isNoOsChecked', 'isNoOsFilled', 'controller.content.isCheckInProgress', 'App.router.btnClickInProgress'),
+  isSubmitDisabled: Em.computed.or('invalidFormatUrlExist', 'isNoOsChecked', 'isNoOsFilled', 'controller.content.isCheckInProgress', 'App.router.btnClickInProgress', '!controller.isLoadingComplete'),
 
   /**
    * Show warning message flag
@@ -168,12 +217,12 @@ App.WizardStep1View = Em.View.extend({
    * @type {bool}
    */
   invalidFormatUrlExist: function () {
-    if (this.get('controller.selectedStack.useRedhatSatellite')) {
-      return false;
-    }
     var allRepositories = this.get('allRepositories');
     if (!allRepositories) {
       return false;
+    }
+    if (this.get('controller.selectedStack.useRedhatSatellite')) {
+      allRepositories = allRepositories.filter(this.isRedhat);
     }
     return allRepositories.someProperty('invalidFormatError', true);
   }.property('controller.selectedStack.useRedhatSatellite', 'allRepositories.@each.invalidFormatError'),
@@ -182,7 +231,7 @@ App.WizardStep1View = Em.View.extend({
    * Verify if some invalid repo-urls exist
    * @type {bool}
    */
-  invalidUrlExist: Em.computed.someBy('allRepositories', 'validation', App.Repository.validation.INVALID),
+  invalidUrlExist: Em.computed.someBy('allRepositories', 'validation', 'INVALID'),
 
   /**
    * If all repo links are unchecked
@@ -191,24 +240,36 @@ App.WizardStep1View = Em.View.extend({
   isNoOsChecked: Em.computed.everyBy('controller.selectedStack.operatingSystems', 'isSelected', false),
 
   /**
+   *
+   * @param {App.Repository} item
+   * @returns {boolean}
+   */
+  isRedhat: function(item) {
+    return Boolean(item.get('osType') && item.get('osType').contains('redhat'));
+  },
+
+  /**
    * If all OSes are empty
    * @type {bool}
    */
   isNoOsFilled: function () {
-    if (this.get('controller.selectedStack.useRedhatSatellite')) {
+    var operatingSystems = this.get('controller.selectedStack.operatingSystems');
+    if (this.get('controller.selectedStack.useRedhatSatellite') || Em.isNone(operatingSystems)) {
       return false;
     }
-    var operatingSystems = this.get('controller.selectedStack.operatingSystems');
     var selectedOS = operatingSystems.filterProperty('isSelected', true);
     return selectedOS.everyProperty('isNotFilled', true);
   }.property('controller.selectedStack.operatingSystems.@each.isSelected', 'controller.selectedStack.operatingSystems.@each.isNotFilled', 'controller.selectedStack.useRedhatSatellite'),
 
   popoverView: Em.View.extend({
     tagName: 'i',
-    classNameBindings: ['repository.validation'],
-    attributeBindings: ['repository.errorTitle:title', 'repository.errorContent:data-content'],
+    classNameBindings: ['repository.validationClassName'],
+    attributeBindings: ['repository.errorTitle:data-original-title', 'repository.errorContent:data-content'],
     didInsertElement: function () {
-      App.popover($(this.get('element')), {'trigger': 'hover'});
+      App.popover($(this.get('element')), {
+        template: '<div class="popover"><div class="arrow"></div><div class="popover-inner"><h3 class="popover-title"></h3><div class="popover-content"></div></div></div>',
+        trigger: 'hover'
+      });
     }
   }),
 
@@ -219,18 +280,26 @@ App.WizardStep1View = Em.View.extend({
     checkedBinding: 'controller.selectedStack.useRedhatSatellite',
     disabledBinding: 'controller.selectedStack.usePublicRepo',
     click: function () {
-      // click triggered before value is toggled, so if-statement is inverted
-      if (this.get('disabled')) return;
-      if (!this.get('controller.selectedStack.useRedhatSatellite')) {
-        App.ModalPopup.show({
-          header: Em.I18n.t('common.important'),
-          secondary: false,
-          bodyClass: Ember.View.extend({
-            template: Ember.Handlebars.compile(Em.I18n.t('installer.step1.advancedRepo.useRedhatSatellite.warning'))
-          })
-        });
+      if (!this.get('disabled')) {
+        if (this.get('controller.selectedStack.useRedhatSatellite')) {
+          this.toggleProperty('controller.selectedStack.useRedhatSatellite');
+        } else {
+          App.showConfirmationPopup(
+            () => this.toggleProperty('controller.selectedStack.useRedhatSatellite'),
+            Em.I18n.t('installer.step1.advancedRepo.useRedhatSatellite.warning'),
+            Em.K,
+            Em.I18n.t('installer.step1.advancedRepo.useRedhatSatellite.message')
+          );
+        }
       }
+      return false;
     }
+  }),
+
+  repositoryTextField: Ember.TextField.extend({
+    repository: null,
+    placeholderBinding: "repository.placeholder",
+    valueBinding: "repository.baseUrl"
   }),
 
   /**
@@ -248,7 +317,7 @@ App.WizardStep1View = Em.View.extend({
       if (repository.get('lastBaseUrl') !== repository.get('baseUrl')) {
         repository.setProperties({
           lastBaseUrl: repository.get('baseUrl'),
-          validation: App.Repository.validation.PENDING
+          validation: 'PENDING'
         });
       }
     }, this);

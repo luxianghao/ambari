@@ -28,6 +28,7 @@ App.stackMapper = App.QuickDataMapper.create({
     stack_name: 'stack_name',
     stack_version: 'stack_version',
     stack_default: 'stack_default',
+    stack_repo_update_link_exists: 'stack_repo_update_link_exists',
     show_available: 'show_available',
     type: 'type',
     repository_version: 'repository_version',
@@ -80,11 +81,16 @@ App.stackMapper = App.QuickDataMapper.create({
     latest_base_url: 'latest_base_url',
     mirrors_list: 'mirrors_list',
     os_type: 'os_type',
+    original_repo_id: 'repo_id',
     repo_id: 'repo_id',
     repo_name: 'repo_name',
     stack_name: 'stack_name',
     stack_version: 'stack_version',
-    operating_system_id: 'os_id'
+    operating_system_id: 'os_id',
+    components: 'components',
+    distribution: 'distribution',
+    tags: 'tags',
+    applicable_services: 'applicable_services'
   },
   
   map: function(json) {
@@ -140,11 +146,9 @@ App.stackMapper = App.QuickDataMapper.create({
     stack.use_redhat_satellite = item.operating_systems[0].OperatingSystems.ambari_managed_repositories === false;
     stack.stack_services = servicesArray;
     stack.operating_systems = operatingSystemsArray;
-
-    App.store.commit();
-    App.store.loadMany(modelRepo, resultRepo);
-    App.store.loadMany(modelOS, resultOS);
-    App.store.loadMany(modelServices, resultServices);
-    App.store.load(modelStack, this.parseIt(stack, this.get('configStack')));
+    App.store.safeLoadMany(modelRepo, resultRepo);
+    App.store.safeLoadMany(modelOS, resultOS);
+    App.store.safeLoadMany(modelServices, resultServices);
+    App.store.safeLoad(modelStack, this.parseIt(stack, this.get('configStack')));
   }
 });

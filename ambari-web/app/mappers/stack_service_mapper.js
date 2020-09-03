@@ -40,6 +40,7 @@ App.stackServiceMapper = App.QuickDataMapper.create({
     is_service_with_widgets: 'is_service_with_widgets',
     required_services: 'required_services',
     service_check_supported: 'service_check_supported',
+    support_delete_via_ui: 'support_delete_via_ui',
     service_components_key: 'service_components',
     service_components_type: 'array',
     service_components: {
@@ -60,8 +61,10 @@ App.stackServiceMapper = App.QuickDataMapper.create({
     bulk_commands_master_component_name: 'bulk_commands_master_component_name',
     service_name: 'service_name',
     component_category: 'component_category',
+    rolling_restart_supported: 'rolling_restart_supported',
     is_master: 'is_master',
     is_client: 'is_client',
+    component_type: 'component_type',
     stack_name: 'stack_name',
     stack_version: 'stack_version',
     stack_service_id: 'service_name',
@@ -98,7 +101,7 @@ App.stackServiceMapper = App.QuickDataMapper.create({
       var serviceComponents = [];
       item.components.forEach(function (serviceComponent) {
         var dependencies = serviceComponent.dependencies.map(function (dependecy) {
-          return { Dependencies: App.keysUnderscoreToCamelCase(App.permit(dependecy.Dependencies, ['component_name', 'scope', 'service_name'])) };
+          return { Dependencies: App.keysUnderscoreToCamelCase(App.permit(dependecy.Dependencies, ['component_name', 'scope', 'service_name', 'type'])) };
         });
         serviceComponent.StackServiceComponents.id = serviceComponent.StackServiceComponents.component_name;
         serviceComponent.StackServiceComponents.dependencies = dependencies;
@@ -117,16 +120,13 @@ App.stackServiceMapper = App.QuickDataMapper.create({
         stackService.is_installable = false;
         stackService.is_selected = false;
       }
-      if (stackService.selection === "TECH_PREVIEW") {
-        stackService.is_selected = false;
-      }
       if(stackService.selection === "MANDATORY") {
         stackService.is_mandatory = true;
       }
       result.push(this.parseIt(stackService, this.get('config')));
     }, this);
-    App.store.loadMany(this.get('component_model'), stackServiceComponents);
-    App.store.loadMany(model, result);
+    App.store.safeLoadMany(this.get('component_model'), stackServiceComponents);
+    App.store.safeLoadMany(model, result);
   },
 
   /**
@@ -139,7 +139,7 @@ App.stackServiceMapper = App.QuickDataMapper.create({
       records.forEach(function (rec) {
         Ember.run(this, function () {
           rec.deleteRecord();
-          App.store.commit();
+          App.store.fastCommit();
         });
       }, this);
     }, this);

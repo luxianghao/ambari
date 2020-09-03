@@ -18,42 +18,79 @@
 
 package org.apache.ambari.server.state.kerberos;
 
+import static org.easymock.EasyMock.anyString;
+import static org.easymock.EasyMock.expect;
+
+import java.util.Collections;
+import java.util.Properties;
+
+import javax.persistence.EntityManager;
+import javax.persistence.TypedQuery;
+
+import org.apache.ambari.annotations.Experimental;
+import org.apache.ambari.annotations.ExperimentalFeature;
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.actionmanager.ActionDBAccessor;
+import org.apache.ambari.server.actionmanager.ActionDBAccessorImpl;
+import org.apache.ambari.server.actionmanager.HostRoleCommandFactory;
+import org.apache.ambari.server.actionmanager.HostRoleCommandFactoryImpl;
+import org.apache.ambari.server.actionmanager.StageFactory;
+import org.apache.ambari.server.actionmanager.StageFactoryImpl;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.audit.AuditLogger;
+import org.apache.ambari.server.audit.AuditLoggerDefaultImpl;
+import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.controller.AbstractRootServiceResponseFactory;
+import org.apache.ambari.server.controller.AmbariManagementController;
+import org.apache.ambari.server.controller.KerberosHelper;
+import org.apache.ambari.server.controller.RootServiceResponseFactory;
+import org.apache.ambari.server.hooks.HookService;
+import org.apache.ambari.server.hooks.users.UserHookService;
+import org.apache.ambari.server.metadata.CachedRoleCommandOrderProvider;
+import org.apache.ambari.server.metadata.RoleCommandOrderProvider;
+import org.apache.ambari.server.orm.DBAccessor;
+import org.apache.ambari.server.orm.dao.ExtensionLinkDAO;
+import org.apache.ambari.server.orm.entities.MetainfoEntity;
+import org.apache.ambari.server.orm.entities.StackEntity;
+import org.apache.ambari.server.scheduler.ExecutionScheduler;
+import org.apache.ambari.server.scheduler.ExecutionSchedulerImpl;
+import org.apache.ambari.server.security.encryption.CredentialStoreService;
+import org.apache.ambari.server.stack.StackManagerFactory;
+import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.ServiceComponentHostFactory;
+import org.apache.ambari.server.state.stack.OsFamily;
+import org.apache.ambari.server.testutils.PartialNiceMockBinder;
+import org.apache.ambari.server.topology.PersistedState;
+import org.easymock.EasyMock;
+import org.easymock.EasyMockSupport;
+import org.junit.Ignore;
+import org.junit.Test;
+import org.junit.experimental.categories.Category;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.crypto.password.StandardPasswordEncoder;
+
 import com.google.gson.Gson;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.assistedinject.FactoryModuleBuilder;
+import com.google.inject.persist.UnitOfWork;
+
 import junit.framework.Assert;
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.configuration.Configuration;
-import org.apache.ambari.server.orm.DBAccessor;
-import org.apache.ambari.server.orm.dao.ExtensionLinkDAO;
-import org.apache.ambari.server.orm.entities.ExtensionLinkEntity;
-import org.apache.ambari.server.orm.entities.MetainfoEntity;
-import org.apache.ambari.server.orm.entities.StackEntity;
-import org.apache.ambari.server.stack.StackManagerFactory;
-import org.apache.ambari.server.state.Clusters;
-import org.apache.ambari.server.state.stack.OsFamily;
-import org.easymock.EasyMock;
-import org.easymock.EasyMockSupport;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import javax.persistence.EntityManager;
-import javax.persistence.TypedQuery;
-import java.util.Collections;
-import java.util.Properties;
-
-import static org.easymock.EasyMock.anyString;
-import static org.easymock.EasyMock.expect;
-
-@Category({ category.KerberosTest.class})
+@Category({category.KerberosTest.class})
 public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
   private static final KerberosDescriptorFactory KERBEROS_DESCRIPTOR_FACTORY = new KerberosDescriptorFactory();
   private static final Gson GSON = new Gson();
 
   @Test
+  @Ignore
+  @Experimental(
+      feature = ExperimentalFeature.MULTI_SERVICE,
+      comment = "This was a very useful test that no longer works since all of the kerberos "
+          + "descriptor files for services are stored in stacks no longer shipped with Ambari. "
+          + "Although we could checking a bunch of descriptors, perhaps this is better suited to "
+          + "something that is run when mpacks are registered.")
   public void updateDefaultUserKerberosDescriptor() throws Exception {
     Injector injector = Guice.createInjector(new AbstractModule() {
 
@@ -64,7 +101,11 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
         properties.put("common.services.path", "src/main/resources/common-services");
         properties.put("server.version.file", "target/version");
         properties.put("custom.action.definitions", "/tmp/nofile");
+        properties.put("resources.dir", "src/main/resources");
         Configuration configuration = new Configuration(properties);
+
+        PartialNiceMockBinder.newBuilder(KerberosDescriptorUpdateHelperTest.this).addConfigsBindings()
+            .addFactoriesInstallBinding().build().configure(binder());
 
         install(new FactoryModuleBuilder().build(StackManagerFactory.class));
 
@@ -74,6 +115,21 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
         bind(OsFamily.class).toInstance(createNiceMock(OsFamily.class));
         bind(Configuration.class).toInstance(configuration);
         bind(ExtensionLinkDAO.class).toInstance(createNiceMock(ExtensionLinkDAO.class));
+        bind(PersistedState.class).toInstance(createNiceMock(PersistedState.class));
+        bind(HostRoleCommandFactory.class).to(HostRoleCommandFactoryImpl.class);
+        bind(ActionDBAccessor.class).to(ActionDBAccessorImpl.class);
+        bind(UnitOfWork.class).toInstance(createNiceMock(UnitOfWork.class));
+        bind(RoleCommandOrderProvider.class).to(CachedRoleCommandOrderProvider.class);
+        bind(StageFactory.class).to(StageFactoryImpl.class);
+        bind(AuditLogger.class).toInstance(createNiceMock(AuditLoggerDefaultImpl.class));
+        bind(PasswordEncoder.class).toInstance(new StandardPasswordEncoder());
+        bind(HookService.class).to(UserHookService.class);
+        bind(ServiceComponentHostFactory.class).toInstance(createNiceMock(ServiceComponentHostFactory.class));
+        bind(AbstractRootServiceResponseFactory.class).to(RootServiceResponseFactory.class);
+        bind(CredentialStoreService.class).toInstance(createNiceMock(CredentialStoreService.class));
+        bind(AmbariManagementController.class).toInstance(createNiceMock(AmbariManagementController.class));
+        bind(ExecutionScheduler.class).to(ExecutionSchedulerImpl.class);
+        bind(KerberosHelper.class).toInstance(createNiceMock(KerberosHelper.class));
       }
     });
 
@@ -81,7 +137,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
     expect(osFamily.os_list()).andReturn(Collections.singleton("centos6")).anyTimes();
 
     ExtensionLinkDAO linkDao = injector.getInstance(ExtensionLinkDAO.class);
-    expect(linkDao.findByStack(anyString(), anyString())).andReturn(Collections.<ExtensionLinkEntity>emptyList()).anyTimes();
+    expect(linkDao.findByStack(anyString(), anyString())).andReturn(Collections.emptyList()).anyTimes();
 
     TypedQuery<StackEntity> query = createNiceMock(TypedQuery.class);
     expect(query.setMaxResults(1)).andReturn(query).anyTimes();
@@ -98,8 +154,8 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
     injector.injectMembers(metaInfo);
     metaInfo.init();
 
-    KerberosDescriptor hdp24 = metaInfo.getKerberosDescriptor("HDP", "2.4");
-    KerberosDescriptor hdp25 = metaInfo.getKerberosDescriptor("HDP", "2.5");
+    KerberosDescriptor hdp24 = metaInfo.getKerberosDescriptor("HDP", "2.4", false);
+    KerberosDescriptor hdp25 = metaInfo.getKerberosDescriptor("HDP", "2.5", false);
     KerberosDescriptor user = new KerberosDescriptor(hdp24.toMap());
 
     KerberosDescriptor updated = KerberosDescriptorUpdateHelper.updateUserKerberosDescriptor(hdp24, hdp25, user);
@@ -206,7 +262,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
             "    {" +
             "      \"name\": \"old_identity\"," +
             "      \"principal\": {" +
-            "        \"value\": \"foobar-${cluster_name|toLower()}@${realm}\"," +
+            "        \"value\": \"foobar${principal_suffix}@${realm}\"," +
             "        \"type\": \"user\"," +
             "        \"configuration\": \"cluster-env/ambari_principal_name\"" +
             "      }," +
@@ -241,7 +297,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
             "    {" +
             "      \"name\": \"smokeuser\"," +
             "      \"principal\": {" +
-            "        \"value\": \"${cluster-env/smokeuser}-${cluster_name|toLower()}@${realm}\"," +
+            "        \"value\": \"${cluster-env/smokeuser}${principal_suffix}@${realm}\"," +
             "        \"type\": \"user\"," +
             "        \"configuration\": \"cluster-env/smokeuser_principal_name\"," +
             "        \"local_username\": \"${cluster-env/smokeuser}\"" +
@@ -262,12 +318,22 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
             "    {" +
             "      \"name\": \"ambari-server\"," +
             "      \"principal\": {" +
-            "        \"value\": \"ambari-server-${cluster_name|toLower()}@${realm}\"," +
+            "        \"value\": \"ambari-server${principal_suffix}@${realm}\"," +
             "        \"type\": \"user\"," +
             "        \"configuration\": \"cluster-env/ambari_principal_name\"" +
             "      }," +
             "      \"keytab\": {" +
             "        \"file\": \"${keytab_dir}/ambari.server.keytab\"" +
+            "      }" +
+            "    }," +
+            "    {" +
+            "      \"name\": \"future_identity\"," +
+            "      \"principal\": {" +
+            "        \"value\": \"CHANGED_future${principal_suffix}@${realm}\"," +
+            "        \"type\": \"user\"" +
+            "      }," +
+            "      \"keytab\": {" +
+            "        \"file\": \"${keytab_dir}/future.user.keytab\"" +
             "      }" +
             "    }" +
             "  ]" +
@@ -318,12 +384,32 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
             "    {" +
             "      \"name\": \"old_identity\"," +
             "      \"principal\": {" +
-            "        \"value\": \"foobar-${cluster_name|toLower()}@${realm}\"," +
+            "        \"value\": \"foobar${principal_suffix}@${realm}\"," +
             "        \"type\": \"user\"," +
             "        \"configuration\": \"cluster-env/ambari_principal_name\"" +
             "      }," +
             "      \"keytab\": {" +
             "        \"file\": \"${keytab_dir}/ambari.server.keytab\"" +
+            "      }" +
+            "    }," +
+            "    {" +
+            "      \"name\": \"custom_identity\"," +
+            "      \"principal\": {" +
+            "        \"value\": \"custom${principal_suffix}@${realm}\"," +
+            "        \"type\": \"user\"" +
+            "      }," +
+            "      \"keytab\": {" +
+            "        \"file\": \"${keytab_dir}/custom.user.keytab\"" +
+            "      }" +
+            "    }," +
+            "    {" +
+            "      \"name\": \"future_identity\"," +
+            "      \"principal\": {" +
+            "        \"value\": \"future${principal_suffix}@${realm}\"," +
+            "        \"type\": \"user\"" +
+            "      }," +
+            "      \"keytab\": {" +
+            "        \"file\": \"${keytab_dir}/future.user.keytab\"" +
             "      }" +
             "    }" +
             "  ]" +
@@ -339,6 +425,26 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
         GSON.toJson(KERBEROS_DESCRIPTOR_FACTORY.createInstance(
             "{\n" +
                 "  \"identities\": [\n" +
+                "    {\n" +
+                "      \"name\": \"future_identity\",\n" +
+                "      \"principal\": {\n" +
+                "        \"value\": \"future${principal_suffix}@${realm}\",\n" +
+                "        \"type\": \"user\"\n" +
+                "      },\n" +
+                "      \"keytab\": {\n" +
+                "        \"file\": \"${keytab_dir}/future.user.keytab\"\n" +
+                "      }\n" +
+                "    },\n" +
+                "    {\n" +
+                "      \"name\": \"custom_identity\",\n" +
+                "      \"principal\": {\n" +
+                "        \"value\": \"custom${principal_suffix}@${realm}\",\n" +
+                "        \"type\": \"user\"\n" +
+                "      },\n" +
+                "      \"keytab\": {\n" +
+                "        \"file\": \"${keytab_dir}/custom.user.keytab\"\n" +
+                "      }\n" +
+                "    },\n" +
                 "    {\n" +
                 "      \"name\": \"spnego\",\n" +
                 "      \"principal\": {\n" +
@@ -360,7 +466,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
                 "    {\n" +
                 "      \"name\": \"smokeuser\",\n" +
                 "      \"principal\": {\n" +
-                "        \"value\": \"${cluster-env/smokeuser}-${cluster_name|toLower()}@${realm}\",\n" +
+                "        \"value\": \"${cluster-env/smokeuser}${principal_suffix}@${realm}\",\n" +
                 "        \"local_username\": \"${cluster-env/smokeuser}\",\n" +
                 "        \"configuration\": \"cluster-env/smokeuser_principal_name\",\n" +
                 "        \"type\": \"user\"\n" +
@@ -393,12 +499,32 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
                 "    {\n" +
                 "      \"name\": \"ambari-server\",\n" +
                 "      \"principal\": {\n" +
-                "        \"value\": \"ambari-server-${cluster_name|toLower()}@${realm}\",\n" +
+                "        \"value\": \"ambari-server${principal_suffix}@${realm}\",\n" +
                 "        \"configuration\": \"cluster-env/ambari_principal_name\",\n" +
                 "        \"type\": \"user\"\n" +
                 "      },\n" +
                 "      \"keytab\": {\n" +
                 "        \"file\": \"${keytab_dir}/ambari.server.keytab\"\n" +
+                "      }\n" +
+                "    },\n" +
+                "    {\n" +
+                "      \"name\": \"custom_identity\",\n" +
+                "      \"principal\": {\n" +
+                "        \"value\": \"custom${principal_suffix}@${realm}\",\n" +
+                "        \"type\": \"user\"\n" +
+                "      },\n" +
+                "      \"keytab\": {\n" +
+                "        \"file\": \"${keytab_dir}/custom.user.keytab\"\n" +
+                "      }\n" +
+                "    },\n" +
+                "    {\n" +
+                "      \"name\": \"future_identity\",\n" +
+                "      \"principal\": {\n" +
+                "        \"value\": \"future${principal_suffix}@${realm}\",\n" +
+                "        \"type\": \"user\"\n" +
+                "      },\n" +
+                "      \"keytab\": {\n" +
+                "        \"file\": \"${keytab_dir}/future.user.keytab\"\n" +
                 "      }\n" +
                 "    },\n" +
                 "    {\n" +
@@ -422,7 +548,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
                 "    {\n" +
                 "      \"name\": \"smokeuser\",\n" +
                 "      \"principal\": {\n" +
-                "        \"value\": \"${cluster-env/smokeuser}-${cluster_name|toLower()}@${realm}\",\n" +
+                "        \"value\": \"${cluster-env/smokeuser}${principal_suffix}@${realm}\",\n" +
                 "        \"local_username\": \"${cluster-env/smokeuser}\",\n" +
                 "        \"configuration\": \"cluster-env/smokeuser_principal_name\",\n" +
                 "        \"type\": \"user\"\n" +
@@ -749,7 +875,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
             "                \"configuration\": \"hadoop-env/hdfs_principal_name\",\n" +
             "                \"type\": \"user\",\n" +
             "                \"local_username\": \"${hadoop-env/hdfs_user}\",\n" +
-            "                \"value\": \"${hadoop-env/hdfs_user}-${cluster_name|toLower()}@${realm}\"\n" +
+            "                \"value\": \"${hadoop-env/hdfs_user}${principal_suffix}@${realm}\"\n" +
             "              },\n" +
             "              \"name\": \"hdfs\",\n" +
             "              \"keytab\": {\n" +
@@ -1251,7 +1377,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
             "                \"configuration\": \"hadoop-env/hdfs_principal_name\",\n" +
             "                \"type\": \"user\",\n" +
             "                \"local_username\": \"${hadoop-env/hdfs_user}\",\n" +
-            "                \"value\": \"${hadoop-env/hdfs_user}-${cluster_name|toLower()}@${realm}\"\n" +
+            "                \"value\": \"${hadoop-env/hdfs_user}${principal_suffix}@${realm}\"\n" +
             "              },\n" +
             "              \"name\": \"hdfs\",\n" +
             "              \"keytab\": {\n" +
@@ -1674,7 +1800,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
                 "                \"configuration\": \"hadoop-env/hdfs_principal_name\",\n" +
                 "                \"type\": \"user\",\n" +
                 "                \"local_username\": \"${hadoop-env/hdfs_user}\",\n" +
-                "                \"value\": \"${hadoop-env/hdfs_user}-${cluster_name|toLower()}@${realm}\"\n" +
+                "                \"value\": \"${hadoop-env/hdfs_user}${principal_suffix}@${realm}\"\n" +
                 "              },\n" +
                 "              \"name\": \"hdfs\",\n" +
                 "              \"keytab\": {\n" +
@@ -2075,7 +2201,7 @@ public class KerberosDescriptorUpdateHelperTest extends EasyMockSupport {
                 "                \"configuration\": \"hadoop-env/hdfs_principal_name\",\n" +
                 "                \"type\": \"user\",\n" +
                 "                \"local_username\": \"${hadoop-env/hdfs_user}\",\n" +
-                "                \"value\": \"${hadoop-env/hdfs_user}-${cluster_name|toLower()}@${realm}\"\n" +
+                "                \"value\": \"${hadoop-env/hdfs_user}${principal_suffix}@${realm}\"\n" +
                 "              },\n" +
                 "              \"name\": \"hdfs\",\n" +
                 "              \"keytab\": {\n" +

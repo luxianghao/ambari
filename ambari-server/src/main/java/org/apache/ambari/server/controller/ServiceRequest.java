@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,7 +17,9 @@
  */
 package org.apache.ambari.server.controller;
 
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
 
+import io.swagger.annotations.ApiModelProperty;
 
 public class ServiceRequest {
 
@@ -26,18 +28,27 @@ public class ServiceRequest {
   private String desiredState; // CREATE/UPDATE
   private String maintenanceState; // UPDATE
   private String credentialStoreEnabled; // CREATE/UPDATE/GET
+  private String credentialStoreSupported; //GET
+
+  private Long desiredRepositoryVersionId;
+  /**
+   * Short-lived object that gets set while validating a request
+   */
+  private RepositoryVersionEntity resolvedRepository;
 
   public ServiceRequest(String clusterName, String serviceName,
-                        String desiredState) {
-    this(clusterName, serviceName, desiredState, null);
+      Long desiredRepositoryVersionId, String desiredState) {
+    this(clusterName, serviceName, desiredRepositoryVersionId, desiredState, null);
   }
 
   public ServiceRequest(String clusterName, String serviceName,
-                        String desiredState,
-                        String credentialStoreEnabled) {
+      Long desiredRepositoryVersionId, String desiredState, String credentialStoreEnabled) {
     this.clusterName = clusterName;
     this.serviceName = serviceName;
     this.desiredState = desiredState;
+
+    this.desiredRepositoryVersionId = desiredRepositoryVersionId;
+
     this.credentialStoreEnabled = credentialStoreEnabled;
     // Credential store supported cannot be changed after
     // creation since it comes from the stack definition.
@@ -47,6 +58,7 @@ public class ServiceRequest {
   /**
    * @return the serviceName
    */
+  @ApiModelProperty(name = "service_name")
   public String getServiceName() {
     return serviceName;
   }
@@ -61,6 +73,7 @@ public class ServiceRequest {
   /**
    * @return the desiredState
    */
+  @ApiModelProperty(name = "state")
   public String getDesiredState() {
     return desiredState;
   }
@@ -72,9 +85,14 @@ public class ServiceRequest {
     this.desiredState = desiredState;
   }
 
+  public Long getDesiredRepositoryVersionId() {
+    return desiredRepositoryVersionId;
+  }
+
   /**
    * @return the clusterName
    */
+  @ApiModelProperty(name = "cluster_name")
   public String getClusterName() {
     return clusterName;
   }
@@ -96,6 +114,7 @@ public class ServiceRequest {
   /**
    * @return the maintenance state
    */
+  @ApiModelProperty(name = "maintenance_state")
   public String getMaintenanceState() {
     return maintenanceState;
   }
@@ -103,8 +122,17 @@ public class ServiceRequest {
   /**
    * @return credential store enabled
    */
+  @ApiModelProperty(name = "credential_store_enabled")
   public String getCredentialStoreEnabled() {
     return credentialStoreEnabled;
+  }
+
+
+  /**
+   * @return credential store supported
+   */
+  public String getCredentialStoreSupported() {
+    return credentialStoreSupported;
   }
 
   /**
@@ -114,12 +142,33 @@ public class ServiceRequest {
     this.credentialStoreEnabled = credentialStoreEnabled;
   }
 
+  /**
+   * @param credentialStoreSupported the new credential store supported
+   */
+  @ApiModelProperty(name = "credential_store_supporteds")
+  public void setCredentialStoreSupported(String credentialStoreSupported) {
+    this.credentialStoreSupported = credentialStoreSupported;
+  }
+
+  @Override
   public String toString() {
     StringBuilder sb = new StringBuilder();
-    sb.append("clusterName=" + clusterName
-        + ", serviceName=" + serviceName
-        + ", desiredState=" + desiredState
-        + ", credentialStoreEnabled=" + credentialStoreEnabled);
+    sb.append("clusterName=").append(clusterName)
+      .append(", serviceName=").append(serviceName)
+      .append(", desiredState=").append(desiredState)
+      .append(", credentialStoreEnabled=").append(credentialStoreEnabled)
+      .append(", credentialStoreSupported=").append(credentialStoreSupported);
     return sb.toString();
+  }
+
+  /**
+   * @param repositoryVersion
+   */
+  public void setResolvedRepository(RepositoryVersionEntity repositoryVersion) {
+    resolvedRepository = repositoryVersion;
+  }
+
+  public RepositoryVersionEntity getResolvedRepository() {
+    return resolvedRepository;
   }
 }

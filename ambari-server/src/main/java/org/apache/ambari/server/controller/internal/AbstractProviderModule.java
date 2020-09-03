@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,6 +18,7 @@
 
 package org.apache.ambari.server.controller.internal;
 
+import static java.util.Collections.emptyMap;
 import static org.apache.ambari.server.controller.metrics.MetricsServiceProvider.MetricsService.GANGLIA;
 import static org.apache.ambari.server.controller.metrics.MetricsServiceProvider.MetricsService.TIMELINE_METRICS;
 
@@ -51,7 +52,6 @@ import org.apache.ambari.server.controller.spi.NoSuchResourceException;
 import org.apache.ambari.server.controller.spi.Predicate;
 import org.apache.ambari.server.controller.spi.PropertyProvider;
 import org.apache.ambari.server.controller.spi.ProviderModule;
-import org.apache.ambari.server.controller.spi.Request;
 import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.ResourceProvider;
 import org.apache.ambari.server.controller.spi.SystemException;
@@ -65,7 +65,11 @@ import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.DesiredConfig;
+import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.state.Service;
+import org.apache.ambari.server.state.ServiceComponentHost;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,29 +87,24 @@ public abstract class AbstractProviderModule implements ProviderModule,
   private static final int PROPERTY_REQUEST_CONNECT_TIMEOUT = 5000;
   private static final int PROPERTY_REQUEST_READ_TIMEOUT    = 10000;
 
-  private static final String CLUSTER_NAME_PROPERTY_ID                  = PropertyHelper.getPropertyId("Clusters", "cluster_name");
-  private static final String HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID   = PropertyHelper.getPropertyId("HostRoles", "cluster_name");
-  private static final String HOST_COMPONENT_HOST_NAME_PROPERTY_ID      = PropertyHelper.getPropertyId("HostRoles", "host_name");
-  private static final String HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID = PropertyHelper.getPropertyId("HostRoles", "component_name");
   private static final String GANGLIA_SERVER                            = "GANGLIA_SERVER";
   private static final String METRIC_SERVER                             = "METRICS_COLLECTOR";
   private static final String PROPERTIES_CATEGORY = "properties";
-  private static final Map<String, String> serviceConfigVersions = new ConcurrentHashMap<String, String>();
-  private static final Map<Service.Type, String> serviceConfigTypes = new EnumMap<Service.Type, String>(Service.Type.class);
-  private static final Map<Service.Type, Map<String, String[]>> serviceDesiredProperties = new EnumMap<Service.Type, Map<String, String[]>>(Service.Type.class);
-  private static final Map<String, Service.Type> componentServiceMap = new HashMap<String, Service.Type>();
+  private static final Map<String, String> serviceConfigVersions = new ConcurrentHashMap<>();
+  private static final Map<Service.Type, String> serviceConfigTypes = new EnumMap<>(Service.Type.class);
+  private static final Map<Service.Type, Map<String, String[]>> serviceDesiredProperties = new EnumMap<>(Service.Type.class);
+  private static final Map<String, Service.Type> componentServiceMap = new HashMap<>();
 
   private static final Map<String, List<HttpPropertyProvider.HttpPropertyRequest>> HTTP_PROPERTY_REQUESTS = new HashMap<>();
 
   private static final String PROPERTY_HDFS_HTTP_POLICY_VALUE_HTTPS_ONLY = "HTTPS_ONLY";
 
   private static final String COLLECTOR_DEFAULT_PORT = "6188";
-  private static boolean vipHostConfigPresent = false;
 
-  private static final Map<String, Map<String, String[]>> jmxDesiredProperties = new HashMap<String, Map<String, String[]>>();
+  private static final Map<String, Map<String, String[]>> jmxDesiredProperties = new HashMap<>();
   private static final Map<String, Map<String, String[]>> jmxDesiredRpcSuffixProperties = new ConcurrentHashMap<>();
-  private volatile Map<String, Map<String, Map<String, String>>> jmxDesiredRpcSuffixes = new HashMap<String, Map<String, Map<String,String>>>();
-  private volatile Map<String, String> clusterHdfsSiteConfigVersionMap = new HashMap<String, String>();
+  private volatile Map<String, Map<String, Map<String, String>>> jmxDesiredRpcSuffixes = new HashMap<>();
+  private volatile Map<String, String> clusterHdfsSiteConfigVersionMap = new HashMap<>();
   private volatile Map<String, String> clusterJmxProtocolMap = new ConcurrentHashMap<>();
   private volatile String clusterMetricServerPort = null;
   private volatile String clusterMetricServerVipPort = null;
@@ -127,7 +126,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
     componentServiceMap.put("NODEMANAGER", Service.Type.YARN);
     componentServiceMap.put("HISTORYSERVER", Service.Type.MAPREDUCE2);
 
-    Map<String, String[]> initPropMap = new HashMap<String, String[]>();
+    Map<String, String[]> initPropMap = new HashMap<>();
     initPropMap.put("NAMENODE", new String[]{"dfs.http.address", "dfs.namenode.http-address"});
     initPropMap.put("NAMENODE-HTTPS", new String[]{"dfs.namenode.https-address", "dfs.https.port"});
     initPropMap.put("NAMENODE-HA", new String[]{"dfs.namenode.http-address.%s.%s"});
@@ -139,88 +138,93 @@ public abstract class AbstractProviderModule implements ProviderModule,
     serviceDesiredProperties.put(Service.Type.HDFS, initPropMap);
 
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("HBASE_MASTER", new String[]{"hbase.master.info.port"});
     initPropMap.put("HBASE_REGIONSERVER", new String[]{"hbase.regionserver.info.port"});
     initPropMap.put("HBASE_MASTER-HTTPS", new String[]{"hbase.master.info.port"});
     initPropMap.put("HBASE_REGIONSERVER-HTTPS", new String[]{"hbase.regionserver.info.port"});
     serviceDesiredProperties.put(Service.Type.HBASE, initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("RESOURCEMANAGER", new String[]{"yarn.resourcemanager.webapp.address"});
     initPropMap.put("RESOURCEMANAGER-HTTPS", new String[]{"yarn.resourcemanager.webapp.https.address"});
     initPropMap.put("NODEMANAGER", new String[]{"yarn.nodemanager.webapp.address"});
     initPropMap.put("NODEMANAGER-HTTPS", new String[]{"yarn.nodemanager.webapp.https.address"});
     serviceDesiredProperties.put(Service.Type.YARN, initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("HISTORYSERVER", new String[]{"mapreduce.jobhistory.webapp.address"});
     initPropMap.put("HISTORYSERVER-HTTPS", new String[]{"mapreduce.jobhistory.webapp.https.address"});
     serviceDesiredProperties.put(Service.Type.MAPREDUCE2, initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("NAMENODE", new String[]{"dfs.http.policy"});
     jmxDesiredProperties.put("NAMENODE", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("DATANODE", new String[]{"dfs.http.policy"});
     jmxDesiredProperties.put("DATANODE", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("JOURNALNODE", new String[]{"dfs.http.policy"});
     jmxDesiredProperties.put("JOURNALNODE", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("RESOURCEMANAGER", new String[]{"yarn.http.policy"});
     jmxDesiredProperties.put("RESOURCEMANAGER", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
-    initPropMap.put("HBASE_MASTER", new String[]{"hbase.http.policy"});
+    initPropMap = new HashMap<>();
+    initPropMap.put("HBASE_MASTER", new String[]{"hbase.ssl.enabled"});
     jmxDesiredProperties.put("HBASE_MASTER", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
-    initPropMap.put("HBASE_REGIONSERVER", new String[]{"hbase.http.policy"});
+    initPropMap = new HashMap<>();
+    initPropMap.put("HBASE_REGIONSERVER", new String[]{"hbase.ssl.enabled"});
     jmxDesiredProperties.put("HBASE_REGIONSERVER", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("NODEMANAGER", new String[]{"yarn.http.policy"});
     jmxDesiredProperties.put("NODEMANAGER", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("HISTORYSERVER", new String[]{"mapreduce.jobhistory.http.policy"});
     jmxDesiredProperties.put("HISTORYSERVER", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("client", new String[]{"dfs.namenode.rpc-address"});
     initPropMap.put("datanode", new String[]{"dfs.namenode.servicerpc-address"});
     initPropMap.put("healthcheck", new String[]{"dfs.namenode.lifeline.rpc-address"});
     jmxDesiredRpcSuffixProperties.put("NAMENODE", initPropMap);
 
-    initPropMap = new HashMap<String, String[]>();
+    initPropMap = new HashMap<>();
     initPropMap.put("client", new String[]{"dfs.namenode.rpc-address.%s.%s"});
     initPropMap.put("datanode", new String[]{"dfs.namenode.servicerpc-address.%s.%s"});
     initPropMap.put("healthcheck", new String[]{"dfs.namenode.lifeline.rpc-address.%s.%s"});
     jmxDesiredRpcSuffixProperties.put("NAMENODE-HA", initPropMap);
 
     HTTP_PROPERTY_REQUESTS.put("RESOURCEMANAGER",
-        Collections.<HttpPropertyProvider.HttpPropertyRequest>singletonList(new ResourceManagerHttpPropertyRequest()));
+        Collections.singletonList(new ResourceManagerHttpPropertyRequest()));
 
     HTTP_PROPERTY_REQUESTS.put("ATLAS_SERVER",
-        Collections.<HttpPropertyProvider.HttpPropertyRequest>singletonList(new AtlasServerHttpPropertyRequest()));
+        Collections.singletonList(new AtlasServerHttpPropertyRequest()));
   }
 
   /**
    * The map of resource providers.
    */
-  private final Map<Resource.Type, ResourceProvider> resourceProviders = new HashMap<Resource.Type, ResourceProvider>();
+  private final Map<Resource.Type, ResourceProvider> resourceProviders = new HashMap<>();
 
   /**
    * The map of lists of property providers.
    */
-  private final Map<Resource.Type, List<PropertyProvider>> propertyProviders = new HashMap<Resource.Type, List<PropertyProvider>>();
+  private final Map<Resource.Type, List<PropertyProvider>> propertyProviders = new HashMap<>();
 
+  /*
+   * TODO: Instantiation for the concrete impl of this class is not done through
+   * dependency injector (guice) so none of these field initialization
+   * are going to work unless refactoring is complete.
+   */
   @Inject
-  AmbariManagementController managementController;
+  protected AmbariManagementController managementController;
 
   @Inject
   TimelineMetricCacheProvider metricCacheProvider;
@@ -243,6 +247,8 @@ public abstract class AbstractProviderModule implements ProviderModule,
   @Inject
   protected AmbariEventPublisher eventPublisher;
 
+  @Inject
+  private Clusters clusters;
 
   /**
    * The map of host components.
@@ -257,12 +263,11 @@ public abstract class AbstractProviderModule implements ProviderModule,
   /**
    * JMX ports read from the configs
    */
-  private final Map<String, ConcurrentMap<String, ConcurrentMap<String, String>> >jmxPortMap =
-      Collections.synchronizedMap(new HashMap<String, ConcurrentMap<String, ConcurrentMap<String, String>>>());
+  private final Map<String, ConcurrentMap<String, ConcurrentMap<String, String>>> jmxPortMap = new ConcurrentHashMap<>(1);
 
   private volatile boolean initialized = false;
 
-  protected final static Logger LOG =
+  private static final Logger LOG =
       LoggerFactory.getLogger(AbstractProviderModule.class);
 
 
@@ -291,6 +296,10 @@ public abstract class AbstractProviderModule implements ProviderModule,
 
     if (null == metricsCollectorHAManager && null != managementController) {
       metricsCollectorHAManager = managementController.getMetricsCollectorHAManager();
+    }
+
+    if (null == clusters && null != managementController) {
+      clusters = managementController.getClusters();
     }
   }
 
@@ -365,26 +374,27 @@ public abstract class AbstractProviderModule implements ProviderModule,
     return null;
   }
 
-  private String getMetricsCollectorHostName(String clusterName)
-    throws SystemException {
+
+  private void checkAndAddExternalCollectorHosts(String clusterName) throws SystemException {
     try {
       // try to get vip properties from cluster-env
       String configType = "cluster-env";
       String currentConfigVersion = getDesiredConfigVersion(clusterName, configType);
       String oldConfigVersion = serviceConfigVersions.get(configType);
       if (!currentConfigVersion.equals(oldConfigVersion)) {
-        vipHostConfigPresent = false;
         serviceConfigVersions.put(configType, currentConfigVersion);
         Map<String, String> configProperties = getDesiredConfigMap
           (clusterName, currentConfigVersion, configType,
             Collections.singletonMap("METRICS_COLLECTOR",
-              new String[]{"metrics_collector_vip_host"}));
+              new String[]{"metrics_collector_external_hosts"}));
 
         if (!configProperties.isEmpty()) {
           clusterMetricserverVipHost = configProperties.get("METRICS_COLLECTOR");
-          if (clusterMetricserverVipHost != null) {
-            LOG.info("Setting Metrics Collector Vip Host : " + clusterMetricserverVipHost);
-            vipHostConfigPresent = true;
+          if (StringUtils.isNotEmpty(clusterMetricserverVipHost)) {
+            for (String collectorHost : StringUtils.split(clusterMetricserverVipHost, ",")) {
+              metricsCollectorHAManager.addExternalMetricsCollectorHost(clusterName, collectorHost);
+            }
+            LOG.info("Setting Metrics Collector External Host : " + clusterMetricserverVipHost);
           }
         }
         // updating the port value, because both vip properties are stored in
@@ -392,26 +402,30 @@ public abstract class AbstractProviderModule implements ProviderModule,
         configProperties = getDesiredConfigMap
           (clusterName, currentConfigVersion, configType,
             Collections.singletonMap("METRICS_COLLECTOR",
-              new String[]{"metrics_collector_vip_port"}));
+              new String[]{"metrics_collector_external_port"}));
 
         if (!configProperties.isEmpty()) {
-          clusterMetricServerVipPort = configProperties.get("METRICS_COLLECTOR");
+          clusterMetricServerVipPort = configProperties.getOrDefault("METRICS_COLLECTOR", "6188");
         }
       }
     } catch (NoSuchParentResourceException | UnsupportedPropertyException e) {
       LOG.warn("Failed to retrieve collector hostname.", e);
     }
+  }
 
-    //If vip config not present
-    //  If current collector host is null or if the host or the host component not live
-    //    Update clusterMetricCollectorMap with a live metric collector host.
-    String currentCollectorHost = null;
-    if (!vipHostConfigPresent) {
-      currentCollectorHost = metricsCollectorHAManager.getCollectorHost(clusterName);
-      }
+  private String getMetricsCollectorHostName(String clusterName)
+    throws SystemException {
+
+    checkAndAddExternalCollectorHosts(clusterName);
+    String currentCollectorHost = metricsCollectorHAManager.getCollectorHost(clusterName);
     LOG.debug("Cluster Metrics Vip Host : " + clusterMetricserverVipHost);
 
-    return (clusterMetricserverVipHost != null) ? clusterMetricserverVipHost : currentCollectorHost;
+    return currentCollectorHost;
+  }
+
+  @Override
+  public boolean isCollectorHostExternal(String clusterName) {
+    return metricsCollectorHAManager.isExternalCollector();
   }
 
   @Override
@@ -459,6 +473,12 @@ public abstract class AbstractProviderModule implements ProviderModule,
   }
 
   @Override
+  public String getPublicHostName(String clusterName, String hostName) {
+    Host host = getHost(clusterName, hostName);
+    return host == null? hostName : host.getPublicHostName();
+  }
+
+  @Override
   public Set<String> getHostNames(String clusterName, String componentName) {
     Set<String> hosts = null;
     try {
@@ -470,6 +490,20 @@ public abstract class AbstractProviderModule implements ProviderModule,
     }
     return hosts;
   }
+
+  private Host getHost(String clusterName, String hostName) {
+    Host host = null;
+    try {
+      Cluster cluster = managementController.getClusters().getCluster(clusterName);
+      if(cluster != null) {
+        host = cluster.getHost(hostName);
+      }
+    } catch (Exception e) {
+      LOG.warn("Exception in getting host info for jmx metrics: ", e);
+    }
+    return host;
+  }
+
 
   @Override
   public boolean isCollectorComponentLive(String clusterName, MetricsService service) throws SystemException {
@@ -488,23 +522,18 @@ public abstract class AbstractProviderModule implements ProviderModule,
   // ----- JMXHostProvider ---------------------------------------------------
 
   @Override
-  public String getPort(String clusterName, String componentName, String hostName) throws SystemException {
-    return getPort(clusterName, componentName, hostName, false);
-  }
-
-  @Override
-  public String getPort(String clusterName, String componentName, String hostName, boolean httpsEnabled) throws SystemException {
-    // Parent map need not be synchronized
-    ConcurrentMap<String, ConcurrentMap<String, String>> clusterJmxPorts = jmxPortMap.get(clusterName);
-    if (clusterJmxPorts == null) {
+  public String getPort(String clusterName, String componentName, String hostName, boolean httpsEnabled) {
+    ConcurrentMap<String, ConcurrentMap<String, String>> clusterJmxPorts;
+    // Still need double check to ensure single init
+    if (!jmxPortMap.containsKey(clusterName)) {
       synchronized (jmxPortMap) {
-        clusterJmxPorts = jmxPortMap.get(clusterName);
-        if (clusterJmxPorts == null) {
-          clusterJmxPorts = new ConcurrentHashMap<String, ConcurrentMap<String, String>>();
+        if (!jmxPortMap.containsKey(clusterName)) {
+          clusterJmxPorts = new ConcurrentHashMap<>();
           jmxPortMap.put(clusterName, clusterJmxPorts);
         }
       }
     }
+    clusterJmxPorts = jmxPortMap.get(clusterName);
     Service.Type service = componentServiceMap.get(componentName);
 
     if (service != null) {
@@ -528,12 +557,14 @@ public abstract class AbstractProviderModule implements ProviderModule,
               serviceConfigTypes.get(service)
           );
 
-          Map<String, String[]> componentPortsProperties = new HashMap<String, String[]>();
+          String publicHostName = getPublicHostName(clusterName, hostName);
+          Map<String, String[]> componentPortsProperties = new HashMap<>();
           componentPortsProperties.put(
               componentName,
               getPortProperties(service,
                   componentName,
                   hostName,
+                  publicHostName,
                   configProperties,
                   httpsEnabled
               )
@@ -548,19 +579,19 @@ public abstract class AbstractProviderModule implements ProviderModule,
             // this will trigger using the default port for the component
             String portString = getPortString(entry.getValue());
             if (null != portString) {
-              clusterJmxPorts.putIfAbsent(hostName, new ConcurrentHashMap<String, String>());
+              clusterJmxPorts.putIfAbsent(hostName, new ConcurrentHashMap<>());
               clusterJmxPorts.get(hostName).put(entry.getKey(), portString);
             }
           }
 
-          initRpcSuffixes(clusterName, componentName, configType, currVersion, hostName);
+          initRpcSuffixes(clusterName, componentName, configType, currVersion, hostName, publicHostName);
         }
       } catch (Exception e) {
         LOG.error("Exception initializing jmx port maps. ", e);
       }
     }
 
-    LOG.debug("jmxPortMap -> " + jmxPortMap);
+    LOG.debug("jmxPortMap -> {}", jmxPortMap);
 
     ConcurrentMap<String, String> hostJmxPorts = clusterJmxPorts.get(hostName);
     if (hostJmxPorts == null) {
@@ -575,8 +606,8 @@ public abstract class AbstractProviderModule implements ProviderModule,
   }
 
   /**
-   * Computes properties that contains proper port for {@code componentName} on {@code hostName}. Must contain custom logic
-   * for different configurations(like NAMENODE HA).
+   * Computes properties that contains proper port for {@code componentName} on {@code hostName}.
+   * Must contain custom logic for different configurations(like NAMENODE HA).
    * @param service service type
    * @param componentName component name
    * @param hostName host which contains requested component
@@ -584,16 +615,20 @@ public abstract class AbstractProviderModule implements ProviderModule,
    * @param httpsEnabled indicates if https enabled for component
    * @return property name that contain port for {@code componentName} on {@code hostName}
    */
-  String[] getPortProperties(Service.Type service, String componentName, String hostName, Map<String, Object> properties, boolean httpsEnabled) {
+  String[] getPortProperties(Service.Type service, String componentName,
+    String hostName, String publicHostName, Map<String, Object> properties, boolean httpsEnabled) {
     componentName = httpsEnabled ? componentName + "-HTTPS" : componentName;
     if(componentName.startsWith("NAMENODE") && properties.containsKey("dfs.internal.nameservices")) {
       componentName += "-HA";
-      return getNamenodeHaProperty(properties, serviceDesiredProperties.get(service).get(componentName), hostName);
+      return getNamenodeHaProperty(
+        properties, serviceDesiredProperties.get(service).get(componentName), hostName, publicHostName);
     }
     return serviceDesiredProperties.get(service).get(componentName);
   }
 
-  private String[] getNamenodeHaProperty(Map<String, Object> properties, String pattern[], String hostName) {
+  private String[] getNamenodeHaProperty(Map<String, Object> properties, String pattern[],
+    String hostName, String publicHostName) {
+
     // iterate over nameservices and namenodes, to find out namenode http(s) property for concrete host
     for(String nameserviceId : ((String)properties.get("dfs.internal.nameservices")).split(",")) {
       if(properties.containsKey("dfs.ha.namenodes."+nameserviceId)) {
@@ -605,7 +640,8 @@ public abstract class AbstractProviderModule implements ProviderModule,
           );
           if (properties.containsKey(propertyName)) {
             String propertyValue = (String)properties.get(propertyName);
-            if (propertyValue.split(":")[0].equals(hostName)) {
+            String propHostName = propertyValue.split(":")[0];
+            if (propHostName.equals(hostName) || propHostName.equals(publicHostName)) {
               return new String[] {propertyName};
             }
           }
@@ -627,14 +663,14 @@ public abstract class AbstractProviderModule implements ProviderModule,
   private String postProcessPropertyValue(String key, String value, Map<String, String> properties, Set<String> prevProps) {
     if (value != null && key != null && value.contains("${")) {
       if (prevProps == null) {
-        prevProps = new HashSet<String>();
+        prevProps = new HashSet<>();
       }
       if (prevProps.contains(key)) {
         return value;
       }
       prevProps.add(key);
       String refValueString = value;
-      Map<String, String> refMap = new HashMap<String, String>();
+      Map<String, String> refMap = new HashMap<>();
       while (refValueString.contains("${")) {
         int startValueRef = refValueString.indexOf("${") + 2;
         int endValueRef = refValueString.indexOf('}');
@@ -678,7 +714,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
 
   protected void createPropertyProviders(Resource.Type type) {
 
-    List<PropertyProvider> providers = new LinkedList<PropertyProvider>();
+    List<PropertyProvider> providers = new LinkedList<>();
 
     ComponentSSLConfiguration configuration = ComponentSSLConfiguration.instance();
     URLStreamProvider streamProvider = new URLStreamProvider(
@@ -747,8 +783,8 @@ public abstract class AbstractProviderModule implements ProviderModule,
               PropertyHelper.getPropertyId("ServiceComponentInfo", "state"),
               jpp,
               gpp));
+          break;
         }
-        break;
         case HostComponent: {
           // TODO as we fill out stack metric definitions, these can be phased out
           PropertyProvider jpp = createJMXPropertyProvider(
@@ -788,6 +824,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
             managementController.getClusters(),
             PropertyHelper.getPropertyId("HostRoles", "cluster_name"),
             PropertyHelper.getPropertyId("HostRoles", "host_name"),
+            PropertyHelper.getPropertyId("HostRoles", "public_host_name"),
             PropertyHelper.getPropertyId("HostRoles", "component_name"),
             HTTP_PROPERTY_REQUESTS));
 
@@ -795,8 +832,8 @@ public abstract class AbstractProviderModule implements ProviderModule,
           // this follows the current pattern of relying on the management controller
           // to instantiate this PropertyProvider
           providers.add(managementController.getLoggingSearchPropertyProvider());
+          break;
         }
-        break;
         case RootServiceComponent:
           providers.add(new RootServiceComponentPropertyProvider());
           break;
@@ -828,49 +865,35 @@ public abstract class AbstractProviderModule implements ProviderModule,
     }
   }
 
+  // TODO: Fix for multi-service feature support (trunk)
+  // Called from a synchornized block !
   private void initProviderMaps() throws SystemException {
-    ResourceProvider provider = getResourceProvider(Resource.Type.Cluster);
 
-    Set<String> propertyIds = new HashSet<String>();
-    propertyIds.add(ClusterResourceProvider.CLUSTER_NAME_PROPERTY_ID);
+    jmxPortMap.clear();
+    clusterHostComponentMap = new HashMap<>();
+    clusterGangliaCollectorMap = new HashMap<>();
+    boolean hasMetricCollector = false;
 
-    Map<String, String> requestInfoProperties = new HashMap<String, String>();
-    requestInfoProperties.put(ClusterResourceProvider.GET_IGNORE_PERMISSIONS_PROPERTY_ID, "true");
+    Map<String, Cluster> clusterMap = clusters.getClusters();
+    if (MapUtils.isEmpty(clusterMap)) {
+      return;
+    }
 
-    Request request = PropertyHelper.getReadRequest(propertyIds,
-        requestInfoProperties, null, null, null);
+    for (Cluster cluster : clusterMap.values()) {
+      hasMetricCollector = false;
+      String clusterName = cluster.getClusterName();
+      Map<String, String> hostComponentMap = clusterHostComponentMap.get(clusterName);
 
-    try {
-      jmxPortMap.clear();
-      Set<Resource> clusters = provider.getResources(request, null);
+      if (hostComponentMap == null) {
+        hostComponentMap = new HashMap<>();
+        clusterHostComponentMap.put(clusterName, hostComponentMap);
+      }
 
-      clusterHostComponentMap = new HashMap<String, Map<String, String>>();
-      clusterGangliaCollectorMap = new HashMap<String, String>();
-
-      for (Resource cluster : clusters) {
-
-        String clusterName = (String) cluster.getPropertyValue(CLUSTER_NAME_PROPERTY_ID);
-
-        // initialize the host component map and Ganglia server from the known hosts components...
-        provider = getResourceProvider(Resource.Type.HostComponent);
-
-        request = PropertyHelper.getReadRequest(HOST_COMPONENT_HOST_NAME_PROPERTY_ID,
-            HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID);
-
-        Predicate predicate = new PredicateBuilder().property(HOST_COMPONENT_CLUSTER_NAME_PROPERTY_ID).
-            equals(clusterName).toPredicate();
-
-        Set<Resource> hostComponents = provider.getResources(request, predicate);
-        Map<String, String> hostComponentMap = clusterHostComponentMap.get(clusterName);
-
-        if (hostComponentMap == null) {
-          hostComponentMap = new HashMap<String, String>();
-          clusterHostComponentMap.put(clusterName, hostComponentMap);
-        }
-
-        for (Resource hostComponent : hostComponents) {
-          String componentName = (String) hostComponent.getPropertyValue(HOST_COMPONENT_COMPONENT_NAME_PROPERTY_ID);
-          String hostName = (String) hostComponent.getPropertyValue(HOST_COMPONENT_HOST_NAME_PROPERTY_ID);
+      List<ServiceComponentHost> serviceComponentHosts = cluster.getServiceComponentHosts();
+      if (!CollectionUtils.isEmpty(serviceComponentHosts)) {
+        for (ServiceComponentHost sch : serviceComponentHosts) {
+          String componentName = sch.getServiceComponentName();
+          String hostName = sch.getHostName();
 
           hostComponentMap.put(componentName, hostName);
 
@@ -880,26 +903,15 @@ public abstract class AbstractProviderModule implements ProviderModule,
           }
           if (componentName.equals(METRIC_SERVER)) {
             //  If current collector host is null or if the host or the host component not live
-            //    Update clusterMetricCollectorMap.
+            //  Update clusterMetricCollectorMap.
             metricsCollectorHAManager.addCollectorHost(clusterName, hostName);
+            hasMetricCollector = true;
           }
         }
       }
-    } catch (UnsupportedPropertyException e) {
-      if (LOG.isErrorEnabled()) {
-        LOG.error("Caught UnsupportedPropertyException while trying to get the host mappings.", e);
+      if (!hasMetricCollector) {
+        checkAndAddExternalCollectorHosts(clusterName);
       }
-      throw new SystemException("An exception occurred while initializing the host mappings: " + e, e);
-    } catch (NoSuchResourceException e) {
-      if (LOG.isErrorEnabled()) {
-        LOG.error("Caught NoSuchResourceException exception while trying to get the host mappings.", e);
-      }
-      throw new SystemException("An exception occurred while initializing the host mappings: " + e, e);
-    } catch (NoSuchParentResourceException e) {
-      if (LOG.isErrorEnabled()) {
-        LOG.error("Caught NoSuchParentResourceException exception while trying to get the host mappings.", e);
-      }
-      throw new SystemException("An exception occurred while initializing the host mappings: " + e, e);
     }
   }
 
@@ -915,7 +927,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
    * @param clusterName
    *          the cluster name
    * @param configType
-   *          the configuration type (for example {@value hdfs-site}).
+   *          the configuration type (for example <code>hdfs-site</code>).
    * @return
    */
   private String getDesiredConfigVersion(String clusterName,
@@ -947,23 +959,24 @@ public abstract class AbstractProviderModule implements ProviderModule,
     // Get desired configs based on the tag
     ResourceProvider configResourceProvider = getResourceProvider(Resource.Type.Configuration);
     Predicate configPredicate = new PredicateBuilder().property
-        (ConfigurationResourceProvider.CONFIGURATION_CLUSTER_NAME_PROPERTY_ID).equals(clusterName).and()
-        .property(ConfigurationResourceProvider.CONFIGURATION_CONFIG_TYPE_PROPERTY_ID).equals(configType).and()
-        .property(ConfigurationResourceProvider.CONFIGURATION_CONFIG_TAG_PROPERTY_ID).equals(versionTag).toPredicate();
+        (ConfigurationResourceProvider.CLUSTER_NAME).equals(clusterName).and()
+        .property(ConfigurationResourceProvider.TYPE).equals(configType).and()
+        .property(ConfigurationResourceProvider.TAG).equals(versionTag).toPredicate();
     Set<Resource> configResources;
     try {
       configResources = configResourceProvider.getResources
-          (PropertyHelper.getReadRequest(ConfigurationResourceProvider.CONFIGURATION_CLUSTER_NAME_PROPERTY_ID,
-              ConfigurationResourceProvider.CONFIGURATION_CONFIG_TYPE_PROPERTY_ID,
-              ConfigurationResourceProvider.CONFIGURATION_CONFIG_TAG_PROPERTY_ID), configPredicate);
+          (PropertyHelper.getReadRequest(ConfigurationResourceProvider.CLUSTER_NAME,
+              ConfigurationResourceProvider.TYPE,
+              ConfigurationResourceProvider.TAG), configPredicate);
     } catch (NoSuchResourceException e) {
-      LOG.info("Resource for the desired config not found. " + e);
-      return Collections.emptyMap();
+      LOG.info("Resource for the desired config not found.", e);
+      return emptyMap();
     }
-    for (Resource res : configResources) {
-      return res.getPropertiesMap().get(PROPERTIES_CATEGORY);
-    }
-    return Collections.emptyMap();
+    return configResources.stream()
+        .findFirst()
+        .map(res -> res.getPropertiesMap()
+            .get(PROPERTIES_CATEGORY))
+        .orElse(emptyMap());
   }
 
   private Map<String, String> getDesiredConfigMap(String clusterName, String versionTag,
@@ -980,7 +993,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
     if(configProperties == null) {
       configProperties = getConfigProperties(clusterName, versionTag, configType);
     }
-    Map<String, String> mConfigs = new HashMap<String, String>();
+    Map<String, String> mConfigs = new HashMap<>();
     if (!configProperties.isEmpty()) {
       Map<String, String> evaluatedProperties = null;
       for (Entry<String, String[]> entry : keys.entrySet()) {
@@ -1004,7 +1017,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
 
         if (value != null && value.contains("${")) {
           if (evaluatedProperties == null) {
-            evaluatedProperties = new HashMap<String, String>();
+            evaluatedProperties = new HashMap<>();
             for (Map.Entry<String, Object> subentry : configProperties.entrySet()) {
               String keyString = subentry.getKey();
               Object object = subentry.getValue();
@@ -1018,7 +1031,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
           }
         }
         value = postProcessPropertyValue(propName, value, evaluatedProperties, null);
-        LOG.debug("PROPERTY -> key: " + propName + ", " + "value: " + value);
+        LOG.debug("PROPERTY -> key: {}, value: {}", propName, value);
 
         mConfigs.put(entry.getKey(), value);
 
@@ -1131,7 +1144,14 @@ public abstract class AbstractProviderModule implements ProviderModule,
               clusterName,
               newSiteConfigVersion, config,
               jmxDesiredProperties.get(componentName));
-          jmxProtocolString = getJMXProtocolString(protocolMap.get(componentName));
+          boolean isHttpsEnabled;
+          String propetyVal = protocolMap.get(componentName);
+          if (service.equals(Service.Type.HBASE)) {
+            isHttpsEnabled = Boolean.valueOf(propetyVal);
+          } else {
+            isHttpsEnabled = PROPERTY_HDFS_HTTP_POLICY_VALUE_HTTPS_ONLY.equals(propetyVal);
+          }
+          jmxProtocolString = getJMXProtocolStringFromBool(isHttpsEnabled);
         }
       } else {
         jmxProtocolString = "http";
@@ -1145,26 +1165,19 @@ public abstract class AbstractProviderModule implements ProviderModule,
       jmxProtocolString = "http";
     }
     if (jmxProtocolString == null) {
-      LOG.debug("Detected JMX protocol is null for clusterName = " + clusterName +
-          ", componentName = " + componentName);
-      LOG.debug("Defaulting JMX to HTTP protocol for  for clusterName = " + clusterName +
-          ", componentName = " + componentName);
+      LOG.debug("Detected JMX protocol is null for clusterName = {}, componentName = {}", clusterName, componentName);
+      LOG.debug("Defaulting JMX to HTTP protocol for  for clusterName = {}, componentName = {}", clusterName, componentName);
       jmxProtocolString = "http";
     }
     if (LOG.isDebugEnabled()) {
-      LOG.debug("JMXProtocol = " + jmxProtocolString + ", for clusterName=" + clusterName +
-          ", componentName = " + componentName);
+      LOG.debug("JMXProtocol = {}, for clusterName={}, componentName = {}", jmxProtocolString, clusterName, componentName);
     }
     clusterJmxProtocolMap.put(mapKey, jmxProtocolString);
     return jmxProtocolString;
   }
 
-  private String getJMXProtocolString(String value) {
-    if (PROPERTY_HDFS_HTTP_POLICY_VALUE_HTTPS_ONLY.equals(value)) {
-      return "https";
-    } else {
-      return "http";
-    }
+  private String getJMXProtocolStringFromBool(boolean isHttpsEnabled) {
+    return isHttpsEnabled ? "https" : "http";
   }
 
   @Override
@@ -1181,7 +1194,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
 
   private void initRpcSuffixes(String clusterName, String componentName,
                                String config, String configVersion,
-                               String hostName)
+                               String hostName, String publicHostName)
                               throws Exception {
     if (jmxDesiredRpcSuffixProperties.containsKey(componentName)) {
       Map<String, Map<String, String>> componentToPortsMap;
@@ -1189,7 +1202,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
         componentToPortsMap = jmxDesiredRpcSuffixes.get(clusterName);
       } else {
         componentToPortsMap = new HashMap<>();
-        componentToPortsMap.put(componentName, new HashMap<String, String>());
+        componentToPortsMap.put(componentName, new HashMap<>());
         jmxDesiredRpcSuffixes.put(clusterName, componentToPortsMap);
       }
 
@@ -1209,7 +1222,7 @@ public abstract class AbstractProviderModule implements ProviderModule,
           keys = jmxDesiredRpcSuffixProperties.get(componentName);
           Map<String, String[]> stringMap = jmxDesiredRpcSuffixProperties.get(componentName);
           for (String tag: stringMap.keySet()) {
-            keys.put(tag, getNamenodeHaProperty(configProperties, stringMap.get(tag), hostName));
+            keys.put(tag, getNamenodeHaProperty(configProperties, stringMap.get(tag), hostName, publicHostName));
           }
         }
       }

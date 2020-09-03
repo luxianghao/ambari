@@ -17,6 +17,7 @@
 
 import Ember from 'ember';
 import * as actionJobHandler from '../domain/actionjob_hanlder';
+import CommonUtils from "../utils/common-utils";
 
 var ActionTypeResolver=Ember.Object.extend({
   actionJobHandlerMap:null,
@@ -43,19 +44,27 @@ var ActionTypeResolver=Ember.Object.extend({
     var resolvedType=null;
     var problaleActionsTypes=[];
     Object.keys(json).forEach(function functionName(key) {
-      if (!self.validStandardActionProps.contains(key) && !key.startsWith("_")){
+      if (!self.validStandardActionProps.contains(key) && !CommonUtils.startsWith(key,"_")){
         problaleActionsTypes.push(key);
       }
     });
     if (problaleActionsTypes.length===1){
       return problaleActionsTypes[0];
     }else{
-      console.error("Invalid Action spec..",json);
+      console.error("Invalid Action spec..");
     }
     return resolvedType;
   },
   getActionJobHandler(jobType){
-    return this.actionJobHandlerMap.get(jobType);
+    if(this.actionJobHandlerMap.has(jobType)) {
+      return this.actionJobHandlerMap.get(jobType);
+    }else{
+      var customActionJobHandler = actionJobHandler.CustomActionJobHandler.create({
+        actionType : jobType
+      });
+      this.actionJobHandlerMap.set(jobType,customActionJobHandler);
+      return customActionJobHandler;
+    }
   }
 });
 

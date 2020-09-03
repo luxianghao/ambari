@@ -25,45 +25,43 @@
           </div>
       </div>
       <div class="panel-default panel-files">
-        <div class="panel-heading">
-          <div class="row">
-             <div class="col-xs-12">
-                <div class="pull-right">
-                  <span class="">
-                      <button type="button" class="btn btn-default" {{action "createFolder"}} disabled={{isFilePathInvalid}}>Create Folder</button>
-                  </span>
-                  {{#unless uploadSelected}}
-                    <span class="hide">
-                      <button type="button" class="btn btn-default" {{action "uploadSelect"}} disabled={{isFilePathInvalid}}>Upload File</button>
-                    </span>
-                  {{/unless}}
-                  {{#if uploadSelected}}
-                  <span class="">
-                      <span class="file-upload-control">
-                        {{file-upload url="/upload" selectedPath=selectedPath uploadFailure="uploadFailure" uploadSuccess="uploadSuccess" uploadValidation="uploadValidation"}}
+        {{#unless hideUpload}}
+          <div class="panel-heading">
+            <div class="row">
+               <div class="col-xs-12">
+                  <div class="pull-right">
+                    <!-- <span class="">
+                        <button type="button" class="btn btn-default" {{action "createFolder"}} disabled={{isFilePathInvalid}}>Create Folder</button>
+                    </span> -->
+                    {{#unless uploadSelected}}
+                      <span>
+                        <button type="button" class="btn btn-default" {{action "uploadSelect"}} disabled={{isFilePathInvalid}}>Upload File</button>
                       </span>
-                      <button type="button" class="close-icon" {{action "closeUpload"}}>x</button>
-                  </span>
-                  {{/if}}
+                    {{/unless}}
+                    {{#if uploadSelected}}
+                    <span class="">
+                        <span class="file-upload-control">
+                          {{file-upload url="/upload" selectedPath=selectedPath uploadFailure="uploadFailure" uploadSuccess="uploadSuccess" uploadValidation="uploadValidation"}}
+                        </span>
+                        <button type="button" class="close-icon" {{action "closeUpload"}}>x</button>
+                    </span>
+                    {{/if}}
+                  </div>
                 </div>
-              </div>
+            </div>
           </div>
-        </div>
+        {{/unless}}
         <div class="panel-body">
           <div>
-            {{#if alertMessage}}
-              <div class="alert alert-{{alertType}} col-xs-24">
-                {{alertMessage}}-
-                {{alertDetails}}
-              </div>
-
-            {{/if}}
           <div class="directory-viewer-wrap hdfs-browse">
-            {{directory-viewer
+            {{#directory-viewer
               config=config
               errorAction="viewerError"
               pathSelectAction="viewerSelectedPath"
-            }}
+              uploaderService=uploaderService
+              width=850
+              homeDirectory = homeDirectory
+            }}{{/directory-viewer}}
           </div>
         </div>
       </div>
@@ -74,11 +72,11 @@
                 <label class="control-label">Selected Path</label>
               </div>
               <div class="col-xs-6">
-                {{input name="selectedPath" class="form-control" type="text" value=selectedPath placeholder="/enter folder here"}}
+                {{input name="selectedPath" class="form-control" type="text" value=selectedPath}}
               </div>
               <div class="col-xs-4">
-                <button type="button" class="btn btn-primary" {{action "selectFile"}}>Select</button>
                 <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" {{action "selectFile"}}>Select</button>
               </div>
         </div>
     </div>

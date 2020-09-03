@@ -17,44 +17,65 @@
  */
 package org.apache.ambari.server.configuration;
 
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Sets;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonPrimitive;
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.Field;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Properties;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.ambari.annotations.Experimental;
 import org.apache.ambari.annotations.ExperimentalFeature;
 import org.apache.ambari.annotations.Markdown;
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.actionmanager.CommandExecutionType;
 import org.apache.ambari.server.actionmanager.HostRoleCommand;
-import org.apache.ambari.server.actionmanager.Stage;
 import org.apache.ambari.server.controller.spi.PropertyProvider;
+import org.apache.ambari.server.controller.utilities.ScalingThreadPoolExecutor;
 import org.apache.ambari.server.events.listeners.alerts.AlertReceivedListener;
 import org.apache.ambari.server.orm.JPATableGenerationStrategy;
 import org.apache.ambari.server.orm.PersistenceType;
 import org.apache.ambari.server.orm.dao.HostRoleCommandStatusSummaryDTO;
-import org.apache.ambari.server.orm.entities.StageEntity;
 import org.apache.ambari.server.security.ClientSecurityType;
 import org.apache.ambari.server.security.authentication.kerberos.AmbariKerberosAuthenticationProperties;
-import org.apache.ambari.server.security.authorization.LdapServerProperties;
-import org.apache.ambari.server.security.authorization.UserType;
-import org.apache.ambari.server.security.authorization.jwt.JwtAuthenticationProperties;
-import org.apache.ambari.server.security.encryption.CertificateUtils;
 import org.apache.ambari.server.security.encryption.CredentialProvider;
 import org.apache.ambari.server.state.services.MetricsRetrievalService;
 import org.apache.ambari.server.state.services.RetryUpgradeActionService;
 import org.apache.ambari.server.state.stack.OsFamily;
+import org.apache.ambari.server.topology.addservice.GroupByComponentsStrategy;
+import org.apache.ambari.server.topology.addservice.HostGroupStrategy;
 import org.apache.ambari.server.upgrade.AbstractUpgradeCatalog;
 import org.apache.ambari.server.utils.AmbariPath;
 import org.apache.ambari.server.utils.DateUtils;
 import org.apache.ambari.server.utils.HostUtils;
-import org.apache.ambari.server.utils.Parallel;
+import org.apache.ambari.server.utils.PasswordUtils;
 import org.apache.ambari.server.utils.ShellCommandUtil;
 import org.apache.ambari.server.utils.StageUtils;
 import org.apache.commons.cli.CommandLine;
@@ -70,34 +91,17 @@ import org.apache.commons.lang.math.NumberUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.Writer;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
-import java.lang.reflect.Field;
-import java.security.cert.CertificateException;
-import java.security.interfaces.RSAPublicKey;
-import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Properties;
-import java.util.Set;
-import java.util.SortedMap;
-import java.util.TreeMap;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import com.google.common.base.Charsets;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Sets;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 /**
  * The {@link Configuration} class is used to read from the
@@ -109,8 +113,17 @@ import java.util.concurrent.TimeUnit;
  * href=https://en.wikipedia.org/wiki/Markdown>Markdown</a> of all of the
  * properties, along with their default values and descriptions. This should be
  * done for every release so that the documentation of the configuration
- * properties can be kept current. The {@code index_template.md} file is used to generate
- * the markdown.
+ * properties can be kept current. The {@code index_template.md} file is used to
+ * generate the markdown.
+ * <p/>
+ * The markdown can also be generated by running the {@code site} phase in maven
+ * or by running the {@code exec:java} goal directly:
+ *
+ * <pre>
+ * mvn site
+ * mvn exec:java
+ * mvn exec:java@configuration-markdown (on maven 3.3.1 and later)
+ * </pre>
  */
 @Singleton
 public class Configuration {
@@ -144,6 +157,8 @@ public class Configuration {
    */
   private static final String HTML_BREAK_TAG = "<br/>";
 
+  private static final String AGENT_CONFIGS_DEFAULT_SECTION = "agentConfig";
+
   /**
    * Used to determine which repository validation strings should be used
    * depending on the OS.
@@ -168,24 +183,6 @@ public class Configuration {
    * The minimum JDK version supported by Ambari.
    */
   public static final float JDK_MIN_VERSION = 1.7f;
-
-  /**
-   * The default regex pattern to use when replacing the member attribute ID
-   * value with a placeholder, such as {@code ${member}}. This is used in cases
-   * where a UID of an LDAP member is not a full CN or unique ID.
-   */
-  private static final String LDAP_SYNC_MEMBER_REPLACE_PATTERN_DEFAULT = "";
-
-  /**
-   * The default LDAP filter to use when syncing user or group members. This
-   * default filter can include a {@code {member}} placeholder which allows
-   * substitution of a direct ID. For example:
-   *
-   * <pre>
-   * (&(objectclass=posixaccount)(dn={member})) -> (&(objectclass=posixaccount)(dn=cn=mycn,dc=apache,dc=org))
-   * </pre>
-   */
-  private static final String LDAP_SYNC_MEMBER_FILTER_DEFAULT = "";
 
   /**
    * The prefix for any configuration property which will be appended to
@@ -227,17 +224,36 @@ public class Configuration {
   public static final String DEFAULT_DERBY_SCHEMA = "ambari";
 
   /**
-   * The JDBC URL to use when creating a {@link DatabaseType#DERBY} database for
+   * The schema to use when creating a {@link DatabaseType#H2} database for
+   * unit tests.
+   */
+  public static final String DEFAULT_H2_SCHEMA = "ambari";
+
+  /**
+   * The JDBC URL to use when creating a {@link DatabaseType#H2} database for
    * unit tests.
    */
   public static final String JDBC_IN_MEMORY_URL = String.format(
-      "jdbc:derby:memory:myDB/%s;create=true", DEFAULT_DERBY_SCHEMA);
+      "jdbc:h2:mem:%1$s;ALIAS_COLUMN_NAME=TRUE;INIT=CREATE SCHEMA IF NOT EXISTS %1$s\\;SET SCHEMA %1$s;",
+      DEFAULT_DERBY_SCHEMA);
 
   /**
-   * The Derby driver to use when creating a {@link DatabaseType#DERBY} database
+   * The H2 driver to use when creating a {@link DatabaseType#H2} database
    * for unit tests.
    */
-  public static final String JDBC_IN_MEMORY_DRIVER = "org.apache.derby.jdbc.EmbeddedDriver";
+  public static final String JDBC_IN_MEMORY_DRIVER = "org.h2.Driver";
+
+  /**
+   * The H2 default user driver to use when creating a {@link DatabaseType#H2} database
+   * for unit tests.
+   */
+  public static final String JDBC_IN_MEMORY_USER = "sa";
+
+  /**
+   * The H2 default password to use when creating a {@link DatabaseType#H2} database
+   * for unit tests.
+   */
+  public static final String JDBC_IN_MEMORY_PASSWORD = "";
 
   /**
    * The JSSE property which governs the location of the keystore file
@@ -332,6 +348,13 @@ public class Configuration {
       "views.validate", "false");
 
   /**
+   * Determines whether the view directory watcher service should be disabled.
+   */
+  @Markdown(description = "Determines whether the view directory watcher service should be disabled.")
+  public static final ConfigurationProperty<String> DISABLE_VIEW_DIRECTORY_WATCHER = new ConfigurationProperty<>(
+      "views.directory.watcher.disable", "false");
+
+  /**
    * Determines whether remove undeployed views from the Ambari database.
    */
   @Markdown(description = "Determines whether remove undeployed views from the Ambari database.")
@@ -350,7 +373,7 @@ public class Configuration {
    */
   @Markdown(description = "The location and name of the Python script used to bootstrap new Ambari Agent hosts.")
   public static final ConfigurationProperty<String> BOOTSTRAP_SCRIPT = new ConfigurationProperty<>(
-      "bootstrap.script", AmbariPath.getPath("/usr/lib/python2.6/site-packages/ambari_server/bootstrap.py"));
+      "bootstrap.script", AmbariPath.getPath("/usr/lib/ambari-server/lib/ambari_server/bootstrap.py"));
 
   /**
    * The location and name of the Python script executed on the Ambari Agent
@@ -359,7 +382,7 @@ public class Configuration {
   @Markdown(description = "The location and name of the Python script executed on the Ambari Agent host during the bootstrap process.")
   public static final ConfigurationProperty<String> BOOTSTRAP_SETUP_AGENT_SCRIPT = new ConfigurationProperty<>(
       "bootstrap.setup_agent.script",
-      AmbariPath.getPath("/usr/lib/python2.6/site-packages/ambari_server/setupAgent.py"));
+      AmbariPath.getPath("/usr/lib/ambari-server/lib/ambari_server/setupAgent.py"));
 
   /**
    * The password to set on the {@code AMBARI_PASSPHRASE} environment variable
@@ -447,6 +470,13 @@ public class Configuration {
       "api.csrfPrevention.enabled", "true");
 
   /**
+   * Determines whether Gzip handler is enabled for Jetty.
+   */
+  @Markdown(description = "Determines whether jetty Gzip compression is enabled or not.")
+  public static final ConfigurationProperty<String> GZIP_HANDLER_JETTY_ENABLED = new ConfigurationProperty<>(
+    "gzip.handler.jetty.enabled", "true");
+
+  /**
    * Determines whether HTTP body data is compressed with GZIP.
    */
   @Markdown(description = "Determines whether data sent to and from the Ambari service should be compressed.")
@@ -481,7 +511,7 @@ public class Configuration {
    * Determines whether the Ambari Agent host names should be validated against
    * a regular expression to ensure that they are well-formed.
    */
-  @Markdown(description = "Determines whether the Ambari Agent host names should be validated against a regular expression to ensure that they are well-formed.")
+  @Markdown(description = "Determines whether the Ambari Agent host names should be validated against a regular expression to ensure that they are well-formed.<br><br>WARNING: By setting this value to false, host names will not be validated, allowing a possible security vulnerability as described in CVE-2014-3582. See https://cwiki.apache.org/confluence/display/AMBARI/Ambari+Vulnerabilities for more information.")
   public static final ConfigurationProperty<String> SRVR_AGENT_HOSTNAME_VALIDATE = new ConfigurationProperty<>(
       "security.agent.hostname.validate", "true");
 
@@ -524,6 +554,13 @@ public class Configuration {
       "security.server.cert_name", "ca.crt");
 
   /**
+   * The name of the file that contains the CA certificate chain for certificate validation during 2-way SSL communication.
+   */
+  @Markdown(description = "The name of the file located in the `security.server.keys_dir` directory containing the CA certificate chain used to verify certificates during 2-way SSL communications.")
+  public static final ConfigurationProperty<String> SRVR_CRT_CHAIN_NAME = new ConfigurationProperty<>(
+      "security.server.cert_chain_name", "ca_chain.pem");
+
+  /**
    * The name of the certificate request file used when generating certificates.
    */
   @Markdown(description = "The name of the certificate request file used when generating certificates.")
@@ -538,7 +575,7 @@ public class Configuration {
       "security.server.key_name", "ca.key");
 
   /**
-   * The name of the keystore file, located in {@link SRVR_KSTR_DIR}.
+   * The name of the keystore file, located in {@link #SRVR_KSTR_DIR}.
    */
   @Markdown(description = "The name of the keystore file, located in `security.server.keys_dir`")
   public static final ConfigurationProperty<String> KSTR_NAME = new ConfigurationProperty<>(
@@ -556,7 +593,7 @@ public class Configuration {
 
   /**
    * The name of the truststore file ambari uses to store trusted certificates.
-   * Located in {@link SRVR_KSTR_DIR}.
+   * Located in {@link #SRVR_KSTR_DIR}.
    */
   @Markdown(description = "The name of the truststore file ambari uses to store trusted certificates. Located in `security.server.keys_dir`")
   public static final ConfigurationProperty<String> TSTR_NAME = new ConfigurationProperty<>(
@@ -658,10 +695,10 @@ public class Configuration {
    */
   @Markdown(
       description = "Determines how to handle username collision while updating from LDAP.",
-      examples = { "skip", "convert" }
+      examples = {"skip", "convert", "add"}
   )
   public static final ConfigurationProperty<String> LDAP_SYNC_USERNAME_COLLISIONS_BEHAVIOR = new ConfigurationProperty<>(
-      "ldap.sync.username.collision.behavior", "convert");
+      "ldap.sync.username.collision.behavior", "add");
 
   /**
    * The location on the Ambari Server where stack extensions exist.
@@ -682,6 +719,15 @@ public class Configuration {
       "mpacks.staging.path", null);
 
   /**
+   * The Ambari Management Pack v2 staging directory on the Ambari Server.
+   */
+  @Markdown(
+          description = "The Ambari Management Pack version-2 staging directory on the Ambari Server.",
+          examples = { "/var/lib/ambari-server/resources/mpacks-v2" })
+  public static final ConfigurationProperty<String> MPACKS_V2_STAGING_DIR_PATH = new ConfigurationProperty<>(
+          "mpacks-v2.staging.path", null);
+
+  /**
    * The full path to the file which contains the Ambari Server version.
    */
   @Markdown(
@@ -691,11 +737,19 @@ public class Configuration {
       "server.version.file", null);
 
   /**
+   * Whether user accepted GPL license
+   */
+  @Markdown(
+      description = "Whether user accepted GPL license.")
+  public static final ConfigurationProperty<Boolean> GPL_LICENSE_ACCEPTED = new ConfigurationProperty<>(
+      "gpl.license.accepted", false);
+
+  /**
    * The location of the JDK on the Ambari Agent hosts.
    */
   @Markdown(
-      description = "The location of the JDK on the Ambari Agent hosts.",
-      examples = { "/usr/jdk64/jdk1.7.0_45" })
+      description = "The location of the JDK on the Ambari Agent hosts. If stack.java.home exists, that is only used by Ambari Server (or you can find that as ambari_java_home in the commandParams on the agent side)",
+      examples = { "/usr/jdk64/jdk1.8.0_112" })
   public static final ConfigurationProperty<String> JAVA_HOME = new ConfigurationProperty<>(
       "java.home", null);
 
@@ -703,8 +757,8 @@ public class Configuration {
    * The name of the JDK installation binary.
    */
   @Markdown(
-      description = "The name of the JDK installation binary.",
-      examples = { "jdk-7u45-linux-x64.tar.gz" })
+      description = "The name of the JDK installation binary. If stack.jdk.name exists, that is only used by Ambari Server (or you can find that as ambari_jdk_name in the commandParams on the agent side)",
+      examples = { "jdk-8u112-linux-x64.tar.gz" })
   public static final ConfigurationProperty<String> JDK_NAME = new ConfigurationProperty<>(
       "jdk.name", null);
 
@@ -712,10 +766,46 @@ public class Configuration {
    * The name of the JCE policy ZIP file.
    */
   @Markdown(
-      description = "The name of the JCE policy ZIP file. ",
-      examples = {"UnlimitedJCEPolicyJDK7.zip"})
+      description = "The name of the JCE policy ZIP file. If stack.jce.name exists, that is only used by Ambari Server (or you can find that as ambari_jce_name in the commandParams on the agent side)",
+      examples = {"UnlimitedJCEPolicyJDK8.zip"})
   public static final ConfigurationProperty<String> JCE_NAME = new ConfigurationProperty<>(
       "jce.name", null);
+
+  /**
+   * The location of the JDK on the Ambari Agent hosts.
+   */
+  @Markdown(
+    description = "The location of the JDK on the Ambari Agent hosts for stack services.",
+    examples = { "/usr/jdk64/jdk1.7.0_45" })
+  public static final ConfigurationProperty<String> STACK_JAVA_HOME = new ConfigurationProperty<>(
+    "stack.java.home", null);
+
+  /**
+   * The name of the JDK installation binary.
+   */
+  @Markdown(
+    description = "The name of the JDK installation binary for stack services.",
+    examples = { "jdk-7u45-linux-x64.tar.gz" })
+  public static final ConfigurationProperty<String> STACK_JDK_NAME = new ConfigurationProperty<>(
+    "stack.jdk.name", null);
+
+  /**
+   * The name of the JCE policy ZIP file.
+   */
+  @Markdown(
+    description = "The name of the JCE policy ZIP file for stack services.",
+    examples = {"UnlimitedJCEPolicyJDK7.zip"})
+  public static final ConfigurationProperty<String> STACK_JCE_NAME = new ConfigurationProperty<>(
+    "stack.jce.name", null);
+
+  /**
+   * Java version of the stack
+   */
+  @Markdown(
+    description = "JDK version of the stack, use in case of it differs from Ambari JDK version.",
+    examples = {"1.7"})
+  public static final ConfigurationProperty<String> STACK_JAVA_VERSION = new ConfigurationProperty<>(
+    "stack.java.version", null);
 
   /**
    * The auto group creation by Ambari.
@@ -738,7 +828,7 @@ public class Configuration {
    * @see ClientSecurityType
    */
   @Markdown(
-      examples = { "local", "ldap" },
+      examples = { "local", "ldap", "pam" },
       description = "The type of authentication mechanism used by Ambari.")
   public static final ConfigurationProperty<String> CLIENT_SECURITY = new ConfigurationProperty<>(
       "client.security", null);
@@ -835,6 +925,12 @@ public class Configuration {
   @Markdown(description = "The timeout, used by the `timeout` command in linux, when checking mounts for free capacity.")
   public static final ConfigurationProperty<String> CHECK_MOUNTS_TIMEOUT = new ConfigurationProperty<>(
       "agent.check.mounts.timeout", "0");
+  /**
+   * The path of the file which lists the properties that should be masked from the api that returns ambari.properties
+   */
+  @Markdown(description = "The path of the file which lists the properties that should be masked from the api that returns ambari.properties")
+  public static final ConfigurationProperty<String> PROPERTY_MASK_FILE = new ConfigurationProperty<>(
+      "property.mask.file", null);
 
   /**
    * The name of the database.
@@ -896,252 +992,6 @@ public class Configuration {
   @Markdown(description = "The name of the MySQL JDBC JAR connector.")
   public static final ConfigurationProperty<String> MYSQL_JAR_NAME = new ConfigurationProperty<>(
       "db.mysql.jdbc.name", "mysql-connector-java.jar");
-
-  /**
-   * For development purposes only, should be changed to 'false'
-   */
-  @Markdown(description = "An internal property used for unit testing and development purposes.")
-  public static final ConfigurationProperty<String> IS_LDAP_CONFIGURED = new ConfigurationProperty<>(
-      "ambari.ldap.isConfigured", "false");
-
-  /**
-   * Determines whether to use LDAP over SSL (LDAPS).
-   */
-  @Markdown(description = "Determines whether to use LDAP over SSL (LDAPS).")
-  public static final ConfigurationProperty<String> LDAP_USE_SSL = new ConfigurationProperty<>(
-      "authentication.ldap.useSSL", "false");
-
-  /**
-   * The default value is used for embedded purposes only.
-   */
-  @Markdown(description = "The LDAP URL used for connecting to an LDAP server when authenticating users. This should include both the host name and port.")
-  public static final ConfigurationProperty<String> LDAP_PRIMARY_URL = new ConfigurationProperty<>(
-      "authentication.ldap.primaryUrl", "localhost:33389");
-
-  /**
-   * A second LDAP URL to use as a backup when authenticating users.
-   */
-  @Markdown(description = "A second LDAP URL to use as a backup when authenticating users. This should include both the host name and port.")
-  public static final ConfigurationProperty<String> LDAP_SECONDARY_URL = new ConfigurationProperty<>(
-      "authentication.ldap.secondaryUrl", null);
-
-  /**
-   * The base DN to use when filtering LDAP users and groups.
-   */
-  @Markdown(description = "The base DN to use when filtering LDAP users and groups. This is only used when LDAP authentication is enabled.")
-  public static final ConfigurationProperty<String> LDAP_BASE_DN = new ConfigurationProperty<>(
-      "authentication.ldap.baseDn", "dc=ambari,dc=apache,dc=org");
-
-  /**
-   * Determines whether LDAP requests can connect anonymously or if a managed
-   * user is required to connect.
-   */
-  @Markdown(description = "Determines whether LDAP requests can connect anonymously or if a managed user is required to connect.")
-  public static final ConfigurationProperty<String> LDAP_BIND_ANONYMOUSLY = new ConfigurationProperty<>(
-      "authentication.ldap.bindAnonymously", "true");
-
-  /**
-   * The DN of the manager account to use when binding to LDAP if
-   * {@link #LDAP_BIND_ANONYMOUSLY} is turned off.
-   */
-  @Markdown(description = "The DN of the manager account to use when binding to LDAP if anonymous binding is disabled.")
-  public static final ConfigurationProperty<String> LDAP_MANAGER_DN = new ConfigurationProperty<>(
-      "authentication.ldap.managerDn", null);
-
-  /**
-   * The password for the account used to bind to LDAP if
-   * {@link #LDAP_BIND_ANONYMOUSLY} is turned off.
-   */
-  @Markdown(description = "The password for the manager account used to bind to LDAP if anonymous binding is disabled.")
-  public static final ConfigurationProperty<String> LDAP_MANAGER_PASSWORD = new ConfigurationProperty<>(
-      "authentication.ldap.managerPassword", null);
-
-  /**
-   * The attribute used for determining what the distinguished name property is.
-   */
-  @Markdown(description = "The attribute used for determining what the distinguished name property is.")
-  public static final ConfigurationProperty<String> LDAP_DN_ATTRIBUTE = new ConfigurationProperty<>(
-      "authentication.ldap.dnAttribute", "dn");
-
-  /**
-   * The attribute used for determining the user name.
-   */
-  @Markdown(description = "The attribute used for determining the user name, such as `uid`.")
-  public static final ConfigurationProperty<String> LDAP_USERNAME_ATTRIBUTE = new ConfigurationProperty<>(
-      "authentication.ldap.usernameAttribute", "uid");
-
-  /**
-   * Declares whether to force the ldap user name to be lowercase or leave as-is. This is useful when
-   * local user names are expected to be lowercase but the LDAP user names are not.
-   */
-  @Markdown(description = "Declares whether to force the ldap user name to be lowercase or leave as-is." +
-      " This is useful when local user names are expected to be lowercase but the LDAP user names are not.")
-  public static final ConfigurationProperty<String> LDAP_USERNAME_FORCE_LOWERCASE = new ConfigurationProperty<>(
-      "authentication.ldap.username.forceLowercase", "false");
-
-  /**
-   * The filter used when searching for users in LDAP.
-   */
-  @Markdown(description = "The filter used when searching for users in LDAP.")
-  public static final ConfigurationProperty<String> LDAP_USER_BASE = new ConfigurationProperty<>(
-      "authentication.ldap.userBase", "ou=people,dc=ambari,dc=apache,dc=org");
-
-  /**
-   * The class to which user objects in LDAP belong.
-   */
-  @Markdown(description = "The class to which user objects in LDAP belong.")
-  public static final ConfigurationProperty<String> LDAP_USER_OBJECT_CLASS = new ConfigurationProperty<>(
-      "authentication.ldap.userObjectClass", "person");
-
-  /**
-   * The filter used when searching for groups in LDAP.
-   */
-  @Markdown(description = "The filter used when searching for groups in LDAP.")
-  public static final ConfigurationProperty<String> LDAP_GROUP_BASE = new ConfigurationProperty<>(
-      "authentication.ldap.groupBase", "ou=groups,dc=ambari,dc=apache,dc=org");
-
-  /**
-   * The class to which group objects in LDAP belong.
-   */
-  @Markdown(description = "The class to which group objects in LDAP belong.")
-  public static final ConfigurationProperty<String> LDAP_GROUP_OBJECT_CLASS = new ConfigurationProperty<>(
-      "authentication.ldap.groupObjectClass", "group");
-
-  /**
-   * The attribute used to determine the group name.
-   */
-  @Markdown(description = "The attribute used to determine the group name in LDAP.")
-  public static final ConfigurationProperty<String> LDAP_GROUP_NAMING_ATTR = new ConfigurationProperty<>(
-      "authentication.ldap.groupNamingAttr", "cn");
-
-  /**
-   * The LDAP attribute which identifies group membership.
-   */
-  @Markdown(description = "The LDAP attribute which identifies group membership.")
-  public static final ConfigurationProperty<String> LDAP_GROUP_MEMBERSHIP_ATTR = new ConfigurationProperty<>(
-      "authentication.ldap.groupMembershipAttr", "member");
-
-  /**
-   * A comma-separate list of groups which would give a user administrative access to Ambari.
-   */
-  @Markdown(
-      description = "A comma-separate list of groups which would give a user administrative access to Ambari when syncing from LDAP. This is only used when `authorization.ldap.groupSearchFilter` is blank.",
-      examples = { "administrators", "Hadoop Admins,Hadoop Admins.*,DC Admins,.*Hadoop Operators" })
-  public static final ConfigurationProperty<String> LDAP_ADMIN_GROUP_MAPPING_RULES = new ConfigurationProperty<>(
-      "authorization.ldap.adminGroupMappingRules", "Ambari Administrators");
-
-  /**
-   * When authentication through LDAP is enabled then Ambari Server uses this
-   * filter to lookup the user in LDAP based on the provided ambari user name.
-   *
-   * If it is not set then
-   * {@code (&({usernameAttribute}={0})(objectClass={userObjectClass}))} is
-   * used.
-   */
-  @Markdown(
-      description = "A filter used to lookup a user in LDAP based on the Ambari user name",
-      examples = { "(&({usernameAttribute}={0})(objectClass={userObjectClass}))" })
-  public static final ConfigurationProperty<String> LDAP_USER_SEARCH_FILTER = new ConfigurationProperty<>(
-      "authentication.ldap.userSearchFilter",
-      "(&({usernameAttribute}={0})(objectClass={userObjectClass}))");
-
-  /**
-   * This configuration controls whether the use of alternate user search filter
-   * is enabled. If the default LDAP user search filter is not able to find the
-   * authenticating user in LDAP than Ambari can fall back an alternative user
-   * search filter if this functionality is enabled.
-   *
-   * If it is not set then the default
-   */
-  @Markdown(description = "Determines whether a secondary (alternate) LDAP user search filer is used if the primary filter fails to find a user.")
-  public static final ConfigurationProperty<String> LDAP_ALT_USER_SEARCH_ENABLED = new ConfigurationProperty<>(
-      "authentication.ldap.alternateUserSearchEnabled", "false");
-
-  /**
-   * When authentication through LDAP is enabled Ambari Server uses this filter
-   * by default to lookup the user in LDAP when the user provides beside user
-   * name additional information. There might be cases when
-   * {@link #LDAP_USER_SEARCH_FILTER} may match multiple users in LDAP. In such
-   * cases the user is prompted to provide additional info, e.g. the domain he
-   * or she wants ot log in upon login beside the username. This filter will be
-   * used by Ambari Server to lookup users in LDAP if the login name the user
-   * logs in contains additional information beside ambari user name.
-   * <p>
-   * Note: Currently the use of alternate user search filter is triggered only
-   * if the user login name is in the username@domain format (e.g.
-   * user1@x.y.com) which is the userPrincipalName format used in AD.
-   * </p>
-   */
-  @Markdown(description = "An alternate LDAP user search filter which can be used if `authentication.ldap.alternateUserSearchEnabled` is enabled and the primary filter fails to find a user.")
-  public static final ConfigurationProperty<String> LDAP_ALT_USER_SEARCH_FILTER = new ConfigurationProperty<>(
-      "authentication.ldap.alternateUserSearchFilter",
-      "(&(userPrincipalName={0})(objectClass={userObjectClass}))");
-
-  /**
-   * The DN to use when searching for LDAP groups.
-   */
-  @Markdown(description = "The DN to use when searching for LDAP groups.")
-  public static final ConfigurationProperty<String> LDAP_GROUP_SEARCH_FILTER = new ConfigurationProperty<>(
-      "authorization.ldap.groupSearchFilter", "");
-
-  /**
-   * Determines whether to follow LDAP referrals when the LDAP controller doesn't have the requested object.
-   */
-  @Markdown(description = "Determines whether to follow LDAP referrals to other URLs when the LDAP controller doesn't have the requested object.")
-  public static final ConfigurationProperty<String> LDAP_REFERRAL = new ConfigurationProperty<>(
-      "authentication.ldap.referral", "follow");
-
-  /**
-   * Determines whether results from LDAP are paginated when requested.
-   */
-  @Markdown(description = "Determines whether results from LDAP are paginated when requested.")
-  public static final ConfigurationProperty<String> LDAP_PAGINATION_ENABLED = new ConfigurationProperty<>(
-      "authentication.ldap.pagination.enabled", "true");
-
-  /**
-   * Regex pattern to use when replacing the user member attribute
-   * ID value with a placeholder. This is used in cases where a UID of an LDAP
-   * member is not a full CN or unique ID.
-   */
-  @Markdown(
-      description = "Regex pattern to use when replacing the user member attribute ID value with a placeholder. This is used in cases where a UID of an LDAP member is not a full CN or unique ID (e.g.: `member: <SID=123>;<GID=123>;cn=myCn,dc=org,dc=apache`)",
-      examples = { "(?<sid>.*);(?<guid>.*);(?<member>.*)" })
-  public static final ConfigurationProperty<String> LDAP_SYNC_USER_MEMBER_REPLACE_PATTERN = new ConfigurationProperty<>(
-      "authentication.ldap.sync.userMemberReplacePattern",
-      LDAP_SYNC_MEMBER_REPLACE_PATTERN_DEFAULT);
-
-  /**
-   * Regex pattern to use when replacing the group member attribute
-   * ID value with a placeholder. This is used in cases where a UID of an LDAP
-   * member is not a full CN or unique ID.
-   */
-  @Markdown(
-      description = "Regex pattern to use when replacing the group member attribute ID value with a placeholder. This is used in cases where a UID of an LDAP member is not a full CN or unique ID (e.g.: `member: <SID=123>;<GID=123>;cn=myCn,dc=org,dc=apache`)",
-      examples = { "(?<sid>.*);(?<guid>.*);(?<member>.*)" })
-  public static final ConfigurationProperty<String> LDAP_SYCN_GROUP_MEMBER_REPLACE_PATTERN = new ConfigurationProperty<>(
-      "authentication.ldap.sync.groupMemberReplacePattern",
-      LDAP_SYNC_MEMBER_REPLACE_PATTERN_DEFAULT);
-
-  /**
-   * Filter to use for syncing user members of group from LDAP. (by default it is not used)
-   */
-  @Markdown(
-    description = "Filter to use for syncing user members of a group from LDAP (by default it is not used).",
-    examples = {"(&(objectclass=posixaccount)(uid={member}))"})
-  public static final ConfigurationProperty<String> LDAP_SYNC_USER_MEMBER_FILTER = new ConfigurationProperty<>(
-      "authentication.ldap.sync.userMemberFilter",
-      LDAP_SYNC_MEMBER_FILTER_DEFAULT);
-
-  /**
-   * Filter to use for syncing group members of a group from LDAP. (by default it is not used)
-   */
-  @Markdown(
-    description = "Filter to use for syncing group members of a group from LDAP. (by default it is not used)",
-    examples = {"(&(objectclass=posixgroup)(cn={member}))"})
-  public static final ConfigurationProperty<String> LDAP_SYNC_GROUP_MEMBER_FILTER = new ConfigurationProperty<>(
-      "authentication.ldap.sync.groupMemberFilter",
-      LDAP_SYNC_MEMBER_FILTER_DEFAULT);
-
 
   /**
    * Enable the profiling of internal locks.
@@ -1309,59 +1159,6 @@ public class Configuration {
   public static final ConfigurationProperty<String> STACK_UPGRADE_AUTO_RETRY_COMMAND_DETAILS_TO_IGNORE = new ConfigurationProperty<>(
       "stack.upgrade.auto.retry.command.details.to.ignore", "\"Execute HDFS Finalize\"");
 
-  /**
-   * Determines whether to use JWT authentication when connecting to remote Hadoop resources.
-   */
-  @Markdown(description = "Determines whether to use JWT authentication when connecting to remote Hadoop resources.")
-  public static final ConfigurationProperty<Boolean> JWT_AUTH_ENABLED = new ConfigurationProperty<>(
-      "authentication.jwt.enabled", Boolean.FALSE);
-
-  /**
-   * The URL for authentication of the user in the absence of a JWT token when
-   * handling a JWT request.
-   */
-  @Markdown(
-      relatedTo = "authentication.jwt.enabled",
-      description = "The URL for authentication of the user in the absence of a JWT token when handling a JWT request.")
-  public static final ConfigurationProperty<String> JWT_AUTH_PROVIDER_URL = new ConfigurationProperty<>(
-      "authentication.jwt.providerUrl", null);
-
-  /**
-   * The public key to use when verifying the authenticity of a JWT token.
-   */
-  @Markdown(
-      relatedTo = "authentication.jwt.enabled",
-      description = "The public key to use when verifying the authenticity of a JWT token.")
-  public static final ConfigurationProperty<String> JWT_PUBLIC = new ConfigurationProperty<>(
-      "authentication.jwt.publicKey", null);
-
-  /**
-   * A list of the JWT audiences expected. Leaving this blank will allow for any audience.
-   */
-  @Markdown(
-      relatedTo = "authentication.jwt.enabled",
-      description = "A list of the JWT audiences expected. Leaving this blank will allow for any audience.")
-  public static final ConfigurationProperty<String> JWT_AUDIENCES = new ConfigurationProperty<>(
-      "authentication.jwt.audiences", null);
-
-  /**
-   * The name of the cookie which will be used to extract the JWT token from the request.
-   */
-  @Markdown(
-      relatedTo = "authentication.jwt.enabled",
-      description = "The name of the cookie which will be used to extract the JWT token from the request.")
-  public static final ConfigurationProperty<String> JWT_COOKIE_NAME = new ConfigurationProperty<>(
-      "authentication.jwt.cookieName", "hadoop-jwt");
-
-  /**
-   * The original URL to use when constructing the logic URL for JWT.
-   */
-  @Markdown(
-      relatedTo = "authentication.jwt.enabled",
-      description = "The original URL to use when constructing the logic URL for JWT.")
-  public static final ConfigurationProperty<String> JWT_ORIGINAL_URL_QUERY_PARAM = new ConfigurationProperty<>(
-      "authentication.jwt.originalUrlParamName", "originalUrl");
-
   /* =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
    * Kerberos authentication-specific properties
    * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= */
@@ -1387,14 +1184,6 @@ public class Configuration {
       "authentication.kerberos.spnego.keytab.file", "/etc/security/keytabs/spnego.service.keytab");
 
   /**
-   * A comma-delimited (ordered) list of preferred user types to use when finding the Ambari user
-   * account for the user-supplied Kerberos identity during authentication via SPNEGO.
-   */
-  @Markdown(description = "A comma-delimited (ordered) list of preferred user types to use when finding the Ambari user account for the user-supplied Kerberos identity during authentication via SPNEGO")
-  public static final ConfigurationProperty<String> KERBEROS_AUTH_USER_TYPES = new ConfigurationProperty<>(
-      "authentication.kerberos.user.types", "LDAP");
-
-  /**
    * The auth-to-local rules set to use when translating a user's principal name to a local user name
    * during authentication via SPNEGO.
    */
@@ -1406,13 +1195,25 @@ public class Configuration {
    * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= */
 
 
-  @Markdown(description = "The number of times failed kerberos operations should be retried to execute.")
+  @Markdown(description = "The number of times failed Kerberos operations should be retried to execute.")
   public static final ConfigurationProperty<Integer> KERBEROS_OPERATION_RETRIES = new ConfigurationProperty<>(
       "kerberos.operation.retries", 3);
 
-  @Markdown(description = "The time to wait (in seconds) between failed kerberos operations retries.")
+  @Markdown(description = "The time to wait (in seconds) between failed Kerberos operations retries.")
   public static final ConfigurationProperty<Integer> KERBEROS_OPERATION_RETRY_TIMEOUT = new ConfigurationProperty<>(
       "kerberos.operation.retry.timeout", 10);
+
+  /**
+   * A flag indicating whether to validate the trust of an SSL certificate provided by a KDC when
+   * performing Kerberos operations.
+   *
+   * For example, when communicating with an Active Directory using
+   * LDAPS. The default behavior is to validate the trust.
+   */
+  @Markdown(description = "Validate the trust of the SSL certificate provided by the KDC when performing Kerberos operations over SSL.")
+  public static final ConfigurationProperty<Boolean> KERBEROS_OPERATION_VERIFY_KDC_TRUST = new ConfigurationProperty<>(
+      "kerberos.operation.verify.kdc.trust", Boolean.TRUE);
+
   /**
    * The type of connection pool to use with JDBC connections to the database.
    */
@@ -1614,7 +1415,7 @@ public class Configuration {
       "ssl.trustStore.password", null);
 
   /**
-   * The type of truststore used by the {@link JAVAX_SSL_TRUSTSTORE_TYPE} property.
+   * The type of truststore used by the {@link #JAVAX_SSL_TRUSTSTORE_TYPE} property.
    */
   @Markdown(description = "The type of truststore used by the `javax.net.ssl.trustStoreType` property.")
   public static final ConfigurationProperty<String> SSL_TRUSTSTORE_TYPE = new ConfigurationProperty<>(
@@ -1696,6 +1497,13 @@ public class Configuration {
       "server.execution.scheduler.maxDbConnections", "5");
 
   /**
+   * The maximum number of prepared statements cached per database connection.
+   */
+  @Markdown(description = "The maximum number of prepared statements cached per database connection.")
+  public static final ConfigurationProperty<String> EXECUTION_SCHEDULER_MAX_STATEMENTS_PER_CONNECTION = new ConfigurationProperty<>(
+      "server.execution.scheduler.maxStatementsPerConnection", "120");
+
+  /**
    * The tolerance, in {@link TimeUnit#MINUTES}, that Quartz will allow a misfired job to run.
    */
   @Markdown(description = "The time, in minutes, that a scheduled job can be run after its missed scheduled execution time.")
@@ -1750,7 +1558,15 @@ public class Configuration {
    */
   @Markdown(description = "The time, in milliseconds, until an external script is killed.")
   public static final ConfigurationProperty<Integer> EXTERNAL_SCRIPT_TIMEOUT = new ConfigurationProperty<>(
-      "server.script.timeout", 5000);
+      "server.script.timeout", 10000);
+
+  /**
+   * The time, in {@link TimeUnit#MILLISECONDS}, until an external script is killed.
+   * n threads will execute n/2 scripts. one extra thread is needed to gather error/output stream of external script
+   */
+  @Markdown(description = "The number of threads that should be allocated to run external script.")
+  public static final ConfigurationProperty<Integer> THREAD_POOL_SIZE_FOR_EXTERNAL_SCRIPT = new ConfigurationProperty<>(
+    "server.script.threads", 20);
 
   public static final String DEF_ARCHIVE_EXTENSION;
   public static final String DEF_ARCHIVE_CONTENT_TYPE;
@@ -1899,6 +1715,13 @@ public class Configuration {
       "agent.task.timeout", 900L);
 
   /**
+   * The time, in {@link TimeUnit#SECONDS}, before agent service check commands are killed.
+   */
+  @Markdown(description = "The time, in seconds, before agent service check commands are killed.")
+  public static final ConfigurationProperty<Long> AGENT_SERVICE_CHECK_TASK_TIMEOUT = new ConfigurationProperty<>(
+      "agent.service.check.task.timeout", 0L);
+
+  /**
    * The time, in {@link TimeUnit#SECONDS}, before package installation commands are killed.
    */
   @Markdown(description = "The time, in seconds, before package installation commands are killed.")
@@ -1920,6 +1743,13 @@ public class Configuration {
   @Markdown(description = "The time, in seconds, before a server-side operation is terminated.")
   public static final ConfigurationProperty<Integer> SERVER_TASK_TIMEOUT = new ConfigurationProperty<>(
       "server.task.timeout", 1200);
+
+  /**
+   * A location of hooks folder relative to resources folder.
+   */
+  @Markdown(description = "A location of hooks folder relative to resources folder.")
+  public static final ConfigurationProperty<String> HOOKS_FOLDER = new ConfigurationProperty<>(
+      "stack.hooks.folder", "stack-hooks");
 
   /**
    * The location on the Ambari Server where custom actions are defined.
@@ -1953,7 +1783,9 @@ public class Configuration {
   public static final ConfigurationProperty<String> SYS_PREPPED_HOSTS = new ConfigurationProperty<>(
       "packages.pre.installed", "false");
 
-  private static final String LDAP_ADMIN_GROUP_MAPPING_MEMBER_ATTR_DEFAULT = "";
+  @Markdown(description = "This property is used in specific testing circumstances only. Its use otherwise will lead to very unpredictable results with repository management and package installation")
+  public static final ConfigurationProperty<String> LEGACY_OVERRIDE = new ConfigurationProperty<>(
+    "repositories.legacy-override.enabled", "false");
 
   /**
    * The time, in {@link TimeUnit#MILLISECONDS}, that agent connections can remain open and idle.
@@ -1990,6 +1822,91 @@ public class Configuration {
       markdown = @Markdown(description = "The size of the Jetty connection pool used for handling incoming Ambari Agent requests."))
   public static final ConfigurationProperty<Integer> AGENT_THREADPOOL_SIZE = new ConfigurationProperty<>(
       "agent.threadpool.size.max", 25);
+
+  /**
+   * The thread pool size for spring messaging.
+   */
+  @Markdown(description = "Thread pool size for spring messaging")
+  public static final ConfigurationProperty<Integer> MESSAGING_THREAD_POOL_SIZE = new ConfigurationProperty<>(
+      "messaging.threadpool.size", 10);
+
+  /**
+   * The thread pool size for agents registration.
+   */
+  @Markdown(description = "Thread pool size for agents registration")
+  public static final ConfigurationProperty<Integer> REGISTRATION_THREAD_POOL_SIZE = new ConfigurationProperty<>(
+      "registration.threadpool.size", 10);
+
+  /**
+   * Maximal cache size for spring subscription registry.
+   */
+  @Markdown(description = "Maximal cache size for spring subscription registry.")
+  public static final ConfigurationProperty<Integer> SUBSCRIPTION_REGISTRY_CACHE_MAX_SIZE = new ConfigurationProperty<>(
+      "subscription.registry.cache.size", 1500);
+
+  /**
+   * Queue size for agents in registration.
+   */
+  @Markdown(description = "Queue size for agents in registration.")
+  public static final ConfigurationProperty<Integer> AGENTS_REGISTRATION_QUEUE_SIZE = new ConfigurationProperty<>(
+      "agents.registration.queue.size", 200);
+
+
+  /**
+   * Period in seconds with agents reports will be processed.
+   */
+  @Markdown(description = "Period in seconds with agents reports will be processed.")
+  public static final ConfigurationProperty<Integer> AGENTS_REPORT_PROCESSING_PERIOD = new ConfigurationProperty<>(
+      "agents.reports.processing.period", 1);
+
+  /**
+   * Timeout in seconds before start processing of agents' reports.
+   */
+  @Markdown(description = "Timeout in seconds before start processing of agents' reports.")
+  public static final ConfigurationProperty<Integer> AGENTS_REPORT_PROCESSING_START_TIMEOUT = new ConfigurationProperty<>(
+      "agents.reports.processing.start.timeout", 5);
+
+  /**
+   * Thread pool size for agents reports processing.
+   */
+  @Markdown(description = "Thread pool size for agents reports processing.")
+  public static final ConfigurationProperty<Integer> AGENTS_REPORT_THREAD_POOL_SIZE = new ConfigurationProperty<>(
+      "agents.reports.thread.pool.size", 10);
+
+  /**
+   * Server to API STOMP endpoint heartbeat interval in milliseconds.
+   */
+  @Markdown(description = "Server to API STOMP endpoint heartbeat interval in milliseconds.")
+  public static final ConfigurationProperty<Integer> API_HEARTBEAT_INTERVAL = new ConfigurationProperty<>(
+      "api.heartbeat.interval", 10000);
+
+  /**
+   * The maximum size of an incoming stomp text message. Default is 2 MB.
+   */
+  @Markdown(description = "The maximum size of an incoming stomp text message. Default is 2 MB.")
+  public static final ConfigurationProperty<Integer> STOMP_MAX_INCOMING_MESSAGE_SIZE = new ConfigurationProperty<>(
+      "stomp.max_incoming.message.size", 2*1024*1024);
+
+  /**
+   * The maximum size of a buffer for stomp message sending. Default is 5 MB.
+   */
+  @Markdown(description = "The maximum size of a buffer for stomp message sending. Default is 5 MB.")
+  public static final ConfigurationProperty<Integer> STOMP_MAX_BUFFER_MESSAGE_SIZE = new ConfigurationProperty<>(
+      "stomp.max_buffer.message.size", 5*1024*1024);
+
+  /**
+   * The number of attempts to emit execution command message to agent. Default is 4
+   */
+  @Markdown(description = "The number of attempts to emit execution command message to agent. Default is 4")
+  public static final ConfigurationProperty<Integer> EXECUTION_COMMANDS_RETRY_COUNT = new ConfigurationProperty<>(
+      "execution.command.retry.count", 4);
+
+  /**
+   * The interval in seconds between attempts to emit execution command message to agent. Default is 15
+   */
+  @Markdown(description = "The interval in seconds between attempts to emit execution command message to agent. Default is 15")
+  public static final ConfigurationProperty<Integer> EXECUTION_COMMANDS_RETRY_INTERVAL = new ConfigurationProperty<>(
+      "execution.command.retry.interval", 15);
 
   /**
    * The maximum number of threads used to extract Ambari Views when Ambari
@@ -2170,16 +2087,6 @@ public class Configuration {
       "server.timeline.metrics.https.enabled", Boolean.FALSE);
 
   /**
-   * Governs the use of {@link Parallel} to process {@link StageEntity}
-   * instances into {@link Stage}.
-   */
-  @Markdown(
-      internal = true,
-      description = "Determines whether to allow stages retrieved from the database to be processed by multiple threads.")
-  public static final ConfigurationProperty<Boolean> EXPERIMENTAL_CONCURRENCY_STAGE_PROCESSING_ENABLED = new ConfigurationProperty<>(
-      "experimental.concurrency.stage_processing.enabled", Boolean.FALSE);
-
-  /**
    * The full path to the XML file that describes the different alert templates.
    */
   @Markdown(description="The full path to the XML file that describes the different alert templates.")
@@ -2187,7 +2094,7 @@ public class Configuration {
       "alerts.template.file", null);
 
   /**
-   * The maximum number of threads which will handle published alert events.
+   * The core number of threads which will handle published alert events.
    */
   @ConfigurationMarkdown(
       group = ConfigurationGrouping.ALERTS,
@@ -2197,9 +2104,40 @@ public class Configuration {
           @ClusterScale(clusterSize = ClusterSizeType.HOSTS_100, value = "4"),
           @ClusterScale(clusterSize = ClusterSizeType.HOSTS_500, value = "4") },
       markdown = @Markdown(
+          description = "The core number of threads used to process incoming alert events. The value should be increased as the size of the cluster increases."))
+  public static final ConfigurationProperty<Integer> ALERTS_EXECUTION_SCHEDULER_THREADS_CORE_SIZE = new ConfigurationProperty<>(
+      "alerts.execution.scheduler.threadpool.size.core", 2);
+
+  /**
+   * The maximum number of threads which will handle published alert events.
+   */
+  @ConfigurationMarkdown(
+      group = ConfigurationGrouping.ALERTS,
+      scaleValues = {
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_10, value = "2"),
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_50, value = "2"),
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_100, value = "8"),
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_500, value = "8") },
+      markdown = @Markdown(
           description = "The number of threads used to handle alerts received from the Ambari Agents. The value should be increased as the size of the cluster increases."))
-  public static final ConfigurationProperty<Integer> ALERTS_EXECUTION_SCHEDULER_THREADS = new ConfigurationProperty<>(
-      "alerts.execution.scheduler.maxThreads", 2);
+  public static final ConfigurationProperty<Integer> ALERTS_EXECUTION_SCHEDULER_THREADS_MAX_SIZE = new ConfigurationProperty<>(
+      "alerts.execution.scheduler.threadpool.size.max", 2);
+
+  /**
+   * The size of the {@link BlockingQueue} used to control the
+   * {@link ScalingThreadPoolExecutor} when handling incoming alert events.
+   */
+  @ConfigurationMarkdown(
+      group = ConfigurationGrouping.ALERTS,
+      scaleValues = {
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_10, value = "400"),
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_50, value = "2000"),
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_100, value = "4000"),
+          @ClusterScale(clusterSize = ClusterSizeType.HOSTS_500, value = "20000") },
+      markdown = @Markdown(
+          description = "The number of queued alerts allowed before discarding old alerts which have not been handled. The value should be increased as the size of the cluster increases."))
+  public static final ConfigurationProperty<Integer> ALERTS_EXECUTION_SCHEDULER_WORKER_QUEUE_SIZE = new ConfigurationProperty<>(
+      "alerts.execution.scheduler.threadpool.worker.size", 2000);
 
   /**
    * If {@code true} then alert information is cached and not immediately
@@ -2341,6 +2279,15 @@ public class Configuration {
   @Markdown(description = "The value that will be used to set the `Cache-Control` HTTP response header for Ambari View requests.")
   public static final ConfigurationProperty<String> VIEWS_HTTP_CACHE_CONTROL_HEADER_VALUE = new ConfigurationProperty<>(
       "views.http.cache-control", "no-store");
+
+  /**
+   * The value that is additional classpath for the views. It will take comma separated paths. If the individual path is jar
+   * it will be included otherwise if it is a directory then all the files inside it will be included in the classpath. Directories
+   * WILL NOT BE traversed recursively
+   */
+  @Markdown(description = "Additional class path added to each Ambari View. Comma separated jars or directories")
+  public static final ConfigurationProperty<String> VIEWS_ADDITIONAL_CLASSPATH_VALUE = new ConfigurationProperty<>(
+      "views.additional.classpath", "");
 
   /**
    * The value that will be used to set the {@code PRAGMA} HTTP response header.
@@ -2531,7 +2478,6 @@ public class Configuration {
           "log4j.monitor.delay", TimeUnit.MINUTES.toMillis(5));
 
   /**
-<<<<<<< a5fdae802210ae1f8d4fed2234f1651cbe61c2b5
    * Indicates whether parallel topology task creation is enabled for blueprint cluster provisioning.
    * Defaults to <code>false</code>.
    * @see #TOPOLOGY_TASK_PARALLEL_CREATION_THREAD_COUNT
@@ -2561,17 +2507,129 @@ public class Configuration {
   public static final ConfigurationProperty<Integer> SRVR_API_ACCEPTOR_THREAD_COUNT = new ConfigurationProperty<>(
       "client.api.acceptor.count", null);
 
+  /**
+   * The time, in milliseconds, that the Ambari Server will wait while attempting to connect to the
+   * LogSearch Portal service.
+   */
+  @Markdown(description = "The time, in milliseconds, that the Ambari Server will wait while attempting to connect to the LogSearch Portal service.")
+  public static final ConfigurationProperty<Integer> LOGSEARCH_PORTAL_CONNECT_TIMEOUT = new ConfigurationProperty<>(
+          "logsearch.portal.connect.timeout", 5000);
+
+  /**
+   * The time, in milliseconds, that the Ambari Server will wait while attempting to read a response from the
+   * LogSearch Portal service.
+   */
+  @Markdown(description = "The time, in milliseconds, that the Ambari Server will wait while attempting to read a response from the LogSearch Portal service.")
+  public static final ConfigurationProperty<Integer> LOGSEARCH_PORTAL_READ_TIMEOUT = new ConfigurationProperty<>(
+    "logsearch.portal.read.timeout", 5000);
+
+  /**
+   * External logsearch portal address, can be used with internal logfeeder, as the same logsearch portal can store logs for different clusters
+   */
+  @Markdown(description = "Address of an external LogSearch Portal service. (managed outside of Ambari) Using Ambari Credential store is required for this feature (credential: 'logsearch.admin.credential')")
+  public static final ConfigurationProperty<String> LOGSEARCH_PORTAL_EXTERNAL_ADDRESS = new ConfigurationProperty<>(
+    "logsearch.portal.external.address", "");
+
+  /**
+   * Global disable flag for AmbariServer Metrics.
+   */
+  @Markdown(description = "Global disable flag for AmbariServer Metrics.")
+  public static final ConfigurationProperty<Boolean> AMBARISERVER_METRICS_DISABLE = new ConfigurationProperty<>(
+    "ambariserver.metrics.disable", false);
+
+  /**
+   * The time, in hours, that the Ambari Server will hold Log File metadata in its internal cache before making
+   *   a request to the LogSearch Portal to get the latest metadata.
+   *
+   * The logging metadata (in this case, log file names) is generally quite static, so the default should
+   *   generally be quite long.
+   *
+   */
+  @Markdown(description = "The time, in hours, that the Ambari Server will hold Log File metadata in its internal cache before making a request to the LogSearch Portal to get the latest metadata.")
+  public static final ConfigurationProperty<Integer> LOGSEARCH_METADATA_CACHE_EXPIRE_TIMEOUT = new ConfigurationProperty<>(
+    "logsearch.metadata.cache.expire.timeout", 24);
+
+  /**
+   * The time, in seconds, that the ambari-server Python script will wait for
+   * Jetty to startup before returning an error code.
+   */
+  @Markdown(description = "The time, in seconds, that the ambari-server Python script will wait for Jetty to startup before returning an error code.")
+  public static final ConfigurationProperty<Integer> SERVER_STARTUP_WEB_TIMEOUT = new ConfigurationProperty<>(
+    "server.startup.web.timeout", 50);
+
+  /**
+   * The Ephemeral TLS Diffie-Hellman (DH) key size.
+   * Supported from Java 8.
+   */
+  @Markdown(description = "The Ephemeral TLS Diffie-Hellman (DH) key size. Supported from Java 8.")
+  public static final ConfigurationProperty<Integer> TLS_EPHEMERAL_DH_KEY_SIZE = new ConfigurationProperty<>(
+    "security.server.tls.ephemeral_dh_key_size", 2048);
+
+  /**
+   * The directory for scripts which are used by the alert notification dispatcher.
+   */
+  @Markdown(description = "The directory for scripts which are used by the alert notification dispatcher.")
+  public static final ConfigurationProperty<String> DISPATCH_PROPERTY_SCRIPT_DIRECTORY = new ConfigurationProperty<>(
+          "notification.dispatch.alert.script.directory",AmbariPath.getPath("/var/lib/ambari-server/resources/scripts"));
+
+  @Markdown(description = "Whether security password encryption is enabled or not. In case it is we store passwords in their own file(s); otherwise we store passwords in the Ambari credential store.")
+  public static final ConfigurationProperty<Boolean> SECURITY_PASSWORD_ENCRYPTON_ENABLED = new ConfigurationProperty<>("security.passwords.encryption.enabled", false);
+
+  @Markdown(description="Whether to encrypt sensitive data (at rest) on service level configuration.")
+  public static final ConfigurationProperty<Boolean> SECURITY_SENSITIVE_DATA_ENCRYPTON_ENABLED = new ConfigurationProperty<>("security.server.encrypt_sensitive_data", false);
+
+  /**
+   * The maximum number of authentication attempts permitted to a local user. Once the number of failures reaches this limit the user will be locked out. 0 indicates unlimited failures
+   */
+  @Markdown(description = "The maximum number of authentication attempts permitted to a local user. Once the number of failures reaches this limit the user will be locked out. 0 indicates unlimited failures.")
+  public static final ConfigurationProperty<Integer> MAX_LOCAL_AUTHENTICATION_FAILURES = new ConfigurationProperty<>(
+    "authentication.local.max.failures", 0);
+
+  /**
+   * A flag to determine whether locked out messages are to be shown to users, if relevant, when authenticating into Ambari
+   */
+  @Markdown(description = "Show or hide whether the user account is disabled or locked out, if relevant, when an authentication attempt fails.")
+  public static final ConfigurationProperty<String> SHOW_LOCKED_OUT_USER_MESSAGE = new ConfigurationProperty<>(
+    "authentication.local.show.locked.account.messages", "false");
+
+  /**
+   * The core pool size of the executor service that runs server side alerts.
+   */
+  @Markdown(description = "The core pool size of the executor service that runs server side alerts.")
+  public static final ConfigurationProperty<Integer> SERVER_SIDE_ALERTS_CORE_POOL_SIZE = new ConfigurationProperty<>(
+          "alerts.server.side.scheduler.threadpool.size.core", 4);
+
+  /**
+   * Default value of Max number of tasks to schedule in parallel for upgrades.
+   */
+  @Markdown(description = "Default value of max number of tasks to schedule in parallel for upgrades. Upgrade packs can override this value.")
+  public static final ConfigurationProperty<Integer> DEFAULT_MAX_DEGREE_OF_PARALLELISM_FOR_UPGRADES = new ConfigurationProperty<>(
+    "stack.upgrade.default.parallelism", 100);
+
+  /**
+   * Fully qualified class name of the strategy used to form host groups for add service request layout recommendation.
+   */
+  @Markdown(description = "Fully qualified class name of the strategy used to form host groups for add service request layout recommendation.")
+  public static final ConfigurationProperty<String> ADD_SERVICE_HOST_GROUP_STRATEGY = new ConfigurationProperty<>(
+    "addservice.hostgroup.strategy", GroupByComponentsStrategy.class.getName());
+
+  /**
+   * Gets whether file-based VDF are allowed to be used.
+   */
+  @Markdown(description = "Controls whether VDF can be read from the filesystem.")
+  public static final ConfigurationProperty<Boolean> VDF_FROM_FILESYSTEM = new ConfigurationProperty<>(
+      "server.version_definition.allow_from_filesystem", Boolean.FALSE);
+
   private static final Logger LOG = LoggerFactory.getLogger(
     Configuration.class);
 
   private Properties properties;
   private Properties log4jProperties = new Properties();
+  private Set<String> propertiesToMask = null;
   private String ambariUpgradeConfigUpdatesFilePath;
   private JsonObject hostChangesJson;
   private Map<String, String> configsMap;
-  private Map<String, String> agentConfigsMap;
-  private CredentialProvider credentialProvider = null;
-  private volatile boolean credentialProviderInitialized = false;
+  private Map<String, Map<String,String>> agentConfigsMap;
   private Properties customDbProperties = null;
   private Properties customPersistenceProperties = null;
   private Long configLastModifiedDateForCustomJDBC = 0L;
@@ -2597,12 +2655,38 @@ public class Configuration {
 
   /**
    * Ldap username collision handling behavior.
-   * CONVERT - convert existing local users to LDAP users.
+   * ADD - append the new LDAP entry to the set of existing authentication methods.
+   * CONVERT - remove all authentication methods except for the new LDAP entry.
    * SKIP - skip existing local users.
    */
   public enum LdapUsernameCollisionHandlingBehavior {
+    ADD,
     CONVERT,
-    SKIP
+    SKIP;
+
+    /**
+     * Safely translates a user-supplied behavior name to a {@link LdapUsernameCollisionHandlingBehavior}.
+     * <p>
+     * If the user-supplied value is empty or invalid, the default value is returned.
+     *
+     * @param value        a user-supplied behavior name value
+     * @param defaultValue the default value
+     * @return a {@link LdapUsernameCollisionHandlingBehavior}
+     */
+    public static LdapUsernameCollisionHandlingBehavior translate(String value, LdapUsernameCollisionHandlingBehavior defaultValue) {
+      String processedValue = StringUtils.upperCase(StringUtils.trim(value));
+
+      if (StringUtils.isEmpty(processedValue)) {
+        return defaultValue;
+      } else {
+        try {
+          return valueOf(processedValue);
+        } catch (IllegalArgumentException e) {
+          LOG.warn("Invalid LDAP username collision value ({}), using the default value ({})", value, defaultValue.name().toLowerCase());
+          return defaultValue;
+        }
+      }
+    }
   }
 
   /**
@@ -2614,10 +2698,11 @@ public class Configuration {
     MYSQL("mysql"),
     DERBY("derby"),
     SQL_SERVER("sqlserver"),
-    SQL_ANYWHERE("sqlanywhere");
+    SQL_ANYWHERE("sqlanywhere"),
+    H2("h2");
 
     private static final Map<String, DatabaseType> m_mappedTypes =
-      new HashMap<String, Configuration.DatabaseType>(5);
+      new HashMap<>(5);
 
     static {
       for (DatabaseType databaseType : EnumSet.allOf(DatabaseType.class)) {
@@ -2634,7 +2719,7 @@ public class Configuration {
      * Constructor.
      *
      */
-    private DatabaseType(String databaseType) {
+    DatabaseType(String databaseType) {
       m_databaseType = databaseType;
     }
 
@@ -2669,7 +2754,7 @@ public class Configuration {
      *
      * @param name
      */
-    private ConnectionPoolType(String name) {
+    ConnectionPoolType(String name) {
       m_name = name;
     }
 
@@ -2696,13 +2781,17 @@ public class Configuration {
   public Configuration(Properties properties) {
     this.properties = properties;
 
-    agentConfigsMap = new HashMap<String, String>();
-    agentConfigsMap.put(CHECK_REMOTE_MOUNTS.getKey(), getProperty(CHECK_REMOTE_MOUNTS));
-    agentConfigsMap.put(CHECK_MOUNTS_TIMEOUT.getKey(), getProperty(CHECK_MOUNTS_TIMEOUT));
-    agentConfigsMap.put(ENABLE_AUTO_AGENT_CACHE_UPDATE.getKey(), getProperty(ENABLE_AUTO_AGENT_CACHE_UPDATE));
+    agentConfigsMap = new HashMap<>();
+    agentConfigsMap.put(AGENT_CONFIGS_DEFAULT_SECTION, new HashMap<String, String>());
 
-    configsMap = new HashMap<String, String>();
-    configsMap.putAll(agentConfigsMap);
+    Map<String,String> defaultAgentConfigsMap = agentConfigsMap.get(AGENT_CONFIGS_DEFAULT_SECTION);
+    defaultAgentConfigsMap.put(CHECK_REMOTE_MOUNTS.getKey(), getProperty(CHECK_REMOTE_MOUNTS));
+    defaultAgentConfigsMap.put(CHECK_MOUNTS_TIMEOUT.getKey(), getProperty(CHECK_MOUNTS_TIMEOUT));
+    defaultAgentConfigsMap.put(ENABLE_AUTO_AGENT_CACHE_UPDATE.getKey(), getProperty(ENABLE_AUTO_AGENT_CACHE_UPDATE));
+    defaultAgentConfigsMap.put(JAVA_HOME.getKey(), getProperty(JAVA_HOME));
+
+    configsMap = new HashMap<>();
+    configsMap.putAll(defaultAgentConfigsMap);
     configsMap.put(AMBARI_PYTHON_WRAP.getKey(), getProperty(AMBARI_PYTHON_WRAP));
     configsMap.put(SRVR_AGENT_HOSTNAME_VALIDATE.getKey(), getProperty(SRVR_AGENT_HOSTNAME_VALIDATE));
     configsMap.put(SRVR_TWO_WAY_SSL.getKey(), getProperty(SRVR_TWO_WAY_SSL));
@@ -2710,6 +2799,7 @@ public class Configuration {
     configsMap.put(SRVR_ONE_WAY_SSL_PORT.getKey(), getProperty(SRVR_ONE_WAY_SSL_PORT));
     configsMap.put(SRVR_KSTR_DIR.getKey(), getProperty(SRVR_KSTR_DIR));
     configsMap.put(SRVR_CRT_NAME.getKey(), getProperty(SRVR_CRT_NAME));
+    configsMap.put(SRVR_CRT_CHAIN_NAME.getKey(), getProperty(SRVR_CRT_CHAIN_NAME));
     configsMap.put(SRVR_KEY_NAME.getKey(), getProperty(SRVR_KEY_NAME));
     configsMap.put(SRVR_CSR_NAME.getKey(), getProperty(SRVR_CSR_NAME));
     configsMap.put(KSTR_NAME.getKey(), getProperty(KSTR_NAME));
@@ -2740,10 +2830,12 @@ public class Configuration {
     configsMap.put(LOG4JMONITOR_DELAY.getKey(), getProperty(LOG4JMONITOR_DELAY));
     configsMap.put(REQUEST_LOG_RETAINDAYS.getKey(), getProperty(REQUEST_LOG_RETAINDAYS));
     configsMap.put(EXTERNAL_SCRIPT_TIMEOUT.getKey(), getProperty(EXTERNAL_SCRIPT_TIMEOUT));
+    configsMap.put(THREAD_POOL_SIZE_FOR_EXTERNAL_SCRIPT.getKey(), getProperty(THREAD_POOL_SIZE_FOR_EXTERNAL_SCRIPT));
     configsMap.put(SHARED_RESOURCES_DIR.getKey(), getProperty(SHARED_RESOURCES_DIR));
     configsMap.put(KDC_PORT.getKey(), getProperty(KDC_PORT));
     configsMap.put(AGENT_PACKAGE_PARALLEL_COMMANDS_LIMIT.getKey(), getProperty(AGENT_PACKAGE_PARALLEL_COMMANDS_LIMIT));
     configsMap.put(PROXY_ALLOWED_HOST_PORTS.getKey(), getProperty(PROXY_ALLOWED_HOST_PORTS));
+    configsMap.put(TLS_EPHEMERAL_DH_KEY_SIZE.getKey(), getProperty(TLS_EPHEMERAL_DH_KEY_SIZE));
 
     File passFile = new File(
         configsMap.get(SRVR_KSTR_DIR.getKey()) + File.separator
@@ -2756,7 +2848,7 @@ public class Configuration {
       try {
         password = RandomStringUtils.randomAlphanumeric(Integer
             .parseInt(configsMap.get(SRVR_CRT_PASS_LEN.getKey())));
-        FileUtils.writeStringToFile(passFile, password);
+        FileUtils.writeStringToFile(passFile, password, Charset.defaultCharset());
         ShellCommandUtil.setUnixFilePermissions(
           ShellCommandUtil.MASK_OWNER_ONLY_RW, passFile.getAbsolutePath());
       } catch (IOException e) {
@@ -2767,7 +2859,7 @@ public class Configuration {
     } else {
       LOG.info("Reading password from existing file");
       try {
-        password = FileUtils.readFileToString(passFile);
+        password = FileUtils.readFileToString(passFile, Charset.defaultCharset());
         password = password.replaceAll("\\p{Cntrl}", "");
       } catch (IOException e) {
         e.printStackTrace();
@@ -2783,7 +2875,7 @@ public class Configuration {
       if (httpsPassFile.exists()) {
         LOG.info("Reading password from existing file");
         try {
-          password = FileUtils.readFileToString(httpsPassFile);
+          password = FileUtils.readFileToString(httpsPassFile, Charset.defaultCharset());
           password = password.replaceAll("\\p{Cntrl}", "");
         } catch (IOException e) {
           e.printStackTrace();
@@ -2862,8 +2954,7 @@ public class Configuration {
       System.setProperty(JAVAX_SSL_TRUSTSTORE, getProperty(SSL_TRUSTSTORE_PATH));
     }
     if (getProperty(SSL_TRUSTSTORE_PASSWORD) != null) {
-      String ts_password = readPasswordFromStore(
-          getProperty(SSL_TRUSTSTORE_PASSWORD));
+      String ts_password = PasswordUtils.getInstance().readPasswordFromStore(getProperty(SSL_TRUSTSTORE_PASSWORD), this);
       if (ts_password != null) {
         System.setProperty(JAVAX_SSL_TRUSTSTORE_PASSWORD, ts_password);
       } else {
@@ -2873,24 +2964,6 @@ public class Configuration {
     }
     if (getProperty(SSL_TRUSTSTORE_TYPE) != null) {
       System.setProperty(JAVAX_SSL_TRUSTSTORE_TYPE, getProperty(SSL_TRUSTSTORE_TYPE));
-    }
-  }
-
-  private synchronized void loadCredentialProvider() {
-    if (!credentialProviderInitialized) {
-      try {
-        credentialProvider = new CredentialProvider(null,
-          getMasterKeyLocation(),
-          isMasterKeyPersisted(),
-          getMasterKeyStoreLocation());
-      } catch (Exception e) {
-        LOG.info("Credential provider creation failed. Reason: " + e.getMessage());
-        if (LOG.isDebugEnabled()) {
-          e.printStackTrace();
-        }
-        credentialProvider = null;
-      }
-      credentialProviderInitialized = true;
     }
   }
 
@@ -2910,7 +2983,7 @@ public class Configuration {
 
     // load the properties
     try {
-      properties.load(inputStream);
+      properties.load(new InputStreamReader(inputStream, Charsets.UTF_8));
       inputStream.close();
     } catch (FileNotFoundException fnf) {
       LOG.info("No configuration file " + CONFIG_FILE + " found in classpath.", fnf);
@@ -2920,6 +2993,48 @@ public class Configuration {
     }
 
     return properties;
+  }
+
+  /**
+   * Writes the given properties into the configuration file
+   *
+   * @param propertiesToWrite
+   *          the properties to be stored
+   * @param append
+   *          if {@code true} the given properties will be added at the end of the
+   *          configuration file; otherwise a brand new configuration file will be
+   *          produced
+   * @throws AmbariException
+   *           if there was any issue when clearing ambari.properties
+   */
+  private void writeConfigFile(Properties propertiesToStore, boolean append) throws AmbariException {
+    File configFile = null;
+    try {
+      configFile = getConfigFile();
+      propertiesToStore.store(new OutputStreamWriter(new FileOutputStream(configFile, append), Charsets.UTF_8), null);
+    } catch (Exception e) {
+      LOG.error("Cannot write properties [" + propertiesToStore + "] into configuration file [" + configFile + ", " + append + "] ");
+      throw new AmbariException("Error while clearing ambari.properties", e);
+    }
+  }
+
+  /**
+   * Removing the given properties from ambari.properties (i.e. at upgrade time)
+   *
+   * @param propertiesToBeCleared
+   *          the properties to be removed
+   * @throws AmbariException
+   *           if there was any issue when clearing ambari.properties
+   */
+  public void removePropertiesFromAmbariProperties(Collection<String> propertiesToBeRemoved) throws AmbariException {
+    final Properties existingProperties = readConfigFile();
+    propertiesToBeRemoved.forEach(key -> {
+      existingProperties.remove(key);
+    });
+    writeConfigFile(existingProperties, false);
+
+    // reloading properties
+    this.properties = readConfigFile();
   }
 
   /**
@@ -2953,8 +3068,8 @@ public class Configuration {
   }
 
 
-  public void wrtiteToAmbariUpgradeConfigUpdatesFile(Multimap<AbstractUpgradeCatalog.ConfigUpdateType, Entry<String, String>> propertiesToLog,
-                                                     String configType, String serviceName, String wrtiteToAmbariUpgradeConfigUpdatesFile) {
+  public void writeToAmbariUpgradeConfigUpdatesFile(Multimap<AbstractUpgradeCatalog.ConfigUpdateType, Entry<String, String>> propertiesToLog,
+                                                     String configType, String serviceName, String writeToAmbariUpgradeConfigUpdatesFile) {
     try {
       if (ambariUpgradeConfigUpdatesFilePath == null) {
         Properties log4jProperties = getLog4jProperties();
@@ -2964,7 +3079,7 @@ public class Configuration {
           logPath = StringUtils.replace(logPath, "${ambari.root.dir}", rootPath);
           logPath = StringUtils.replace(logPath, "//", "/");
           if (StringUtils.isNotEmpty(logPath)) {
-            ambariUpgradeConfigUpdatesFilePath = logPath + File.separator + wrtiteToAmbariUpgradeConfigUpdatesFile;
+            ambariUpgradeConfigUpdatesFilePath = logPath + File.separator + writeToAmbariUpgradeConfigUpdatesFile;
           }
         } else {
           LOG.warn("Log4j properties are not available");
@@ -2997,7 +3112,9 @@ public class Configuration {
         LOG.error("Unable to write data into " + ambariUpgradeConfigUpdatesFilePath, e);
       } finally {
         try {
-          fileWriter.close();
+          if (fileWriter != null) {
+            fileWriter.close();
+          }
         } catch (IOException e) {
           LOG.error("Unable to close file " + ambariUpgradeConfigUpdatesFilePath, e);
         }
@@ -3055,16 +3172,11 @@ public class Configuration {
   }
 
   public Map<String, String> getDatabaseConnectorNames() {
-    File file = new File(Configuration.class.getClassLoader().getResource(CONFIG_FILE).getPath());
+    File file = getConfigFile();
     Long currentConfigLastModifiedDate = file.lastModified();
-    Properties properties = null;
     if (currentConfigLastModifiedDate.longValue() != configLastModifiedDateForCustomJDBC.longValue()) {
       LOG.info("Ambari properties config file changed.");
-      if (configLastModifiedDateForCustomJDBC != null) {
-        properties = readConfigFile();
-      } else {
-        properties = this.properties;
-      }
+      Properties properties = readConfigFile();
 
       for (String propertyName : dbConnectorPropertyNames) {
         String propertyValue = properties.getProperty(propertyName);
@@ -3079,17 +3191,16 @@ public class Configuration {
     return databaseConnectorNames;
   }
 
+  public File getConfigFile() {
+    return new File(Configuration.class.getClassLoader().getResource(CONFIG_FILE).getPath());
+  }
+
   public Map<String, String> getPreviousDatabaseConnectorNames() {
-    File file = new File(Configuration.class.getClassLoader().getResource(CONFIG_FILE).getPath());
+    File file = getConfigFile();
     Long currentConfigLastModifiedDate = file.lastModified();
-    Properties properties = null;
     if (currentConfigLastModifiedDate.longValue() != configLastModifiedDateForCustomJDBCToRemove.longValue()) {
       LOG.info("Ambari properties config file changed.");
-      if (configLastModifiedDateForCustomJDBCToRemove != null) {
-        properties = readConfigFile();
-      } else {
-        properties = this.properties;
-      }
+      Properties properties = readConfigFile();
 
       for (String propertyName : dbConnectorPropertyNames) {
         propertyName = "previous." + propertyName;
@@ -3115,7 +3226,7 @@ public class Configuration {
   private JsonObject readFileToJSON (String file) {
 
     // Read from File to String
-    JsonObject jsonObject = new JsonObject();
+    JsonObject jsonObject;
 
     try {
       JsonParser parser = new JsonParser();
@@ -3154,6 +3265,15 @@ public class Configuration {
    */
   public boolean isViewRemoveUndeployedEnabled() {
     return Boolean.parseBoolean(getProperty(VIEWS_REMOVE_UNDEPLOYED));
+  }
+
+  /**
+   * Determines whether the view directory watcher service should be disabled
+   *
+   * @return true view directory watcher service should be disabled
+   */
+  public boolean isViewDirectoryWatcherServiceDisabled() {
+    return Boolean.parseBoolean(getProperty(DISABLE_VIEW_DIRECTORY_WATCHER));
   }
 
   /**
@@ -3214,6 +3334,15 @@ public class Configuration {
 
   public String areHostsSysPrepped(){
     return getProperty(SYS_PREPPED_HOSTS);
+  }
+
+  /**
+   * Return {@code true} if we forced to work with legacy repositories
+   *
+   * @return {@link Boolean}
+   */
+  public boolean arePackagesLegacyOverridden(){
+    return getProperty(LEGACY_OVERRIDE).equalsIgnoreCase("true");
   }
 
   public CommandExecutionType getStageExecutionType(){
@@ -3340,7 +3469,7 @@ public class Configuration {
    * Keys - public constants of this class
    * @return the map with server config parameters related to agent configuration
    */
-  public Map<String, String> getAgentConfigsMap() {
+  public Map<String, Map<String,String>> getAgentConfigsMap() {
     return agentConfigsMap;
   }
 
@@ -3409,6 +3538,14 @@ public class Configuration {
     return getProperty(MPACKS_STAGING_DIR_PATH);
   }
 
+  /**
+   * Gets ambari v2 management packs staging directory
+   * @return String
+   */
+  public String getMpacksV2StagingPath() {
+    return getProperty(MPACKS_V2_STAGING_DIR_PATH);
+  }
+
 
   public String getServerVersionFilePath() {
     return getProperty(SERVER_VERSION_FILE);
@@ -3420,7 +3557,9 @@ public class Configuration {
    */
   public String getServerVersion() {
     try {
-      return FileUtils.readFileToString(new File(getServerVersionFilePath())).trim();
+      return FileUtils
+              .readFileToString(new File(getServerVersionFilePath()), Charset.defaultCharset())
+              .trim();
     } catch (IOException e) {
       LOG.error("Unable to read server version file", e);
     }
@@ -3648,6 +3787,19 @@ public class Configuration {
   }
 
   /**
+   * Get the comma separated additional classpath, that should be added to view's classloader.
+   * <p/>
+   * By default it will be empty. i.e. no additional classpath.
+   * If present it will be comma separated path entries. Each entry can be a file or a directory.
+   * If entry is a file it will be added as it is.
+   * If entry is a directory, all the files inside this directory will be added to the classpath.
+   * @return the view's additional classpath value - null or "" indicates that the value is not set
+   */
+  public String getViewsAdditionalClasspath() {
+    return getProperty(VIEWS_ADDITIONAL_CLASSPATH_VALUE);
+  }
+
+  /**
    * Get the value that should be set for the <code>Pragma</code> HTTP response header for Ambari Views.
    * <p/>
    * By default this will be <code>no-cache</code>. For example:
@@ -3702,6 +3854,15 @@ public class Configuration {
    */
   public boolean isApiGzipped() {
     return Boolean.parseBoolean(getProperty(API_GZIP_COMPRESSION_ENABLED));
+  }
+
+
+  /**
+   * Check to see if the API responses should be compressed via gzip or not
+   * @return false if not, true if gzip compression needs to be used.
+   */
+  public boolean isGzipHandlerEnabledForJetty() {
+    return Boolean.parseBoolean(getProperty(GZIP_HANDLER_JETTY_ENABLED));
   }
 
   /**
@@ -3764,25 +3925,31 @@ public class Configuration {
   }
 
   public String getDatabaseUser() {
+    if (getPersistenceType() == PersistenceType.IN_MEMORY) {
+      return JDBC_IN_MEMORY_USER;
+    }
     return getProperty(SERVER_JDBC_USER_NAME);
   }
 
   public String getDatabasePassword() {
+    if (getPersistenceType() == PersistenceType.IN_MEMORY) {
+      return JDBC_IN_MEMORY_PASSWORD;
+    }
     String passwdProp = properties.getProperty(SERVER_JDBC_USER_PASSWD.getKey());
     String dbpasswd = null;
     boolean isPasswordAlias = false;
     if (CredentialProvider.isAliasString(passwdProp)) {
-      dbpasswd = readPasswordFromStore(passwdProp);
+      dbpasswd = PasswordUtils.getInstance().readPasswordFromStore(passwdProp, this);
       isPasswordAlias =true;
     }
 
     if (dbpasswd != null) {
       return dbpasswd;
-    } else if (dbpasswd == null && isPasswordAlias) {
+    } else if (isPasswordAlias) {
       LOG.error("Can't read db password from keystore. Please, check master key was set correctly.");
       throw new RuntimeException("Can't read db password from keystore. Please, check master key was set correctly.");
     } else {
-      return readPasswordFromFile(passwdProp, SERVER_JDBC_USER_PASSWD.getDefaultValue());
+      return PasswordUtils.getInstance().readPasswordFromFile(passwdProp, SERVER_JDBC_USER_PASSWD.getDefaultValue());
     }
   }
 
@@ -3800,113 +3967,7 @@ public class Configuration {
 
   public String getRcaDatabasePassword() {
     String passwdProp = properties.getProperty(SERVER_JDBC_RCA_USER_PASSWD.getKey());
-    if (passwdProp != null) {
-      String dbpasswd = readPasswordFromStore(passwdProp);
-      if (dbpasswd != null) {
-        return dbpasswd;
-      }
-    }
-    return readPasswordFromFile(passwdProp, SERVER_JDBC_RCA_USER_PASSWD.getDefaultValue());
-  }
-
-  private String readPasswordFromFile(String filePath, String defaultPassword) {
-    if (filePath == null) {
-      LOG.debug("DB password file not specified - using default");
-      return defaultPassword;
-    } else {
-      LOG.debug("Reading password from file {}", filePath);
-      String password;
-      try {
-        password = FileUtils.readFileToString(new File(filePath));
-        password = StringUtils.chomp(password);
-      } catch (IOException e) {
-        throw new RuntimeException("Unable to read database password", e);
-      }
-      return password;
-    }
-  }
-
-  String readPasswordFromStore(String aliasStr) {
-    String password = null;
-    loadCredentialProvider();
-    if (credentialProvider != null) {
-      char[] result = null;
-      try {
-        result = credentialProvider.getPasswordForAlias(aliasStr);
-      } catch (AmbariException e) {
-        LOG.error("Error reading from credential store.");
-        e.printStackTrace();
-      }
-      if (result != null) {
-        password = new String(result);
-      } else {
-        LOG.error("Cannot read password for alias = " + aliasStr);
-      }
-    }
-    return password;
-  }
-
-  /**
-   * Gets parameters of LDAP server to connect to
-   * @return LdapServerProperties object representing connection parameters
-   */
-  public LdapServerProperties getLdapServerProperties() {
-    LdapServerProperties ldapServerProperties = new LdapServerProperties();
-
-    ldapServerProperties.setPrimaryUrl(getProperty(LDAP_PRIMARY_URL));
-    ldapServerProperties.setSecondaryUrl(getProperty(LDAP_SECONDARY_URL));
-    ldapServerProperties.setUseSsl(Boolean.parseBoolean(getProperty(LDAP_USE_SSL)));
-    ldapServerProperties.setAnonymousBind(Boolean.parseBoolean(getProperty(LDAP_BIND_ANONYMOUSLY)));
-    ldapServerProperties.setManagerDn(getProperty(LDAP_MANAGER_DN));
-    String ldapPasswordProperty = getProperty(LDAP_MANAGER_PASSWORD);
-    String ldapPassword = null;
-    if (CredentialProvider.isAliasString(ldapPasswordProperty)) {
-      ldapPassword = readPasswordFromStore(ldapPasswordProperty);
-    }
-    if (ldapPassword != null) {
-      ldapServerProperties.setManagerPassword(ldapPassword);
-    } else {
-      if (ldapPasswordProperty != null && new File(ldapPasswordProperty).exists()) {
-        ldapServerProperties.setManagerPassword(readPasswordFromFile(ldapPasswordProperty, ""));
-      }
-    }
-
-    ldapServerProperties.setBaseDN(getProperty(LDAP_BASE_DN));
-    ldapServerProperties.setUsernameAttribute(getProperty(LDAP_USERNAME_ATTRIBUTE));
-    ldapServerProperties.setForceUsernameToLowercase(Boolean.parseBoolean(getProperty(LDAP_USERNAME_FORCE_LOWERCASE)));
-    ldapServerProperties.setUserBase(getProperty(LDAP_USER_BASE));
-    ldapServerProperties.setUserObjectClass(getProperty(LDAP_USER_OBJECT_CLASS));
-    ldapServerProperties.setDnAttribute(getProperty(LDAP_DN_ATTRIBUTE));
-    ldapServerProperties.setGroupBase(getProperty(LDAP_GROUP_BASE));
-    ldapServerProperties.setGroupObjectClass(getProperty(LDAP_GROUP_OBJECT_CLASS));
-    ldapServerProperties.setGroupMembershipAttr(getProperty(LDAP_GROUP_MEMBERSHIP_ATTR));
-    ldapServerProperties.setGroupNamingAttr(getProperty(LDAP_GROUP_NAMING_ATTR));
-    ldapServerProperties.setAdminGroupMappingRules(getProperty(LDAP_ADMIN_GROUP_MAPPING_RULES));
-    ldapServerProperties.setAdminGroupMappingMemberAttr(getProperty(LDAP_ADMIN_GROUP_MAPPING_MEMBER_ATTR_DEFAULT));
-    ldapServerProperties.setUserSearchFilter(getProperty(LDAP_USER_SEARCH_FILTER));
-    ldapServerProperties.setAlternateUserSearchFilter(getProperty(LDAP_ALT_USER_SEARCH_FILTER));
-    ldapServerProperties.setGroupSearchFilter(getProperty(LDAP_GROUP_SEARCH_FILTER));
-    ldapServerProperties.setReferralMethod(getProperty(LDAP_REFERRAL));
-    ldapServerProperties.setSyncUserMemberReplacePattern(getProperty(LDAP_SYNC_USER_MEMBER_REPLACE_PATTERN));
-    ldapServerProperties.setSyncGroupMemberReplacePattern(getProperty(LDAP_SYCN_GROUP_MEMBER_REPLACE_PATTERN));
-    ldapServerProperties.setSyncUserMemberFilter(getProperty(LDAP_SYNC_USER_MEMBER_FILTER));
-    ldapServerProperties.setSyncGroupMemberFilter(getProperty(LDAP_SYNC_GROUP_MEMBER_FILTER));
-    ldapServerProperties.setPaginationEnabled(
-        Boolean.parseBoolean(getProperty(LDAP_PAGINATION_ENABLED)));
-
-    if (properties.containsKey(LDAP_GROUP_BASE) || properties.containsKey(LDAP_GROUP_OBJECT_CLASS)
-        || properties.containsKey(LDAP_GROUP_MEMBERSHIP_ATTR)
-        || properties.containsKey(LDAP_GROUP_NAMING_ATTR)
-        || properties.containsKey(LDAP_ADMIN_GROUP_MAPPING_RULES)
-        || properties.containsKey(LDAP_GROUP_SEARCH_FILTER)) {
-      ldapServerProperties.setGroupMappingEnabled(true);
-    }
-
-    return ldapServerProperties;
-  }
-
-  public boolean isLdapConfigured() {
-    return Boolean.parseBoolean(getProperty(IS_LDAP_CONFIGURED));
+    return PasswordUtils.getInstance().readPassword(passwdProp, SERVER_JDBC_RCA_USER_PASSWD.getDefaultValue());
   }
 
   public String getServerOsType() {
@@ -3939,6 +4000,26 @@ public class Configuration {
 
   public String getJCEName() {
     return getProperty(JCE_NAME);
+  }
+
+  public String getStackJavaHome() {
+    return getProperty(STACK_JAVA_HOME);
+  }
+
+  public String getStackJDKName() {
+    return getProperty(STACK_JDK_NAME);
+  }
+
+  public String getStackJCEName() {
+    return getProperty(STACK_JCE_NAME);
+  }
+
+  public String getStackJavaVersion() {
+    return getProperty(STACK_JAVA_VERSION);
+  }
+
+  public String getAmbariBlacklistFile() {
+    return getProperty(PROPERTY_MASK_FILE);
   }
 
   public String getServerDBName() {
@@ -4203,10 +4284,41 @@ public class Configuration {
     return Integer.parseInt(getProperty(SERVER_HTTP_RESPONSE_HEADER_SIZE));
   }
 
+  /**
+   * @return the set of properties to mask in the api that
+   * returns ambari.properties
+   */
+  public Set<String> getPropertiesToBlackList()
+  {
+    if (propertiesToMask != null) {
+      return propertiesToMask;
+    }
+    Properties blacklistProperties = new Properties();
+    String blacklistFile = getAmbariBlacklistFile();
+    propertiesToMask = new HashSet<>();
+    if(blacklistFile != null) {
+      File propertiesMaskFile = new File(blacklistFile);
+      InputStream inputStream = null;
+      if(propertiesMaskFile.exists()) {
+        try {
+          inputStream = new FileInputStream(propertiesMaskFile);
+	  blacklistProperties.load(inputStream);
+	  propertiesToMask = blacklistProperties.stringPropertyNames();
+        } catch (Exception e) {
+	  String message = String.format("Blacklist properties file %s cannot be read", blacklistFile);
+          LOG.error(message);
+        } finally {
+	  IOUtils.closeQuietly(inputStream);
+        }
+      }
+    }
+    return propertiesToMask;
+  }
+
   public Map<String, String> getAmbariProperties() {
 
     Properties properties = readConfigFile();
-    Map<String, String> ambariPropertiesMap = new HashMap<String, String>();
+    Map<String, String> ambariPropertiesMap = new HashMap<>();
 
     for(String key : properties.stringPropertyNames()) {
       ambariPropertiesMap.put(key, properties.getProperty(key));
@@ -4219,7 +4331,7 @@ public class Configuration {
     long value = SERVER_EC_CACHE_SIZE.getDefaultValue();
     if (stringValue != null) {
       try {
-        value = Long.valueOf(stringValue);
+        value = Long.parseLong(stringValue);
       } catch (NumberFormatException ignored) {
       }
 
@@ -4232,7 +4344,7 @@ public class Configuration {
    * Caching of host role command status summary can be enabled/disabled
    * through the {@link #SERVER_HRC_STATUS_SUMMARY_CACHE_ENABLED} config property.
    * This method returns the value of {@link #SERVER_HRC_STATUS_SUMMARY_CACHE_ENABLED}
-   * config property. If this config property is not defined than returns the default defined by {@link #SERVER_HRC_STATUS_SUMMARY_CACHE_ENABLED_DEFAULT}.
+   * config property.
    * @return true if caching is to be enabled otherwise false.
    */
   public boolean getHostRoleCommandStatusSummaryCacheEnabled() {
@@ -4254,8 +4366,7 @@ public class Configuration {
    * In order to avoid the cache storing host role command status summary objects exhaust
    * memory we set a max record number allowed for the cache. This limit can be configured
    * through {@link #SERVER_HRC_STATUS_SUMMARY_CACHE_SIZE} config property. The method returns
-   * the value of this config property. If this config property is not defined than
-   * the default value specified by {@link #SERVER_HRC_STATUS_SUMMARY_CACHE_SIZE_DEFAULT} is returned.
+   * the value of this config property.
    * @return the upper limit for the number of cached host role command summaries.
    */
   public long getHostRoleCommandStatusSummaryCacheSize() {
@@ -4263,7 +4374,7 @@ public class Configuration {
     long value = SERVER_HRC_STATUS_SUMMARY_CACHE_SIZE.getDefaultValue();
     if (stringValue != null) {
       try {
-        value = Long.valueOf(stringValue);
+        value = Long.parseLong(stringValue);
       }
       catch (NumberFormatException ignored) {
       }
@@ -4276,8 +4387,7 @@ public class Configuration {
   /**
    * As a safety measure the cache storing host role command status summaries should auto expire after a while.
    * The expiry duration is specified through the {@link #SERVER_HRC_STATUS_SUMMARY_CACHE_EXPIRY_DURATION} config property
-   * expressed in minutes. The method returns the value of this config property. If this config property is not defined than
-   * the default value specified by {@link #SERVER_HRC_STATUS_SUMMARY_CACHE_EXPIRY_DURATION_DEFAULT}
+   * expressed in minutes. The method returns the value of this config property.
    * @return the cache expiry duration in minutes
    */
   public long getHostRoleCommandStatusSummaryCacheExpiryDuration() {
@@ -4285,7 +4395,7 @@ public class Configuration {
     long value = SERVER_HRC_STATUS_SUMMARY_CACHE_EXPIRY_DURATION.getDefaultValue();
     if (stringValue != null) {
       try {
-        value = Long.valueOf(stringValue);
+        value = Long.parseLong(stringValue);
       }
       catch (NumberFormatException ignored) {
       }
@@ -4361,6 +4471,10 @@ public class Configuration {
     return getProperty(EXECUTION_SCHEDULER_CONNECTIONS);
   }
 
+  public String getExecutionSchedulerMaxStatementsPerConnection() {
+    return getProperty(EXECUTION_SCHEDULER_MAX_STATEMENTS_PER_CONNECTION);
+  }
+
   public Long getExecutionSchedulerMisfireToleration() {
     return Long.parseLong(getProperty(EXECUTION_SCHEDULER_MISFIRE_TOLERATION));
   }
@@ -4372,10 +4486,10 @@ public class Configuration {
   public Long getExecutionSchedulerWait() {
 
     String stringValue = getProperty(EXECUTION_SCHEDULER_WAIT);
-    Long sleepTime = EXECUTION_SCHEDULER_WAIT.getDefaultValue();
+    long sleepTime = EXECUTION_SCHEDULER_WAIT.getDefaultValue();
     if (stringValue != null) {
       try {
-        sleepTime = Long.valueOf(stringValue);
+        sleepTime = Long.parseLong(stringValue);
       } catch (NumberFormatException ignored) {
         LOG.warn("Value of {} ({}) should be a number, " +
             "falling back to default value ({})", EXECUTION_SCHEDULER_WAIT.getKey(), stringValue,
@@ -4395,6 +4509,16 @@ public class Configuration {
 
   public Integer getExternalScriptTimeout() {
     return Integer.parseInt(getProperty(EXTERNAL_SCRIPT_TIMEOUT));
+  }
+
+  //THREAD_POOL_FOR_EXTERNAL_SCRIPT
+
+  /**
+   * Get the threadpool size for external script execution
+   * @return {Integer}
+   */
+  public Integer getExternalScriptThreadPoolSize() {
+    return Integer.parseInt(getProperty(THREAD_POOL_SIZE_FOR_EXTERNAL_SCRIPT));
   }
 
   public boolean getParallelStageExecution() {
@@ -4438,6 +4562,21 @@ public class Configuration {
   }
 
   /**
+   * @return overridden service check task timeout in seconds. This value
+   *         is used at python (agent) code.
+   */
+  public Long getAgentServiceCheckTaskTimeout() {
+    String value = getProperty(AGENT_SERVICE_CHECK_TASK_TIMEOUT);
+    if (StringUtils.isNumeric(value)) {
+      return Long.parseLong(value);
+    } else {
+      LOG.warn("Value of {} ({}) should be a number, falling back to default value ({})",
+        AGENT_SERVICE_CHECK_TASK_TIMEOUT.getKey(), value, AGENT_SERVICE_CHECK_TASK_TIMEOUT.getDefaultValue());
+      return AGENT_SERVICE_CHECK_TASK_TIMEOUT.getDefaultValue();
+    }
+  }
+
+  /**
    * @return default server-side task timeout in seconds.
    */
   public Integer getDefaultServerTaskTimeout() {
@@ -4468,6 +4607,91 @@ public class Configuration {
    */
   public int getClientThreadPoolSize() {
     return Integer.parseInt(getProperty(CLIENT_THREADPOOL_SIZE));
+  }
+
+  /**
+   * @return max thread pool size for clients, default 10
+   */
+  public int getSpringMessagingThreadPoolSize() {
+    return Integer.parseInt(getProperty(MESSAGING_THREAD_POOL_SIZE));
+  }
+
+  /**
+   * @return max thread pool size for agents registration, default 10
+   */
+  public int getRegistrationThreadPoolSize() {
+    return Integer.parseInt(getProperty(REGISTRATION_THREAD_POOL_SIZE));
+  }
+
+  /**
+   * @return max cache size for spring subscription registry.
+   */
+  public int getSubscriptionRegistryCacheSize() {
+    return Integer.parseInt(getProperty(SUBSCRIPTION_REGISTRY_CACHE_MAX_SIZE));
+  }
+
+  /**
+   * @return queue size for agents in registration.
+   */
+  public int getAgentsRegistrationQueueSize() {
+    return Integer.parseInt(getProperty(AGENTS_REGISTRATION_QUEUE_SIZE));
+  }
+
+
+  /**
+   * @return period in seconds with agents reports will be processed.
+   */
+  public int getAgentsReportProcessingPeriod() {
+    return Integer.parseInt(getProperty(AGENTS_REPORT_PROCESSING_PERIOD));
+  }
+
+  /**
+   * @return timeout in seconds before start processing of agents' reports.
+   */
+  public int getAgentsReportProcessingStartTimeout() {
+    return Integer.parseInt(getProperty(AGENTS_REPORT_PROCESSING_START_TIMEOUT));
+  }
+
+  /**
+   * @return thread pool size for agents reports processing.
+   */
+  public int getAgentsReportThreadPoolSize() {
+    return Integer.parseInt(getProperty(AGENTS_REPORT_THREAD_POOL_SIZE));
+  }
+
+  /**
+   * @return server to API STOMP endpoint heartbeat interval in milliseconds.
+   */
+  public int getAPIHeartbeatInterval() {
+    return Integer.parseInt(getProperty(API_HEARTBEAT_INTERVAL));
+  }
+
+  /**
+   * @return the maximum size of an incoming stomp text message. Default is 2 MB.
+   */
+  public int getStompMaxIncomingMessageSize() {
+    return Integer.parseInt(getProperty(STOMP_MAX_INCOMING_MESSAGE_SIZE));
+  }
+
+  /**
+   * @return the maximum size of a buffer for stomp message sending. Default is 5 MB.
+   */
+  public int getStompMaxBufferMessageSize() {
+    return Integer.parseInt(getProperty(STOMP_MAX_BUFFER_MESSAGE_SIZE));
+  }
+
+  /**
+   * @return the number of attempts to emit execution command message to agent. Default is 4
+   */
+  public int getExecutionCommandsRetryCount() {
+    return Integer.parseInt(getProperty(EXECUTION_COMMANDS_RETRY_COUNT));
+  }
+
+  /**
+   * @return the interval in seconds between attempts to emit execution command message to agent. Default is 15
+   */
+  public int getExecutionCommandsRetryInterval() {
+    return Integer.parseInt(getProperty(EXECUTION_COMMANDS_RETRY_INTERVAL));
   }
 
   /**
@@ -4553,7 +4777,7 @@ public class Configuration {
 
   /**
    * Get property-providers' timeout value in milliseconds for waiting on the
-   * completion of submitted {@link Callable}s. This will return {@value 5000}
+   * completion of submitted {@link Callable}s. This will return 5000
    * if not specified.
    *
    * @return the property-providers' completion srevice timeout, in millis.
@@ -4594,10 +4818,24 @@ public class Configuration {
   }
 
   /**
+   * @return core thread pool size for AlertEventPublisher, default 2
+   */
+  public int getAlertEventPublisherCorePoolSize() {
+    return Integer.parseInt(getProperty(ALERTS_EXECUTION_SCHEDULER_THREADS_CORE_SIZE));
+  }
+
+  /**
    * @return max thread pool size for AlertEventPublisher, default 2
    */
-  public int getAlertEventPublisherPoolSize() {
-    return Integer.parseInt(getProperty(ALERTS_EXECUTION_SCHEDULER_THREADS));
+  public int getAlertEventPublisherMaxPoolSize() {
+    return Integer.parseInt(getProperty(ALERTS_EXECUTION_SCHEDULER_THREADS_MAX_SIZE));
+  }
+
+  /**
+   * @return the size of the queue for unhandled alert events
+   */
+  public int getAlertEventPublisherWorkerQueueSize() {
+    return Integer.parseInt(getProperty(ALERTS_EXECUTION_SCHEDULER_WORKER_QUEUE_SIZE));
   }
 
   /**
@@ -4659,8 +4897,6 @@ public class Configuration {
   }
 
   /**
-
-  /**
    * Gets the default KDC port to use when no port is specified in KDC hostname
    *
    * @return the default KDC port to use.
@@ -4704,10 +4940,9 @@ public class Configuration {
    * @return true if ambari need to skip existing user during LDAP sync.
    */
   public LdapUsernameCollisionHandlingBehavior getLdapSyncCollisionHandlingBehavior() {
-    if (getProperty(LDAP_SYNC_USERNAME_COLLISIONS_BEHAVIOR).toLowerCase().equals("skip")) {
-      return LdapUsernameCollisionHandlingBehavior.SKIP;
-    }
-    return LdapUsernameCollisionHandlingBehavior.CONVERT;
+    return LdapUsernameCollisionHandlingBehavior.translate(
+        getProperty(LDAP_SYNC_USERNAME_COLLISIONS_BEHAVIOR),
+        LdapUsernameCollisionHandlingBehavior.ADD);
   }
 
   /**
@@ -4734,6 +4969,8 @@ public class Configuration {
       databaseType = DatabaseType.SQL_SERVER;
     } else if (dbUrl.contains(DatabaseType.SQL_ANYWHERE.getName())) {
       databaseType = DatabaseType.SQL_ANYWHERE;
+    } else if (dbUrl.contains(DatabaseType.H2.getName())) {
+      databaseType = DatabaseType.H2;
     } else {
       throw new RuntimeException(
         "The database type could be not determined from the JDBC URL "
@@ -4760,6 +4997,8 @@ public class Configuration {
       databaseSchema = getDatabaseUser();
     } else if (databaseType.equals(DatabaseType.DERBY)) {
       databaseSchema = DEFAULT_DERBY_SCHEMA;
+    } else if (databaseType.equals(DatabaseType.H2)) {
+      databaseSchema = DEFAULT_H2_SCHEMA;
     } else {
       databaseSchema = null;
     }
@@ -4785,8 +5024,6 @@ public class Configuration {
   /**
    * Gets the minimum number of connections that should always exist in the
    * connection pool.
-   *
-   * @return default of {@value #SERVER_JDBC_CONNECTION_POOL_MIN_SIZE}
    */
   public int getConnectionPoolMinimumSize() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_MIN_SIZE));
@@ -4795,8 +5032,6 @@ public class Configuration {
   /**
    * Gets the maximum number of connections that should even exist in the
    * connection pool.
-   *
-   * @return default of {@value #SERVER_JDBC_CONNECTION_POOL_MAX_SIZE}
    */
   public int getConnectionPoolMaximumSize() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_MAX_SIZE));
@@ -4806,8 +5041,6 @@ public class Configuration {
    * Gets the maximum amount of time in seconds any connection, whether its been
    * idle or active, should even be in the pool. This will terminate the
    * connection after the expiration age and force new connections to be opened.
-   *
-   * @return default of {@value #SERVER_JDBC_CONNECTION_POOL_MAX_AGE}
    */
   public int getConnectionPoolMaximumAge() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_MAX_AGE));
@@ -4817,8 +5050,6 @@ public class Configuration {
    * Gets the maximum amount of time in seconds that an idle connection can
    * remain in the pool. This should always be greater than the value returned
    * from {@link #getConnectionPoolMaximumExcessIdle()}
-   *
-   * @return default of {@value #SERVER_JDBC_CONNECTION_POOL_MAX_IDLE_TIME}
    */
   public int getConnectionPoolMaximumIdle() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_MAX_IDLE_TIME));
@@ -4828,9 +5059,6 @@ public class Configuration {
    * Gets the maximum amount of time in seconds that connections beyond the
    * minimum pool size should remain in the pool. This should always be less
    * than than the value returned from {@link #getConnectionPoolMaximumIdle()}
-   *
-   * @return default of
-   *         {@value #SERVER_JDBC_CONNECTION_POOL_MAX_IDLE_TIME_EXCESS}
    */
   public int getConnectionPoolMaximumExcessIdle() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_MAX_IDLE_TIME_EXCESS));
@@ -4840,8 +5068,6 @@ public class Configuration {
    * Gets the number of connections that should be retrieved when the pool size
    * must increase. It's wise to set this higher than 1 since the assumption is
    * that a pool that needs to grow should probably grow by more than 1.
-   *
-   * @return default of {@value #SERVER_JDBC_CONNECTION_POOL_AQUISITION_SIZE}
    */
   public int getConnectionPoolAcquisitionSize() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_AQUISITION_SIZE));
@@ -4850,9 +5076,6 @@ public class Configuration {
   /**
    * Gets the number of times connections should be retried to be acquired from
    * the database before giving up.
-   *
-   * @return default of
-   *         {@value #SERVER_JDBC_CONNECTION_POOL_ACQUISITION_RETRY_ATTEMPTS}
    */
   public int getConnectionPoolAcquisitionRetryAttempts() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_ACQUISITION_RETRY_ATTEMPTS));
@@ -4860,8 +5083,6 @@ public class Configuration {
 
   /**
    * Gets the delay in milliseconds between connection acquire attempts.
-   *
-   * @return default of {@value #DEFAULT_JDBC_POOL_ACQUISITION_RETRY_DELAY}
    */
   public int getConnectionPoolAcquisitionRetryDelay() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_ACQUISITION_RETRY_DELAY));
@@ -4871,8 +5092,6 @@ public class Configuration {
   /**
    * Gets the number of seconds in between testing each idle connection in the
    * connection pool for validity.
-   *
-   * @return default of {@value #SERVER_JDBC_CONNECTION_POOL_IDLE_TEST_INTERVAL}
    */
   public int getConnectionPoolIdleTestInternval() {
     return Integer.parseInt(getProperty(SERVER_JDBC_CONNECTION_POOL_IDLE_TEST_INTERVAL));
@@ -4942,6 +5161,11 @@ public class Configuration {
     return Boolean.parseBoolean(getProperty(TIMELINE_METRICS_CACHE_DISABLE));
   }
 
+  /** @see #AMBARISERVER_METRICS_DISABLE */
+  public boolean isMetricsServiceDisabled() {
+    return Boolean.parseBoolean(getProperty(AMBARISERVER_METRICS_DISABLE));
+  }
+
   /**
    * Constant fudge factor subtracted from the cache update requests to
    * account for unavailability of data on the trailing edge due to buffering.
@@ -4968,48 +5192,6 @@ public class Configuration {
   }
 
   /**
-   * Get set of properties desribing SSO configuration (JWT)
-   */
-  public JwtAuthenticationProperties getJwtProperties() {
-    boolean enableJwt = Boolean.valueOf(getProperty(JWT_AUTH_ENABLED));
-
-    if (enableJwt) {
-      String providerUrl = getProperty(JWT_AUTH_PROVIDER_URL);
-      if (providerUrl == null) {
-        LOG.error("JWT authentication provider URL not specified. JWT auth will be disabled.", providerUrl);
-        return null;
-      }
-      String publicKeyPath = getProperty(JWT_PUBLIC);
-      if (publicKeyPath == null) {
-        LOG.error("Public key pem not specified for JWT auth provider {}. JWT auth will be disabled.", providerUrl);
-        return null;
-      }
-      try {
-        RSAPublicKey publicKey = CertificateUtils.getPublicKeyFromFile(publicKeyPath);
-        JwtAuthenticationProperties jwtProperties = new JwtAuthenticationProperties();
-        jwtProperties.setAuthenticationProviderUrl(providerUrl);
-        jwtProperties.setPublicKey(publicKey);
-
-        jwtProperties.setCookieName(getProperty(JWT_COOKIE_NAME));
-        jwtProperties.setAudiencesString(getProperty(JWT_AUDIENCES));
-        jwtProperties.setOriginalUrlQueryParam(getProperty(JWT_ORIGINAL_URL_QUERY_PARAM));
-
-        return jwtProperties;
-
-      } catch (IOException e) {
-        LOG.error("Unable to read public certificate file. JWT auth will be disabled.", e);
-        return null;
-      } catch (CertificateException e) {
-        LOG.error("Unable to parse public certificate file. JWT auth will be disabled.", e);
-        return null;
-      }
-    } else {
-      return null;
-    }
-
-  }
-
-  /**
    * Gets the Kerberos authentication-specific properties container
    *
    * @return an AmbariKerberosAuthenticationProperties
@@ -5024,19 +5206,6 @@ public class Configuration {
    */
   public String getServerTempDir() {
     return getProperty(SERVER_TMP_DIR);
-  }
-
-  /**
-   * Gets whether to use experiemental concurrent processing to convert
-   * {@link StageEntity} instances into {@link Stage} instances. The default is
-   * {@code false}.
-   *
-   * @return {code true} if the experimental feature is enabled, {@code false}
-   *         otherwise.
-   */
-  @Experimental(feature = ExperimentalFeature.PARALLEL_PROCESSING)
-  public boolean isExperimentalConcurrentStageProcessingEnabled() {
-    return Boolean.parseBoolean(getProperty(EXPERIMENTAL_CONCURRENCY_STAGE_PROCESSING_ENABLED));
   }
 
   /**
@@ -5057,9 +5226,6 @@ public class Configuration {
   /**
    * Gets the interval at which cached alert data is written out to the
    * database, if enabled.
-   *
-   * @return the cache flush interval, or
-   *         {@value #ALERTS_CACHE_FLUSH_INTERVAL_DEFAULT} if not set.
    */
   @Experimental(feature = ExperimentalFeature.ALERT_CACHING)
   public int getAlertCacheFlushInterval() {
@@ -5068,9 +5234,6 @@ public class Configuration {
 
   /**
    * Gets the size of the alerts cache, if enabled.
-   *
-   * @return the cache flush interval, or {@value #ALERTS_CACHE_SIZE_DEFAULT} if
-   *         not set.
    */
   @Experimental(feature = ExperimentalFeature.ALERT_CACHING)
   public int getAlertCacheSize() {
@@ -5092,7 +5255,7 @@ public class Configuration {
   public int getOperationsRetryAttempts() {
     final int RETRY_ATTEMPTS_LIMIT = 10;
     String property = getProperty(OPERATIONS_RETRY_ATTEMPTS);
-    Integer attempts = Integer.valueOf(property);
+    int attempts = Integer.parseInt(property);
     if (attempts < 0) {
       LOG.warn("Invalid operations retry attempts number ({}), should be [0,{}]. Value reset to default {}",
           attempts, RETRY_ATTEMPTS_LIMIT, OPERATIONS_RETRY_ATTEMPTS.getDefaultValue());
@@ -5119,6 +5282,15 @@ public class Configuration {
    */
   public int getVersionDefinitionReadTimeout() {
     return NumberUtils.toInt(getProperty(VERSION_DEFINITION_READ_TIMEOUT));
+  }
+
+  public Boolean getGplLicenseAccepted(){
+    Properties actualProps = readConfigFile();
+    String defaultGPLAcceptedValue = null;
+    if (null != GPL_LICENSE_ACCEPTED.getDefaultValue()) {
+      defaultGPLAcceptedValue = String.valueOf(GPL_LICENSE_ACCEPTED.getDefaultValue());
+    }
+    return Boolean.valueOf(actualProps.getProperty(GPL_LICENSE_ACCEPTED.getKey(), defaultGPLAcceptedValue));
   }
 
   public String getAgentStackRetryOnInstallCount(){
@@ -5165,10 +5337,6 @@ public class Configuration {
     return StringUtils.isEmpty(udpPort) ? null : Integer.parseInt(udpPort);
   }
 
-  public boolean isLdapAlternateUserSearchEnabled() {
-    return Boolean.parseBoolean(getProperty(LDAP_ALT_USER_SEARCH_ENABLED));
-  }
-
   /**
    * Gets the hosts/ports that proxy calls are allowed to be made to.
    *
@@ -5213,10 +5381,6 @@ public class Configuration {
 
   /**
    * Gets the core pool size used for the {@link MetricsRetrievalService}.
-   *
-   * @return the core pool size or
-   *         {@value #PROCESSOR_BASED_THREADPOOL_MAX_SIZE_DEFAULT} if not
-   *         specified.
    */
   public int getMetricsServiceThreadPoolCoreSize() {
     return Integer.parseInt(getProperty(METRIC_RETRIEVAL_SERVICE_THREADPOOL_CORE_SIZE));
@@ -5225,11 +5389,7 @@ public class Configuration {
   /**
    * Gets the max pool size used for the {@link MetricsRetrievalService}.
    * Threads will only be increased up to this value of the worker queue is
-   * exhauseted and rejects the new task.
-   *
-   * @return the max pool size, or
-   *         {@value PROCESSOR_BASED_THREADPOOL_MAX_SIZE_DEFAULT} if not
-   *         specified.
+   * exhausted and rejects the new task.
    * @see #getMetricsServiceWorkerQueueSize()
    */
   public int getMetricsServiceThreadPoolMaxSize() {
@@ -5312,6 +5472,96 @@ public class Configuration {
    */
   public boolean isParallelTopologyTaskCreationEnabled() {
     return Boolean.parseBoolean(getProperty(TOPOLOGY_TASK_PARALLEL_CREATION_ENABLED));
+  }
+
+  /**
+   * Get the connect timeout used for connecting to the LogSearch Portal Service
+   *
+   * @return
+   */
+  public int getLogSearchPortalConnectTimeout() {
+    return NumberUtils.toInt(getProperty(LOGSEARCH_PORTAL_CONNECT_TIMEOUT));
+  }
+
+  /**
+   * Get the read timeout used for connecting to the LogSearch Portal Service
+   *
+   * @return
+   */
+  public int getLogSearchPortalReadTimeout() {
+    return NumberUtils.toInt(getProperty(LOGSEARCH_PORTAL_READ_TIMEOUT));
+  }
+
+  /**
+   * External address of logsearch portal (managed outside of ambari)
+   * @return Address string for logsearch portal (e.g.: https://c6401.ambari.apache.org:61888)
+   */
+  public String getLogSearchPortalExternalAddress() {
+    return getProperty(LOGSEARCH_PORTAL_EXTERNAL_ADDRESS);
+  }
+
+
+  /**
+   *
+   * Get the max time, in hours, to hold data in the LogSearch
+   *   metadata cache prior to expiring the cache and re-loading
+   *   the data from the LogSearch Portal service.
+   *
+   * @return max number of hours that the LogSearch metadata is cached
+   */
+  public int getLogSearchMetadataCacheExpireTimeout() {
+    return NumberUtils.toInt(getProperty(LOGSEARCH_METADATA_CACHE_EXPIRE_TIMEOUT));
+  }
+
+  /**
+   * @return Ephemeral TLS DH key size
+   */
+  public int getTlsEphemeralDhKeySize() {
+    int keySize = NumberUtils.toInt(getProperty(TLS_EPHEMERAL_DH_KEY_SIZE));
+    if (keySize == 0) {
+      throw new IllegalArgumentException("Invalid " + TLS_EPHEMERAL_DH_KEY_SIZE + " " + getProperty(TLS_EPHEMERAL_DH_KEY_SIZE));
+    }
+    return keySize;
+  }
+
+  /**
+   * Gets the dispatch script directory.
+   *
+   * @return the dispatch script directory
+   */
+  public String getDispatchScriptDirectory() {
+    return getProperty(DISPATCH_PROPERTY_SCRIPT_DIRECTORY);
+  }
+
+  /**
+   * @return  whether security password encryption is enabled or not (defaults to {@code false})
+   */
+  public boolean isSecurityPasswordEncryptionEnabled() {
+    return Boolean.parseBoolean(getProperty(SECURITY_PASSWORD_ENCRYPTON_ENABLED));
+  }
+
+  public boolean isSensitiveDataEncryptionEnabled() {
+    return Boolean.parseBoolean(getProperty(SECURITY_SENSITIVE_DATA_ENCRYPTON_ENABLED));
+  }
+
+  public boolean shouldEncryptSensitiveData() {
+    return isSecurityPasswordEncryptionEnabled() && isSensitiveDataEncryptionEnabled();
+  }
+
+  /**
+   * @return default value of number of tasks to run in parallel during upgrades
+   */
+  public int getDefaultMaxParallelismForUpgrades() {
+    return Integer.parseInt(getProperty(DEFAULT_MAX_DEGREE_OF_PARALLELISM_FOR_UPGRADES));
+  }
+
+  /**
+   * @return The class of the host group strategy for add service requests.
+   * @throws ClassNotFoundException if the specified class is not found
+   * @throws ClassCastException if the specified class is not a subclass of {@link HostGroupStrategy}
+   */
+  public Class<? extends HostGroupStrategy> getAddServiceHostGroupStrategyClass() throws ClassNotFoundException {
+    return Class.forName(getProperty(ADD_SERVICE_HOST_GROUP_STRATEGY)).asSubclass(HostGroupStrategy.class);
   }
 
   /**
@@ -5409,7 +5659,7 @@ public class Configuration {
     // now write out specific groupings
     StringBuilder baselineBuffer = new StringBuilder(1024);
     for( ConfigurationGrouping grouping : ConfigurationGrouping.values() ){
-      baselineBuffer.append("####" + grouping);
+      baselineBuffer.append("#### ").append(grouping);
       baselineBuffer.append(System.lineSeparator());
       baselineBuffer.append("| Property Name | ");
 
@@ -5444,6 +5694,8 @@ public class Configuration {
 
         baselineBuffer.append(System.lineSeparator());
       }
+
+      baselineBuffer.append(System.lineSeparator());
     }
 
     // replace the tokens in the markdown template and write out the final MD file
@@ -5459,8 +5711,9 @@ public class Configuration {
       markdown = markdown.replace(MARKDOWN_BASELINE_VALUES_KEY, baselineBuffer.toString());
 
       File file = new File(outputFile);
-      FileUtils.writeStringToFile(file, markdown);
-      System.out.print("Successfully created " + outputFile);
+      FileUtils.writeStringToFile(file, markdown, Charset.defaultCharset());
+      System.out.println("Successfully created " + outputFile);
+      LOG.info("Successfully created {}", outputFile);
     } finally {
       IOUtils.closeQuietly(inputStream);
     }
@@ -5488,7 +5741,6 @@ public class Configuration {
     private ConfigurationProperty(String key, T defaultValue) {
       m_key = key;
       m_defaultValue = defaultValue;
-
     }
 
     /**
@@ -5570,7 +5822,7 @@ public class Configuration {
     JETTY_THREAD_POOL("Jetty API & Agent Thread Pools");
 
     /**
-     * A decription of the grouping.
+     * A description of the grouping.
      */
     private String m_description;
 
@@ -5647,7 +5899,7 @@ public class Configuration {
    */
   @Retention(RetentionPolicy.RUNTIME)
   @Target({ ElementType.TYPE, ElementType.FIELD, ElementType.METHOD })
-  static @interface ConfigurationMarkdown {
+  @interface ConfigurationMarkdown {
     /**
      * The base Markdown.
      *
@@ -5677,7 +5929,7 @@ public class Configuration {
    */
   @Retention(RetentionPolicy.RUNTIME)
   @Target({ ElementType.TYPE, ElementType.FIELD, ElementType.METHOD })
-  private static @interface ClusterScale {
+  private @interface ClusterScale {
     ClusterSizeType clusterSize();
     String value();
   }
@@ -5701,37 +5953,6 @@ public class Configuration {
     if (!kerberosAuthProperties.isKerberosAuthenticationEnabled()) {
       return kerberosAuthProperties;
     }
-
-    // Get and process the configured user type values to convert the comma-delimited string of
-    // user types into a ordered (as found in the comma-delimited value) list of UserType values.
-    String userTypes = getProperty(KERBEROS_AUTH_USER_TYPES);
-    List<UserType> orderedUserTypes = new ArrayList<UserType>();
-
-    String[] types = userTypes.split(",");
-    for (String type : types) {
-      type = type.trim();
-
-      if (!type.isEmpty()) {
-        try {
-          orderedUserTypes.add(UserType.valueOf(type.toUpperCase()));
-        } catch (IllegalArgumentException e) {
-          String message = String.format("While processing ordered user types from %s, " +
-                  "%s was found to be an invalid user type.",
-              KERBEROS_AUTH_USER_TYPES.getKey(), type);
-          LOG.error(message);
-          throw new IllegalArgumentException(message, e);
-        }
-      }
-    }
-
-    // If no user types have been specified, assume only LDAP users...
-    if (orderedUserTypes.isEmpty()) {
-      LOG.info("No (valid) user types were specified in {}. Using the default value of LOCAL.",
-          KERBEROS_AUTH_USER_TYPES.getKey());
-      orderedUserTypes.add(UserType.LDAP);
-    }
-
-    kerberosAuthProperties.setOrderedUserTypes(orderedUserTypes);
 
     // Get and process the SPNEGO principal name.  If it exists and contains the host replacement
     // indicator (_HOST), replace it with the hostname of the current host.
@@ -5775,16 +5996,14 @@ public class Configuration {
       File keytabFile = new File(kerberosAuthProperties.getSpnegoKeytabFilePath());
       if (!keytabFile.exists()) {
         String message = String.format("The SPNEGO keytab file path (%s) specified in %s does not exist. " +
-                "This will cause issues authenticating users using Kerberos.",
+                "This will cause issues authenticating users using Kerberos. . Make sure proper keytab file provided later.",
             keytabFile.getAbsolutePath(), KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey());
         LOG.error(message);
-        throw new IllegalArgumentException(message);
       } else if (!keytabFile.canRead()) {
         String message = String.format("The SPNEGO keytab file path (%s) specified in %s cannot be read. " +
-                "This will cause issues authenticating users using Kerberos.",
+                "This will cause issues authenticating users using Kerberos. . Make sure proper keytab file provided later.",
             keytabFile.getAbsolutePath(), KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey());
         LOG.error(message);
-        throw new IllegalArgumentException(message);
       }
     }
 
@@ -5795,7 +6014,6 @@ public class Configuration {
             "\t{}: {}\n" +
             "\t{}: {}\n" +
             "\t{}: {}\n" +
-            "\t{}: {}\n" +
             "\t{}: {}\n",
         KERBEROS_AUTH_ENABLED.getKey(),
         kerberosAuthProperties.isKerberosAuthenticationEnabled(),
@@ -5803,8 +6021,6 @@ public class Configuration {
         kerberosAuthProperties.getSpnegoPrincipalName(),
         KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey(),
         kerberosAuthProperties.getSpnegoKeytabFilePath(),
-        KERBEROS_AUTH_USER_TYPES.getKey(),
-        kerberosAuthProperties.getOrderedUserTypes(),
         KERBEROS_AUTH_AUTH_TO_LOCAL_RULES.getKey(),
         kerberosAuthProperties.getAuthToLocalRules());
 
@@ -5812,11 +6028,15 @@ public class Configuration {
   }
 
   public int getKerberosOperationRetries() {
-    return Integer.valueOf(getProperty(KERBEROS_OPERATION_RETRIES));
+    return Integer.parseInt(getProperty(KERBEROS_OPERATION_RETRIES));
   }
 
   public int getKerberosOperationRetryTimeout() {
-    return Integer.valueOf(getProperty(KERBEROS_OPERATION_RETRY_TIMEOUT));
+    return Integer.parseInt(getProperty(KERBEROS_OPERATION_RETRY_TIMEOUT));
+  }
+
+  public boolean validateKerberosOperationSSLCertTrust() {
+    return Boolean.parseBoolean(getProperty(KERBEROS_OPERATION_VERIFY_KDC_TRUST));
   }
 
   /**
@@ -5841,5 +6061,24 @@ public class Configuration {
 
   public String getAutoGroupCreation() {
     return getProperty(AUTO_GROUP_CREATION);
+  }
+
+  public int getMaxAuthenticationFailures() {
+    return Integer.parseInt(getProperty(MAX_LOCAL_AUTHENTICATION_FAILURES));
+  }
+
+  public boolean showLockedOutUserMessage() {
+    return Boolean.parseBoolean(getProperty(SHOW_LOCKED_OUT_USER_MESSAGE));
+  }
+
+  public int getAlertServiceCorePoolSize() {
+    return Integer.parseInt(getProperty(SERVER_SIDE_ALERTS_CORE_POOL_SIZE));
+  }
+
+  /**
+   * @return {@code true} if local files can be specified in the API to consume VDF
+   */
+  public boolean areFileVDFAllowed() {
+    return Boolean.parseBoolean(getProperty(VDF_FROM_FILESYSTEM));
   }
 }

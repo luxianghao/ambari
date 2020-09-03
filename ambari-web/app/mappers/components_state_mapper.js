@@ -36,7 +36,8 @@ App.componentsStateMapper = App.QuickDataMapper.create({
     unknown_count: 'ServiceComponentInfo.unknown_count',
     started_count: 'ServiceComponentInfo.started_count',
     total_count: 'ServiceComponentInfo.total_count',
-    host_names: 'host_names'
+    host_names: 'host_names',
+    stale_config_hosts: 'stale_config_hosts'
   },
 
   slaveModel: App.SlaveComponent,
@@ -104,33 +105,6 @@ App.componentsStateMapper = App.QuickDataMapper.create({
     'MAPREDUCE2_CLIENT': {
       map_reduce2_clients: 'INSTALLED_PATH'
     },
-    'TEZ_CLIENT': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'HIVE_CLIENT': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'FALCON_CLIENT': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'OOZIE_CLIENT': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'ZOOKEEPER_CLIENT': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'PIG': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'SQOOP': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'YARN_CLIENT': {
-      installed_clients: 'INSTALLED_PATH'
-    },
-    'HDFS_CLIENT': {
-      installed_clients: 'INSTALLED_PATH'
-    },
     'FLUME_HANDLER': {
       flume_handlers_total: 'TOTAL_PATH'
     }
@@ -141,9 +115,11 @@ App.componentsStateMapper = App.QuickDataMapper.create({
    * @return {Object}
    */
   getComponentConfig: function (componentName) {
-    var config = {};
-    var componentConfig = this.get('configMap')[componentName];
-    var paths = this.get('paths');
+    const config = {};
+    const isClient = App.StackServiceComponent.find(componentName).get('isClient');
+    const defaultValue = isClient ? { installed_clients: 'TOTAL_PATH' } : {};
+    const componentConfig = Em.getWithDefault(this.get('configMap'), componentName, defaultValue);
+    const paths = this.get('paths');
 
     for (var property in componentConfig) {
       if (paths[componentConfig[property]]) {
@@ -171,6 +147,7 @@ App.componentsStateMapper = App.QuickDataMapper.create({
     var slaves = [];
     var masters = [];
     var hasNewComponents = false;
+    var staleConfigHostsMap = App.cache.staleConfigsComponentHosts;
 
     if (json.items) {
       if (!App.isEmptyObject(Em.getWithDefault(App, 'cache.services', {}))) {
@@ -178,12 +155,9 @@ App.componentsStateMapper = App.QuickDataMapper.create({
           App.cache.services.mapProperty('host_components.length').reduce(Em.sum, 0);
       }
       json.items.forEach(function (item) {
-        var componentConfig = this.getComponentConfig(item.ServiceComponentInfo.component_name);
-        var parsedItem = this.parseIt(item, componentConfig);
-        var service = App.Service.find(item.ServiceComponentInfo.service_name);
-        var extendedModel = this.getExtendedModel(item.ServiceComponentInfo.service_name);
         var cacheService = App.cache['services'].findProperty('ServiceInfo.service_name', item.ServiceComponentInfo.service_name);
 
+        item.stale_config_hosts = staleConfigHostsMap[item.ServiceComponentInfo.component_name] || [];
         if (item.ServiceComponentInfo.category === 'CLIENT') {
           item.host_names = item.host_components.mapProperty('HostRoles.host_name');
           clients.push(this.parseIt(item, this.clientMap));
@@ -199,26 +173,138 @@ App.componentsStateMapper = App.QuickDataMapper.create({
           cacheService.client_components = clients.filterProperty('service_name', cacheService.ServiceInfo.service_name).mapProperty('component_name');
           cacheService.slave_components = slaves.filterProperty('service_name', cacheService.ServiceInfo.service_name).mapProperty('component_name');
           cacheService.master_components = masters.filterProperty('service_name', cacheService.ServiceInfo.service_name).mapProperty('component_name');
-          for (var i in parsedItem) {
-            if (service.get('isLoaded')) {
-              cacheService[i] = parsedItem[i];
-              service.set(stringUtils.underScoreToCamelCase(i), parsedItem[i]);
-              if (extendedModel && extendedModel.get('isLoaded')) {
-                extendedModel.set(stringUtils.underScoreToCamelCase(i), parsedItem[i]);
-              }
-            }
-          }
         }
+
+        this.mapExtendedModelComponents(item);
       }, this);
     }
-    App.store.loadMany(this.clientModel, clients);
-    App.store.loadMany(this.slaveModel, slaves);
-    App.store.loadMany(this.masterModel, masters);
+    App.store.safeLoadMany(this.clientModel, clients);
+    App.store.safeLoadMany(this.slaveModel, slaves);
+    App.store.safeLoadMany(this.masterModel, masters);
 
     if (hasNewComponents) {
       App.get('router.clusterController').triggerQuickLinksUpdate();
     }
 
     console.timeEnd('App.componentsStateMapper execution time');
+  },
+
+  /**
+   *
+   * @param {object} item
+   */
+  mapExtendedModelComponents: function(item) {
+    const serviceName = item.ServiceComponentInfo.service_name;
+    const service = App.Service.find(serviceName);
+    const cacheService = App.cache['services'].findProperty('ServiceInfo.service_name', serviceName);
+    const extendedModel = this.getExtendedModel(serviceName);
+    const parsedItem = this.parseIt(item, this.getComponentConfig(item.ServiceComponentInfo.component_name));
+
+    if (cacheService) {
+      for (let i in parsedItem) {
+        if (service.get('isLoaded')) {
+          cacheService[i] = parsedItem[i];
+          service.set(stringUtils.underScoreToCamelCase(i), parsedItem[i]);
+          if (extendedModel && extendedModel.get('isLoaded')) {
+            extendedModel.set(stringUtils.underScoreToCamelCase(i), parsedItem[i]);
+          }
+        }
+      }
+    }
+  },
+
+  /**
+   *
+   * @param {string} componentName
+   * @param {Array} hosts
+   */
+  updateStaleConfigsHosts: function(componentName, hosts) {
+    const staleConfigHostsMap = App.cache.staleConfigsComponentHosts;
+    const model = App.ClientComponent.getModelByComponentName(componentName);
+
+    staleConfigHostsMap[componentName] = hosts;
+    if (model) {
+      model.set('staleConfigHosts', hosts);
+    }
+  },
+
+  /**
+   * used to synchronize updates from websocket with updates from REST API
+   * @param {App.ClientComponent} model
+   * @returns {{ServiceComponentInfo: {component_name, service_name, installed_count, install_failed_count, init_count, unknown_count, started_count, total_count}}}
+   */
+  componentStateToJSON: function(model) {
+    return {
+      ServiceComponentInfo: {
+        component_name: model.get('componentName'),
+        service_name: model.get('service.serviceName'),
+        installed_count: model.get('installedCount'),
+        install_failed_count: model.get('installFailedCount'),
+        init_count: model.get('initCount'),
+        unknown_count: model.get('unknownCount'),
+        started_count: model.get('startedCount'),
+        total_count: model.get('totalCount')
+      }
+    };
+  },
+
+  /**
+   * @param {object} componentState
+   */
+  updateComponentCountOnStateChange: function(componentState) {
+    const model = App.ClientComponent.getModelByComponentName(componentState.componentName);
+    const acceptedStates = ['STARTED', 'INSTALLED', 'INIT', 'UNKNOWN', 'INSTALL_FAILED'];
+
+    if (model && model.get('isLoaded') && componentState.currentState) {
+      if (acceptedStates.contains(componentState.previousState)) {
+        const previousStateProp = this.statusToProperty(componentState.previousState);
+        model.set(previousStateProp, model.get(previousStateProp) - 1);
+      }
+
+      if (acceptedStates.contains(componentState.currentState)) {
+        const currentStateProp = this.statusToProperty(componentState.currentState);
+        model.set(currentStateProp, model.get(currentStateProp) + 1);
+      }
+      this.mapExtendedModelComponents(this.componentStateToJSON(model));
+    }
+  },
+
+  /**
+   * @param {object} componentState
+   */
+  updateComponentCountOnDelete: function(componentState) {
+    const model = App.ClientComponent.getModelByComponentName(componentState.componentName);
+    const acceptedStates = ['STARTED', 'INSTALLED', 'INIT', 'UNKNOWN', 'INSTALL_FAILED'];
+
+    if (model) {
+      if (acceptedStates.contains(componentState.lastComponentState)) {
+        const currentStateProp = this.statusToProperty(componentState.lastComponentState);
+        model.set(currentStateProp, model.get(currentStateProp) - 1);
+      }
+      model.set('totalCount', model.get('totalCount') - 1);
+      this.mapExtendedModelComponents(this.componentStateToJSON(model));
+    }
+  },
+
+  /**
+   * @param {object} componentState
+   */
+  updateComponentCountOnCreate: function(componentState) {
+    const model = App.ClientComponent.getModelByComponentName(componentState.componentName);
+
+    if (model && model.get('isLoaded')) {
+      model.set('initCount', model.get('initCount') + 1);
+      model.set('totalCount', model.get('totalCount') + 1);
+      this.mapExtendedModelComponents(this.componentStateToJSON(model));
+    }
+  },
+
+  /**
+   *
+   * @param {string} status
+   * @returns {string}
+   */
+  statusToProperty: function(status) {
+    return stringUtils.underScoreToCamelCase(status.toLowerCase() + "_count");
   }
 });

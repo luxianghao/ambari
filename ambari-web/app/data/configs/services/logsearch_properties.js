@@ -166,9 +166,37 @@ module.exports = [
   },
   {
     "category": "Advanced logfeeder-log4j",
+    "name": "logfeeder_log_maxfilesize",
     "filename": "logfeeder-log4j.xml",
     "index": 1,
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logfeeder-log4j",
+    "name": "logfeeder_log_maxbackupindex",
+    "filename": "logfeeder-log4j.xml",
+    "index": 2,
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logfeeder-log4j",
+    "name": "logfeeder_json_log_maxfilesize",
+    "filename": "logfeeder-log4j.xml",
+    "index": 3,
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logfeeder-log4j",
+    "name": "logfeeder_json_log_maxbackupindex",
+    "filename": "logfeeder-log4j.xml",
+    "index": 4,
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logfeeder-log4j",
     "name": "content",
+    "filename": "logfeeder-log4j.xml",
+    "index": 5,
     "serviceName": "LOGSEARCH"
   },
   {
@@ -217,125 +245,97 @@ module.exports = [
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
     "index": 1,
-    "name": "logsearch_ui_protocol",
-    "serviceName": "LOGSEARCH"
-  },
-  {
-    "category": "Advanced logsearch-env",
-    "filename": "logsearch-env.xml",
-    "index": 2,
-    "name": "logsearch_ui_port",
-    "serviceName": "LOGSEARCH"
-  },
-  {
-    "category": "Advanced logsearch-env",
-    "filename": "logsearch-env.xml",
-    "index": 3,
     "name": "logsearch_log_dir",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 4,
+    "index": 2,
     "name": "logsearch_pid_dir",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 5,
+    "index": 3,
     "name": "logsearch_app_max_memory",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 6,
-    "name": "logsearch_solr_audit_logs_zk_node",
-    "serviceName": "LOGSEARCH"
-  },
-  {
-    "category": "Advanced logsearch-env",
-    "filename": "logsearch-env.xml",
-    "index": 7,
-    "name": "logsearch_solr_audit_logs_zk_quorum",
-    "serviceName": "LOGSEARCH"
-  },
-  {
-    "category": "Advanced logsearch-env",
-    "filename": "logsearch-env.xml",
-    "index": 8,
+    "index": 4,
     "name": "logsearch_debug_enabled",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 9,
+    "index": 5,
     "name": "logsearch_debug_port",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 10,
+    "index": 6,
     "name": "logsearch_truststore_location",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 11,
+    "index": 7,
     "name": "logsearch_truststore_type",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 12,
+    "index": 8,
     "name": "logsearch_truststore_password",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 13,
+    "index": 9,
     "name": "logsearch_keystore_location",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 14,
+    "index": 10,
     "name": "logsearch_keystore_type",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 15,
+    "index": 11,
     "name": "logsearch_keystore_password",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 16,
+    "index": 12,
     "name": "logsearch_kerberos_keytab",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 17,
+    "index": 13,
     "name": "logsearch_kerberos_principal",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-env",
     "filename": "logsearch-env.xml",
-    "index": 18,
+    "index": 14,
     "name": "content",
     "serviceName": "LOGSEARCH"
   },
@@ -343,6 +343,62 @@ module.exports = [
     "category": "Advanced logsearch-log4j",
     "filename": "logsearch-log4j.xml",
     "index": 1,
+    "name": "logsearch_log_maxfilesize",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 2,
+    "name": "logsearch_log_maxbackupindex",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 3,
+    "name": "logsearch_json_log_maxfilesize",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 4,
+    "name": "logsearch_json_log_maxbackupindex",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 5,
+    "name": "logsearch_audit_log_maxfilesize",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 6,
+    "name": "logsearch_audit_log_maxbackupindex",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 7,
+    "name": "logsearch_perf_log_maxfilesize",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 8,
+    "name": "logsearch_perf_log_maxbackupindex",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-log4j",
+    "filename": "logsearch-log4j.xml",
+    "index": 9,
     "name": "content",
     "serviceName": "LOGSEARCH"
   },
@@ -371,126 +427,154 @@ module.exports = [
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 1,
-    "name": "logsearch.solr.collection.service.logs",
+    "name": "logsearch.http.port",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 2,
-    "name": "logsearch.service.logs.fields",
+    "name": "logsearch.https.port",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 3,
-    "name": "logsearch.service.logs.split.interval.mins",
+    "name": "logsearch.protocol",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 4,
-    "name": "logsearch.solr.collection.audit.logs",
+    "name": "logsearch.solr.collection.service.logs",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 5,
-    "name": "logsearch.audit.logs.split.interval.mins",
+    "name": "logsearch.service.logs.fields",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 6,
-    "name": "logsearch.solr.audit.logs.use.ranger",
+    "name": "logsearch.service.logs.split.interval.mins",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 7,
-    "name": "logsearch.ranger.audit.logs.collection.name",
+    "name": "logsearch.solr.collection.audit.logs",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 8,
-    "name": "logsearch.solr.metrics.collector.hosts",
+    "name": "logsearch.audit.logs.split.interval.mins",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 9,
-    "name": "logsearch.auth.external_auth.enable",
+    "name": "logsearch.solr.audit.logs.use.ranger",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 10,
-    "name": "logsearch.auth.external_auth.host_url",
+    "name": "logsearch.ranger.audit.logs.collection.name",
     "serviceName": "LOGSEARCH"
   },
   {
     "category": "Advanced logsearch-properties",
     "filename": "logsearch-properties.xml",
     "index": 11,
+    "name": "logsearch.solr.metrics.collector.hosts",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-properties",
+    "filename": "logsearch-properties.xml",
+    "index": 12,
+    "name": "logsearch.auth.external_auth.enable",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-properties",
+    "filename": "logsearch-properties.xml",
+    "index": 13,
+    "name": "logsearch.auth.external_auth.host_url",
+    "serviceName": "LOGSEARCH"
+  },
+  {
+    "category": "Advanced logsearch-properties",
+    "filename": "logsearch-properties.xml",
+    "index": 14,
     "name": "logsearch.auth.external_auth.login_url",
     "serviceName": "LOGSEARCH"
   },
   {
-    "name": "logsearch.auth.jwt.audiances",
-    "serviceName": "LOGSEARCH",
-    "filename": "logsearch-properties.xml",
-    "category": "Advanced logsearch-properties",
-    "index": 12
-  },
-  {
-    "name": "logsearch.auth.jwt.cookie.name",
-    "serviceName": "LOGSEARCH",
-    "filename": "logsearch-properties.xml",
-    "category": "Advanced logsearch-properties",
-    "index": 13
-  },
-  {
-    "name": "logsearch.auth.jwt.query.param.original_url",
-    "serviceName": "LOGSEARCH",
-    "filename": "logsearch-properties.xml",
-    "category": "Advanced logsearch-properties",
-    "index": 14
-  },
-  {
-    "name": "logsearch.spnego.kerberos.enabled",
+    "name": "logsearch.roles.allowed",
     "serviceName": "LOGSEARCH",
     "filename": "logsearch-properties.xml",
     "category": "Advanced logsearch-properties",
     "index": 15
   },
   {
-    "name": "logsearch.spnego.kerberos.keytab",
+    "name": "logsearch.auth.jwt.audiances",
     "serviceName": "LOGSEARCH",
     "filename": "logsearch-properties.xml",
     "category": "Advanced logsearch-properties",
     "index": 16
   },
   {
-    "name": "logsearch.spnego.kerberos.principal",
+    "name": "logsearch.auth.jwt.cookie.name",
     "serviceName": "LOGSEARCH",
     "filename": "logsearch-properties.xml",
     "category": "Advanced logsearch-properties",
     "index": 17
   },
   {
-    "name": "logsearch.spnego.kerberos.host",
+    "name": "logsearch.auth.jwt.query.param.original_url",
     "serviceName": "LOGSEARCH",
     "filename": "logsearch-properties.xml",
     "category": "Advanced logsearch-properties",
     "index": 18
+  },
+  {
+    "name": "logsearch.spnego.kerberos.enabled",
+    "serviceName": "LOGSEARCH",
+    "filename": "logsearch-properties.xml",
+    "category": "Advanced logsearch-properties",
+    "index": 19
+  },
+  {
+    "name": "logsearch.spnego.kerberos.keytab",
+    "serviceName": "LOGSEARCH",
+    "filename": "logsearch-properties.xml",
+    "category": "Advanced logsearch-properties",
+    "index": 20
+  },
+  {
+    "name": "logsearch.spnego.kerberos.principal",
+    "serviceName": "LOGSEARCH",
+    "filename": "logsearch-properties.xml",
+    "category": "Advanced logsearch-properties",
+    "index": 21
+  },
+  {
+    "name": "logsearch.spnego.kerberos.host",
+    "serviceName": "LOGSEARCH",
+    "filename": "logsearch-properties.xml",
+    "category": "Advanced logsearch-properties",
+    "index": 22
   }
 ];

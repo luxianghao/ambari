@@ -17,6 +17,7 @@
  */
 
 var App = require('app');
+var chartUtils = require('utils/chart_utils');
 
 App.GaugeWidgetView = Em.View.extend(App.WidgetMixin, {
   templateName: require('templates/common/widget/gauge_widget'),
@@ -60,8 +61,8 @@ App.GaugeWidgetView = Em.View.extend(App.WidgetMixin, {
   }.property('value'),
 
   chartView: App.ChartPieView.extend({
-    stroke: '#D6DDDF',  //light grey
-    innerR: 25,
+    stroke: '#transparent',
+    innerR: 40,
 
     /**
      * since chart widget using percentage values factor equal 100
@@ -87,7 +88,7 @@ App.GaugeWidgetView = Em.View.extend(App.WidgetMixin, {
     centerTextColor: Em.computed.alias('contentColor'),
 
     palette: new Rickshaw.Color.Palette({
-      scheme: ['#FFFFFF', '#D6DDDF'].reverse()
+      scheme: chartUtils.getColorSchemeForGaugeWidget()
     }),
 
     data: function () {
@@ -105,20 +106,18 @@ App.GaugeWidgetView = Em.View.extend(App.WidgetMixin, {
       var color_orange = App.healthStatusOrange;
       if ((isNaN(threshold1) && isNaN(threshold2)) || (isNaN(threshold1) && used <= threshold2) || (isNaN(threshold2) && used <= threshold1) || (!isNaN(threshold2) && (threshold1 > threshold2) && (used > threshold1)) || (!isNaN(threshold2) && (threshold1 < threshold2) && (used <= threshold1))) {
         this.set('palette', new Rickshaw.Color.Palette({
-          scheme: ['#FFFFFF', color_green].reverse()
+          scheme: chartUtils.getColorSchemeForGaugeWidget(color_green)
         }));
-        return color_green;
       } else if ((!isNaN(threshold2) && used.isInRange(threshold1, threshold2)) || (isNaN(threshold2) && used > threshold1)) {
         this.set('palette', new Rickshaw.Color.Palette({
-          scheme: ['#FFFFFF', color_orange].reverse()
+          scheme: chartUtils.getColorSchemeForGaugeWidget(color_orange)
         }));
-        return color_orange;
       } else {
         this.set('palette', new Rickshaw.Color.Palette({
-          scheme: ['#FFFFFF', color_red].reverse()
+          scheme: chartUtils.getColorSchemeForGaugeWidget(color_red)
         }));
-        return color_red;
       }
+      return App.widgetContentColor;
     }.property('parentView.value', 'warningThreshold', 'errorThreshold'),
 
     // refresh text and color when data in model changed

@@ -25,13 +25,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.agent.stomp.AgentConfigsHolder;
 import org.apache.ambari.server.audit.AuditLoggerModule;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.ControllerModule;
 import org.apache.ambari.server.controller.KerberosHelper;
+import org.apache.ambari.server.ldap.LdapModule;
 import org.apache.ambari.server.orm.dao.AlertDefinitionDAO;
 import org.apache.ambari.server.orm.dao.AlertsDAO;
 import org.apache.ambari.server.orm.dao.ClusterDAO;
@@ -53,8 +57,8 @@ import org.apache.ambari.server.orm.entities.TopologyRequestEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.Clusters;
 import org.apache.ambari.server.state.Config;
+import org.apache.ambari.server.state.ConfigFactory;
 import org.apache.ambari.server.state.ConfigHelper;
-import org.apache.ambari.server.state.ConfigImpl;
 import org.apache.ambari.server.state.Host;
 import org.apache.ambari.server.utils.EventBusSynchronizer;
 import org.apache.commons.lang.StringUtils;
@@ -86,6 +90,7 @@ public class HostUpdateHelper {
           (HostUpdateHelper.class);
 
   private static final String AUTHENTICATED_USER_NAME = "ambari-host-update";
+  public static final String TMP_PREFIX = "tmpvalue";
 
 
   private PersistService persistService;
@@ -216,6 +221,7 @@ public class HostUpdateHelper {
 
       // going through all clusters with host pairs from file
       for (Map.Entry<String, Map<String,String>> clusterHosts : hostChangesFileMap.entrySet()) {
+        boolean hostConfigsUpdated = false;
         String clusterName = clusterHosts.getKey();
         ClusterEntity clusterEntity = clusterDAO.findByName(clusterName);
         Cluster cluster = clusters.getCluster(clusterName);
@@ -234,12 +240,12 @@ public class HostUpdateHelper {
           boolean configUpdated;
 
           // going through all cluster configs and update property values
+          ConfigFactory configFactory = injector.getInstance(ConfigFactory.class);
           for (ClusterConfigEntity clusterConfigEntity : clusterConfigEntities) {
-            ConfigImpl config = new ConfigImpl(cluster, clusterConfigEntity, injector);
+            Config config = configFactory.createExisting(cluster, clusterConfigEntity);
             configUpdated = false;
 
             for (Map.Entry<String,String> property : config.getProperties().entrySet()) {
-
               updatedPropertyValue = replaceHosts(property.getValue(), currentHostNames, hostMapping);
 
               if (updatedPropertyValue != null) {
@@ -249,10 +255,17 @@ public class HostUpdateHelper {
                 configUpdated = true;
               }
             }
+
             if (configUpdated) {
-              config.persist(false);
+              hostConfigsUpdated = true;
+              config.save();
             }
           }
+        }
+        if (hostConfigsUpdated) {
+          AgentConfigsHolder agentConfigsHolder = injector.getInstance(AgentConfigsHolder.class);
+          agentConfigsHolder.updateData(cluster.getClusterId(), currentHostNames.stream()
+              .map(hm -> cluster.getHost(hm).getHostId()).collect(Collectors.toList()));
         }
 
         //******************************
@@ -281,7 +294,7 @@ public class HostUpdateHelper {
       for (String hostName : hostListForReplace) {
         String code = String.format("{replace_code_%d}", counter++);
         hostNameCode.put(hostName, code);
-        updatedPropertyValue = updatedPropertyValue.replace(hostName, code);
+        updatedPropertyValue = updatedPropertyValue.replaceAll("(?i)"+ Pattern.quote(hostName), code);
       }
 
       // replace codes with new host names according to ald host names
@@ -303,7 +316,7 @@ public class HostUpdateHelper {
 
     if (value != null && hostNames != null && !value.isEmpty()) {
       for (String host : hostNames) {
-        if (value.contains(host)) {
+        if (StringUtils.containsIgnoreCase(value, host)) {
           includedHostNames.add(host);
         }
       }
@@ -317,6 +330,7 @@ public class HostUpdateHelper {
   * */
   public class StringComparator implements Comparator<String> {
 
+    @Override
     public int compare(String s1, String s2) {
       return s2.length() - s1.length();
     }
@@ -362,7 +376,7 @@ public class HostUpdateHelper {
     for (Map.Entry<String, JsonElement> clusterEntry : hostChangesJsonObject.entrySet()) {
       try {
         Gson gson = new Gson();
-        hostChangesFileMap.put(clusterEntry.getKey(), gson.fromJson(clusterEntry.getValue(), Map.class));
+        hostChangesFileMap.put(clusterEntry.getKey(), gson.<Map<String, String>>fromJson(clusterEntry.getValue(), Map.class));
       } catch(Exception e) {
         throw new AmbariException("Error occurred during mapping Json to Map structure. Please check json structure in file.", e);
       }
@@ -390,20 +404,31 @@ public class HostUpdateHelper {
     for (Map.Entry<String, Map<String,String>> clusterHosts : hostChangesFileMap.entrySet()) {
       String clusterName = clusterHosts.getKey();
       Map<String, String> hostMapping = clusterHosts.getValue();
-      ClusterEntity clusterEntity = clusterDAO.findByName(clusterName);
-      List<String> currentHostNames = new ArrayList<>();
-
+      Map<String, String> toTmpHostMapping = new HashMap<>();
+      Map<String, String> fromTmpHostMapping = new HashMap<>();
       for (Map.Entry<String, String> hostPair : hostMapping.entrySet()) {
-        currentHostNames.add(hostPair.getKey());
+        toTmpHostMapping.put(hostPair.getKey(), TMP_PREFIX + hostPair.getValue());
+        fromTmpHostMapping.put(TMP_PREFIX + hostPair.getValue(), hostPair.getValue());
       }
+      ClusterEntity clusterEntity = clusterDAO.findByName(clusterName);
+      renameHostsInDB(hostDAO, toTmpHostMapping, clusterEntity);
+      renameHostsInDB(hostDAO, fromTmpHostMapping, clusterEntity);
+    }
+  }
 
-      if (clusterEntity != null) {
-        Collection<HostEntity> hostEntities = clusterEntity.getHostEntities();
-        for (HostEntity hostEntity : hostEntities) {
-          if (currentHostNames.contains(hostEntity.getHostName())) {
-            hostEntity.setHostName(hostMapping.get(hostEntity.getHostName()));
-            hostDAO.merge(hostEntity);
-          }
+  private void renameHostsInDB(HostDAO hostDAO, Map<String, String> hostMapping, ClusterEntity clusterEntity) {
+    List<String> currentHostNames = new ArrayList<>();
+
+    for (Map.Entry<String, String> hostPair : hostMapping.entrySet()) {
+      currentHostNames.add(hostPair.getKey());
+    }
+
+    if (clusterEntity != null) {
+      Collection<HostEntity> hostEntities = clusterEntity.getHostEntities();
+      for (HostEntity hostEntity : hostEntities) {
+        if (currentHostNames.contains(hostEntity.getHostName())) {
+          hostEntity.setHostName(hostMapping.get(hostEntity.getHostName()));
+          hostDAO.merge(hostEntity);
         }
       }
     }
@@ -487,12 +512,10 @@ public class HostUpdateHelper {
                 Collection<TopologyHostInfoEntity> topologyHostInfoEntities = topologyHostGroupEntity.getTopologyHostInfoEntities();
                 boolean updatesAvailable = false;
 
-                if (topologyHostGroupEntities != null) {
-                  for (TopologyHostInfoEntity topologyHostInfoEntity : topologyHostInfoEntities) {
-                    if (currentHostNames.contains(topologyHostInfoEntity.getFqdn())) {
-                      topologyHostInfoEntity.setFqdn(hostMapping.get(topologyHostInfoEntity.getFqdn()));
-                      updatesAvailable = true;
-                    }
+                for (TopologyHostInfoEntity topologyHostInfoEntity : topologyHostInfoEntities) {
+                  if (currentHostNames.contains(topologyHostInfoEntity.getFqdn())) {
+                    topologyHostInfoEntity.setFqdn(hostMapping.get(topologyHostInfoEntity.getFqdn()));
+                    updatesAvailable = true;
                   }
                 }
                 if (updatesAvailable) {
@@ -521,6 +544,8 @@ public class HostUpdateHelper {
   }
 
   public static void main(String[] args) throws Exception {
+    Injector injector = Guice.createInjector(new UpdateHelperModule(), new CheckHelperAuditModule(), new LdapModule());
+    HostUpdateHelper hostUpdateHelper = injector.getInstance(HostUpdateHelper.class);
     try {
       LOG.info("Host names update started.");
 
@@ -529,10 +554,6 @@ public class HostUpdateHelper {
       if (hostChangesFile == null || hostChangesFile.isEmpty()) {
         throw new AmbariException("Path to file with host names changes is empty or null.");
       }
-
-      Injector injector = Guice.createInjector(new UpdateHelperModule(), new CheckHelperAuditModule());
-      HostUpdateHelper hostUpdateHelper = injector.getInstance(HostUpdateHelper.class);
-
       hostUpdateHelper.setHostChangesFile(hostChangesFile);
 
       hostUpdateHelper.initHostChangesFileMap();
@@ -553,15 +574,11 @@ public class HostUpdateHelper {
 
       LOG.info("Host names update completed successfully.");
 
-      hostUpdateHelper.stopPersistenceService();
-    } catch (Throwable e) {
-      if (e instanceof AmbariException) {
+    } catch (AmbariException e) {
         LOG.error("Exception occurred during host names update, failed", e);
-        throw (AmbariException)e;
-      }else{
-        LOG.error("Unexpected error, host names update failed", e);
-        throw new Exception("Unexpected error, host names update failed", e);
-      }
+        throw e;
+    } finally {
+      hostUpdateHelper.stopPersistenceService();
     }
   }
 }

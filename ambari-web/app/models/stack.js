@@ -23,6 +23,7 @@ App.Stack = DS.Model.extend({
   stackName: DS.attr('string'),
   stackVersion: DS.attr('string'),
   stackDefault: DS.attr('boolean'),
+  stackRepoUpdateLinkExists: DS.attr('boolean'),
   minJdkVersion: DS.attr('string'),
   maxJdkVersion: DS.attr('string'),
   repositoryVersion: DS.attr('string'),
@@ -32,6 +33,8 @@ App.Stack = DS.Model.extend({
   stackServices: DS.hasMany('App.ServiceSimple'),
   operatingSystems: DS.hasMany('App.OperatingSystem'),
   isSelected: DS.attr('boolean', {defaultValue: false}),
+
+  versionInfoId: null,
 
   stackNameVersion: Em.computed.concat('-', 'stackName', 'stackVersion'),
 

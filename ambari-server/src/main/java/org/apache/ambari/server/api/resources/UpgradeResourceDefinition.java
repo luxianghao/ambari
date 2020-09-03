@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,18 +18,17 @@
 
 package org.apache.ambari.server.api.resources;
 
-import org.apache.ambari.server.controller.spi.Resource;
-
 import java.util.Arrays;
 import java.util.Collections;
+
+import org.apache.ambari.server.controller.spi.Resource;
 
 /**
  * Upgrade resource definition.
  */
 public class UpgradeResourceDefinition extends SimpleResourceDefinition {
 
-  public static String DOWNGRADE_DIRECTIVE           = "downgrade";
-  public static String SKIP_SERVICE_CHECKS_DIRECTIVE = "skip_service_checks";
+  public static final String SKIP_SERVICE_CHECKS_DIRECTIVE = "skip_service_checks";
 
   /**
    * Constructor.
@@ -39,6 +38,7 @@ public class UpgradeResourceDefinition extends SimpleResourceDefinition {
         "upgrade",
         "upgrades",
         Collections.singleton(Resource.Type.UpgradeGroup),
-        Collections.singletonMap(DirectiveType.CREATE, Arrays.asList(DOWNGRADE_DIRECTIVE, SKIP_SERVICE_CHECKS_DIRECTIVE)));
+        Collections.singletonMap(DirectiveType.CREATE,
+            Arrays.asList(SKIP_SERVICE_CHECKS_DIRECTIVE)));
   }
 }

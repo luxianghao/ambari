@@ -1,6 +1,30 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ * <p/>
+ * http://www.apache.org/licenses/LICENSE-2.0
+ * <p/>
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.ambari.server.controller.internal;
 
-import com.google.inject.assistedinject.Assisted;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.inject.Inject;
+
 import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
 import org.apache.ambari.server.controller.spi.NoSuchResourceException;
@@ -19,39 +43,30 @@ import org.apache.ambari.server.topology.KerberosDescriptorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.inject.Inject;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.inject.assistedinject.Assisted;
 
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- * <p/>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 public class KerberosDescriptorResourceProvider extends AbstractControllerResourceProvider {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(KerberosDescriptorResourceProvider.class);
 
-  private static final String KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID =
+  static final String KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID =
       PropertyHelper.getPropertyId("KerberosDescriptors", "kerberos_descriptor_name");
 
   private static final String KERBEROS_DESCRIPTOR_TEXT_PROPERTY_ID =
       PropertyHelper.getPropertyId("KerberosDescriptors", "kerberos_descriptor_text");
+
+  /**
+   * The key property ids for a KerberosDescriptor resource.
+   */
+  private static final Map<Resource.Type, String> KEY_PROPERTY_IDS = ImmutableMap.of(Resource.Type.KerberosDescriptor, KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID);
+
+  /**
+   * The property ids for a KerberosDescriptor resource.
+   */
+  private static final Set<String> PROPERTY_IDS = ImmutableSet.of(KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID, KERBEROS_DESCRIPTOR_TEXT_PROPERTY_ID);
 
   private KerberosDescriptorDAO kerberosDescriptorDAO;
 
@@ -61,10 +76,8 @@ public class KerberosDescriptorResourceProvider extends AbstractControllerResour
   @Inject
   KerberosDescriptorResourceProvider(KerberosDescriptorDAO kerberosDescriptorDAO,
                                      KerberosDescriptorFactory kerberosDescriptorFactory,
-                                     @Assisted Set<String> propertyIds,
-                                     @Assisted Map<Resource.Type, String> keyPropertyIds,
                                      @Assisted AmbariManagementController managementController) {
-    super(propertyIds, keyPropertyIds, managementController);
+    super(Resource.Type.KerberosDescriptor, PROPERTY_IDS, KEY_PROPERTY_IDS, managementController);
     this.kerberosDescriptorDAO = kerberosDescriptorDAO;
     this.kerberosDescriptorFactory = kerberosDescriptorFactory;
   }
@@ -76,11 +89,15 @@ public class KerberosDescriptorResourceProvider extends AbstractControllerResour
   }
 
   @Override
-  public RequestStatus createResources(Request request) throws SystemException, UnsupportedPropertyException,
-      ResourceAlreadyExistsException, NoSuchParentResourceException {
-
+  public RequestStatus createResources(Request request) throws ResourceAlreadyExistsException {
     String name = getNameFromRequest(request);
     String descriptor = getRawKerberosDescriptorFromRequest(request);
+
+    if (kerberosDescriptorDAO.findByName(name) != null) {
+      String msg = String.format("Kerberos descriptor named %s already exists", name);
+      LOGGER.info(msg);
+      throw new ResourceAlreadyExistsException(msg);
+    }
 
     KerberosDescriptor kerberosDescriptor = kerberosDescriptorFactory.createKerberosDescriptor(name, descriptor);
     kerberosDescriptorDAO.create(kerberosDescriptor.toEntity());
@@ -88,10 +105,8 @@ public class KerberosDescriptorResourceProvider extends AbstractControllerResour
     return getRequestStatus(null);
   }
 
-
   @Override
-  public Set<Resource> getResources(Request request, Predicate predicate) throws SystemException,
-      UnsupportedPropertyException, NoSuchResourceException, NoSuchParentResourceException {
+  public Set<Resource> getResources(Request request, Predicate predicate) throws NoSuchResourceException, NoSuchParentResourceException {
 
     List<KerberosDescriptorEntity> results = null;
     boolean applyPredicate = false;
@@ -104,7 +119,7 @@ public class KerberosDescriptorResourceProvider extends AbstractControllerResour
 
         if (name != null) {
           KerberosDescriptorEntity entity = kerberosDescriptorDAO.findByName(name);
-          results = entity == null ? Collections.<KerberosDescriptorEntity>emptyList() :
+          results = entity == null ? Collections.emptyList() :
               Collections.singletonList(entity);
         }
       }
@@ -115,7 +130,7 @@ public class KerberosDescriptorResourceProvider extends AbstractControllerResour
       results = kerberosDescriptorDAO.findAll();
     }
 
-    Set<Resource> resources = new HashSet<Resource>();
+    Set<Resource> resources = new HashSet<>();
     Set<String> requestPropertyIds = getRequestPropertyIds(request, predicate);
     for (KerberosDescriptorEntity entity : results) {
       Resource resource = new ResourceImpl(Resource.Type.KerberosDescriptor);
@@ -134,7 +149,7 @@ public class KerberosDescriptorResourceProvider extends AbstractControllerResour
     return resources;
   }
 
-  private void toResource(Resource resource, KerberosDescriptorEntity entity, Set<String> requestPropertyIds) {
+  private static void toResource(Resource resource, KerberosDescriptorEntity entity, Set<String> requestPropertyIds) {
     setResourceProperty(resource, KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID, entity.getName(), requestPropertyIds);
     setResourceProperty(resource, KERBEROS_DESCRIPTOR_TEXT_PROPERTY_ID, entity.getKerberosDescriptorText(), requestPropertyIds);
   }
@@ -163,26 +178,41 @@ public class KerberosDescriptorResourceProvider extends AbstractControllerResour
 
   @Override
   protected Set<String> getPKPropertyIds() {
-    return Collections.emptySet();
+    return ImmutableSet.copyOf(KEY_PROPERTY_IDS.values());
   }
 
-  private String getRawKerberosDescriptorFromRequest(Request request) throws UnsupportedPropertyException {
-    if (request.getRequestInfoProperties() == null ||
-        !request.getRequestInfoProperties().containsKey(Request.REQUEST_INFO_BODY_PROPERTY)) {
-      LOGGER.error("Could not find the raw request body in the request: {}", request);
-      throw new UnsupportedPropertyException(Resource.Type.KerberosDescriptor,
-          Collections.singleton(Request.REQUEST_INFO_BODY_PROPERTY));
+  /**
+   * @throws IllegalArgumentException if descriptor text is not found or is empty
+   */
+  private static String getRawKerberosDescriptorFromRequest(Request request) {
+    Map<String, String> requestInfoProperties = request.getRequestInfoProperties();
+    if (requestInfoProperties != null) {
+      String descriptorText = requestInfoProperties.get(Request.REQUEST_INFO_BODY_PROPERTY);
+      if (!Strings.isNullOrEmpty(descriptorText)) {
+        return descriptorText;
+      }
     }
-    return request.getRequestInfoProperties().get(Request.REQUEST_INFO_BODY_PROPERTY);
+
+    String msg = "No Kerberos descriptor found in the request body";
+    LOGGER.error(msg);
+    throw new IllegalArgumentException(msg);
   }
 
-  private String getNameFromRequest(Request request) throws UnsupportedPropertyException {
-    if (request.getProperties() == null || !request.getProperties().iterator().hasNext()) {
-      LOGGER.error("There is no {} property id in the request {}", KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID, request);
-      throw new UnsupportedPropertyException(Resource.Type.KerberosDescriptor,
-          Collections.singleton(KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID));
+  /**
+   * @throws IllegalArgumentException if name is not found or is empty
+   */
+  private static String getNameFromRequest(Request request) {
+    if (request.getProperties() != null && !request.getProperties().isEmpty()) {
+      Map<String, Object> properties = request.getProperties().iterator().next();
+      Object name = properties.get(KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID);
+      if (name != null) {
+        return String.valueOf(name);
+      }
     }
-    return (String) request.getProperties().iterator().next().get(KERBEROS_DESCRIPTOR_NAME_PROPERTY_ID);
+
+    String msg = "No name provided for the Kerberos descriptor";
+    LOGGER.error(msg);
+    throw new IllegalArgumentException(msg);
   }
 
 }

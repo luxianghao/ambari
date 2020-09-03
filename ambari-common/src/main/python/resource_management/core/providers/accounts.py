@@ -28,8 +28,11 @@ from resource_management.core import shell
 from resource_management.core.providers import Provider
 from resource_management.core.logger import Logger
 from resource_management.core.utils import lazy_property
+from resource_management.core.exceptions import ExecutionFailed
 
 class UserProvider(Provider):
+  USERADD_USER_ALREADY_EXISTS_EXITCODE = 9
+
   options = dict(
     comment=(lambda self: self.user.pw_gecos, "-c"),
     gid=(lambda self: grp.getgrgid(self.user.pw_gid).gr_name, "-g"),
@@ -42,9 +45,11 @@ class UserProvider(Provider):
     
   def action_create(self):
     if not self.user:
+      creating_user = True
       command = ['useradd', "-m"]
       Logger.info("Adding user %s" % self.resource)
     else:
+      creating_user = False
       command = ['usermod']
       
       for option_name, attributes in self.options.iteritems():
@@ -66,7 +71,9 @@ class UserProvider(Provider):
         groups = self.resource.groups
         if self.user and self.user_groups:
           groups += self.user_groups
-        option_value = ",".join(groups)
+        option_value = ",".join(groups) 
+      elif attributes[1] == "-u" and self.user and self.user.pw_uid == getattr(self.resource, option_name):
+        option_value = None
       else:
         option_value = getattr(self.resource, option_name)
         
@@ -78,8 +85,15 @@ class UserProvider(Provider):
       return
 
     command.append(self.resource.username)
-
-    shell.checked_call(command, sudo=True)
+    
+    try:
+      shell.checked_call(command, sudo=True)
+    except ExecutionFailed as ex:
+      # this "user already exists" can happen due to race condition when multiple processes create user at the same time
+      if creating_user and ex.code == UserProvider.USERADD_USER_ALREADY_EXISTS_EXITCODE and self.user:
+        self.action_create() # run modification of the user
+      else:
+        raise
 
   def action_remove(self):
     if self.user:

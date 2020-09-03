@@ -18,8 +18,8 @@
 
 package org.apache.ambari.server.configuration;
 
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.doReturn;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.spy;
 import static org.powermock.api.easymock.PowerMock.mockStatic;
 import static org.powermock.api.easymock.PowerMock.replayAll;
@@ -30,8 +30,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.charset.Charset;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Map;
 import java.util.Properties;
 
@@ -43,9 +43,8 @@ import org.apache.ambari.server.configuration.Configuration.ConnectionPoolType;
 import org.apache.ambari.server.configuration.Configuration.DatabaseType;
 import org.apache.ambari.server.controller.metrics.ThreadPoolEnabledPropertyProvider;
 import org.apache.ambari.server.security.authentication.kerberos.AmbariKerberosAuthenticationProperties;
-import org.apache.ambari.server.security.authorization.LdapServerProperties;
-import org.apache.ambari.server.security.authorization.UserType;
 import org.apache.ambari.server.state.services.MetricsRetrievalService;
+import org.apache.ambari.server.utils.PasswordUtils;
 import org.apache.ambari.server.utils.StageUtils;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.RandomStringUtils;
@@ -63,10 +62,12 @@ import org.powermock.core.classloader.annotations.PowerMockIgnore;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
 
+import com.google.common.base.Charsets;
+
 import junit.framework.Assert;
 
 @RunWith(PowerMockRunner.class)
-@PrepareForTest({ Configuration.class })
+@PrepareForTest({ Configuration.class, PasswordUtils.class })
 @PowerMockIgnore( {"javax.management.*", "javax.crypto.*"})
 public class ConfigurationTest {
   public TemporaryFolder temp = new TemporaryFolder();
@@ -157,6 +158,16 @@ public class ConfigurationTest {
   }
 
   @Test
+  public void testGetMpacksV2StagingPath() {
+    Properties ambariProperties = new Properties();
+    ambariProperties.setProperty(Configuration.MPACKS_V2_STAGING_DIR_PATH.getKey(), "/var/lib/ambari-server/resources/mpacks-v2/");
+    Configuration conf = new Configuration(ambariProperties);
+    Assert.assertEquals("/var/lib/ambari-server/resources/mpacks-v2/", conf.getMpacksV2StagingPath());
+    conf = new Configuration();
+    Assert.assertEquals(null, conf.getMpacksV2StagingPath());
+  }
+
+  @Test
   public void testGetClientHTTPSSettings() throws IOException {
 
     File passFile = File.createTempFile("https.pass.", "txt");
@@ -164,7 +175,7 @@ public class ConfigurationTest {
 
     String password = "pass12345";
 
-    FileUtils.writeStringToFile(passFile, password);
+    FileUtils.writeStringToFile(passFile, password, Charset.defaultCharset());
 
     Properties ambariProperties = new Properties();
     ambariProperties.setProperty(Configuration.API_USE_SSL.getKey(), "true");
@@ -221,9 +232,9 @@ public class ConfigurationTest {
     String encrypted = "fake-encrypted-password";
     ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_PASSWORD.getKey(), unencrypted);
     Configuration conf = spy(new Configuration(ambariProperties));
-    doReturn(null).when(conf).readPasswordFromStore(anyString());
+    PowerMock.stub(PowerMock.method(PasswordUtils.class, "readPasswordFromStore", String.class, Configuration.class)).toReturn(null);
     conf.loadSSLParams();
-    Assert.assertEquals(System.getProperty(conf.JAVAX_SSL_TRUSTSTORE_PASSWORD, "unknown"), unencrypted);
+    Assert.assertEquals(System.getProperty(Configuration.JAVAX_SSL_TRUSTSTORE_PASSWORD, "unknown"), unencrypted);
   }
 
   @Test
@@ -233,9 +244,9 @@ public class ConfigurationTest {
     String encrypted = "fake-encrypted-password";
     ambariProperties.setProperty(Configuration.SSL_TRUSTSTORE_PASSWORD.getKey(), unencrypted);
     Configuration conf = spy(new Configuration(ambariProperties));
-    doReturn(encrypted).when(conf).readPasswordFromStore(anyString());
+    PowerMock.stub(PowerMock.method(PasswordUtils.class, "readPasswordFromStore", String.class, Configuration.class)).toReturn(encrypted);
     conf.loadSSLParams();
-    Assert.assertEquals(System.getProperty(conf.JAVAX_SSL_TRUSTSTORE_PASSWORD, "unknown"), encrypted);
+    Assert.assertEquals(System.getProperty(Configuration.JAVAX_SSL_TRUSTSTORE_PASSWORD, "unknown"), encrypted);
   }
 
   @Test
@@ -246,7 +257,7 @@ public class ConfigurationTest {
     Properties properties = new Properties();
     properties.setProperty(Configuration.SERVER_JDBC_RCA_USER_PASSWD.getKey(), serverJdbcRcaUserPasswdKey);
     Configuration conf = spy(new Configuration(properties));
-    doReturn(encrypted).when(conf).readPasswordFromStore(serverJdbcRcaUserPasswdKey);
+    PowerMock.stub(PowerMock.method(PasswordUtils.class, "readPassword")).toReturn(encrypted);
 
     Assert.assertEquals(encrypted, conf.getRcaDatabasePassword());
   }
@@ -279,8 +290,7 @@ public class ConfigurationTest {
       passwordFile);
 
     Configuration conf = new Configuration(ambariProperties);
-    PowerMock.stub(PowerMock.method(Configuration.class,
-      "readPasswordFromStore")).toReturn(null);
+    PowerMock.stub(PowerMock.method(PasswordUtils.class,"readPasswordFromStore", String.class, Configuration.class)).toReturn(null);
 
     Assert.assertEquals("ambaritest", conf.getDatabasePassword());
   }
@@ -297,6 +307,17 @@ public class ConfigurationTest {
     Map<String, String> props = conf.getAmbariProperties();
     verifyAll();
     Assert.assertEquals("value", props.get("name"));
+  }
+
+  @Test
+  public void testGetAmbariBlacklistFile() {
+    Properties ambariProperties = new Properties();
+    Configuration conf = new Configuration(ambariProperties);
+    Assert.assertEquals(null, conf.getAmbariBlacklistFile());
+    ambariProperties = new Properties();
+    ambariProperties.setProperty(Configuration.PROPERTY_MASK_FILE.getKey(), "ambari-blacklist.properties");
+    conf = new Configuration(ambariProperties);
+    Assert.assertEquals("ambari-blacklist.properties", conf.getAmbariBlacklistFile());
   }
 
   @Rule
@@ -376,17 +397,6 @@ public class ConfigurationTest {
   }
 
   @Test
-  public void testGetLdapServerProperties_WrongManagerPassword() throws Exception {
-    final Properties ambariProperties = new Properties();
-    ambariProperties.setProperty(Configuration.LDAP_MANAGER_PASSWORD.getKey(), "somePassword");
-    final Configuration configuration = new Configuration(ambariProperties);
-
-    final LdapServerProperties ldapProperties = configuration.getLdapServerProperties();
-    // if it's not a store alias and is not a file, it should be ignored
-    Assert.assertNull(ldapProperties.getManagerPassword());
-  }
-
-  @Test
   public void testIsViewValidationEnabled() throws Exception {
     final Properties ambariProperties = new Properties();
     Configuration configuration = new Configuration(ambariProperties);
@@ -420,54 +430,6 @@ public class ConfigurationTest {
 
     configuration = new Configuration(ambariProperties);
     Assert.assertFalse(configuration.isViewRemoveUndeployedEnabled());
-  }
-
-  @Test
-  public void testGetLdapServerProperties() throws Exception {
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-
-    final File passwordFile = temp.newFile("ldap-password.dat");
-    final FileOutputStream fos = new FileOutputStream(passwordFile);
-    fos.write("ambaritest\r\n".getBytes());
-    fos.close();
-    final String passwordFilePath = temp.getRoot().getAbsolutePath() + File.separator + "ldap-password.dat";
-
-    ambariProperties.setProperty(Configuration.LDAP_PRIMARY_URL.getKey(), "1");
-    ambariProperties.setProperty(Configuration.LDAP_SECONDARY_URL.getKey(), "2");
-    ambariProperties.setProperty(Configuration.LDAP_USE_SSL.getKey(), "true");
-    ambariProperties.setProperty(Configuration.LDAP_BIND_ANONYMOUSLY.getKey(), "true");
-    ambariProperties.setProperty(Configuration.LDAP_MANAGER_DN.getKey(), "5");
-    ambariProperties.setProperty(Configuration.LDAP_MANAGER_PASSWORD.getKey(), passwordFilePath);
-    ambariProperties.setProperty(Configuration.LDAP_BASE_DN.getKey(), "7");
-    ambariProperties.setProperty(Configuration.LDAP_USERNAME_ATTRIBUTE.getKey(), "8");
-    ambariProperties.setProperty(Configuration.LDAP_USER_BASE.getKey(), "9");
-    ambariProperties.setProperty(Configuration.LDAP_USER_OBJECT_CLASS.getKey(), "10");
-    ambariProperties.setProperty(Configuration.LDAP_GROUP_BASE.getKey(), "11");
-    ambariProperties.setProperty(Configuration.LDAP_GROUP_OBJECT_CLASS.getKey(), "12");
-    ambariProperties.setProperty(Configuration.LDAP_GROUP_MEMBERSHIP_ATTR.getKey(), "13");
-    ambariProperties.setProperty(Configuration.LDAP_GROUP_NAMING_ATTR.getKey(), "14");
-    ambariProperties.setProperty(Configuration.LDAP_ADMIN_GROUP_MAPPING_RULES.getKey(), "15");
-    ambariProperties.setProperty(Configuration.LDAP_GROUP_SEARCH_FILTER.getKey(), "16");
-
-    final LdapServerProperties ldapProperties = configuration.getLdapServerProperties();
-
-    Assert.assertEquals("1", ldapProperties.getPrimaryUrl());
-    Assert.assertEquals("2", ldapProperties.getSecondaryUrl());
-    Assert.assertEquals(true, ldapProperties.isUseSsl());
-    Assert.assertEquals(true, ldapProperties.isAnonymousBind());
-    Assert.assertEquals("5", ldapProperties.getManagerDn());
-    Assert.assertEquals("ambaritest", ldapProperties.getManagerPassword());
-    Assert.assertEquals("7", ldapProperties.getBaseDN());
-    Assert.assertEquals("8", ldapProperties.getUsernameAttribute());
-    Assert.assertEquals("9", ldapProperties.getUserBase());
-    Assert.assertEquals("10", ldapProperties.getUserObjectClass());
-    Assert.assertEquals("11", ldapProperties.getGroupBase());
-    Assert.assertEquals("12", ldapProperties.getGroupObjectClass());
-    Assert.assertEquals("13", ldapProperties.getGroupMembershipAttr());
-    Assert.assertEquals("14", ldapProperties.getGroupNamingAttr());
-    Assert.assertEquals("15", ldapProperties.getAdminGroupMappingRules());
-    Assert.assertEquals("16", ldapProperties.getGroupSearchFilter());
   }
 
   @Test
@@ -561,19 +523,6 @@ public class ConfigurationTest {
     //not a number
     ambariProperties.setProperty(Configuration.EXECUTION_SCHEDULER_WAIT.getKey(), "100m");
     Assert.assertEquals(new Long(1000L), configuration.getExecutionSchedulerWait());
-  }
-
-  @Test
-  public void testExperimentalConcurrentStageProcessing() throws Exception {
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-
-    Assert.assertFalse(configuration.isExperimentalConcurrentStageProcessingEnabled());
-
-    ambariProperties.setProperty(Configuration.EXPERIMENTAL_CONCURRENCY_STAGE_PROCESSING_ENABLED.getKey(),
-        Boolean.TRUE.toString());
-
-    Assert.assertTrue(configuration.isExperimentalConcurrentStageProcessingEnabled());
   }
 
   @Test
@@ -715,103 +664,6 @@ public class ConfigurationTest {
   }
 
   @Test
-  public void testLdapUserSearchFilterDefault() throws Exception {
-    // Given
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-
-    // When
-    String actualLdapUserSearchFilter = configuration.getLdapServerProperties().getUserSearchFilter(false);
-
-    // Then
-    Assert.assertEquals("(&(uid={0})(objectClass=person))", actualLdapUserSearchFilter);
-  }
-
-  @Test
-  public void testLdapUserSearchFilter() throws Exception {
-    // Given
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-    ambariProperties.setProperty(Configuration.LDAP_USERNAME_ATTRIBUTE.getKey(), "test_uid");
-    ambariProperties.setProperty(Configuration.LDAP_USER_SEARCH_FILTER.getKey(), "{usernameAttribute}={0}");
-
-    // When
-    String actualLdapUserSearchFilter = configuration.getLdapServerProperties().getUserSearchFilter(false);
-
-    // Then
-    Assert.assertEquals("test_uid={0}", actualLdapUserSearchFilter);
-  }
-
-  @Test
-  public void testAlternateLdapUserSearchFilterDefault() throws Exception {
-    // Given
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-
-    // When
-    String actualLdapUserSearchFilter = configuration.getLdapServerProperties().getUserSearchFilter(true);
-
-    // Then
-    Assert.assertEquals("(&(userPrincipalName={0})(objectClass=person))", actualLdapUserSearchFilter);
-  }
-
-  @Test
-  public void testAlternatLdapUserSearchFilter() throws Exception {
-    // Given
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-    ambariProperties.setProperty(Configuration.LDAP_USERNAME_ATTRIBUTE.getKey(), "test_uid");
-    ambariProperties.setProperty(Configuration.LDAP_ALT_USER_SEARCH_FILTER.getKey(), "{usernameAttribute}={5}");
-
-    // When
-    String actualLdapUserSearchFilter = configuration.getLdapServerProperties().getUserSearchFilter(true);
-
-    // Then
-    Assert.assertEquals("test_uid={5}", actualLdapUserSearchFilter);
-  }
-
-  @Test
-  public void testAlternateUserSearchEnabledDefault() throws  Exception {
-    // Given
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-
-    // When
-    boolean actual =  configuration.isLdapAlternateUserSearchEnabled();
-
-    // Then
-    Assert.assertEquals(false, actual);
-  }
-
-  @Test
-  public void testAlternateUserSearchEnabledTrue() throws  Exception {
-    // Given
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-    ambariProperties.setProperty(Configuration.LDAP_ALT_USER_SEARCH_ENABLED.getKey(), "true");
-
-    // When
-    boolean actual =  configuration.isLdapAlternateUserSearchEnabled();
-
-    // Then
-    Assert.assertEquals(true, actual);
-  }
-
-  @Test
-  public void testAlternateUserSearchEnabledFalse() throws  Exception {
-    // Given
-    final Properties ambariProperties = new Properties();
-    final Configuration configuration = new Configuration(ambariProperties);
-    ambariProperties.setProperty(Configuration.LDAP_ALT_USER_SEARCH_ENABLED.getKey(), "false");
-
-    // When
-    boolean actual =  configuration.isLdapAlternateUserSearchEnabled();
-
-    // Then
-    Assert.assertEquals(false, actual);
-  }
-
-  @Test
   public void testCustomDatabaseProperties() throws Exception {
     final Properties ambariProperties = new Properties();
     final Configuration configuration = new Configuration(ambariProperties);
@@ -866,7 +718,7 @@ public class ConfigurationTest {
     Assert.assertTrue(completionServiceTimeout >= SMALLEST_COMPLETION_SERIVCE_TIMEOUT_MS);
     Assert.assertTrue(completionServiceTimeout <= LARGEST_COMPLETION_SERIVCE_TIMEOUT_MS);
     Assert.assertTrue(corePoolSize <= maxPoolSize);
-    Assert.assertTrue(corePoolSize > 2 && corePoolSize <= 32);
+    Assert.assertTrue(corePoolSize > 2 && corePoolSize <= 128);
     Assert.assertTrue(maxPoolSize > 2 && maxPoolSize <= processorCount * 4);
     Assert.assertTrue(workerQueueSize > processorCount * 10);
   }
@@ -883,7 +735,6 @@ public class ConfigurationTest {
     properties.put(Configuration.KERBEROS_AUTH_ENABLED.getKey(), "true");
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey(), keytabFile.getAbsolutePath());
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_PRINCIPAL.getKey(), "spnego/principal@REALM");
-    properties.put(Configuration.KERBEROS_AUTH_USER_TYPES.getKey(), "LDAP, LOCAL");
     properties.put(Configuration.KERBEROS_AUTH_AUTH_TO_LOCAL_RULES.getKey(), "DEFAULT");
 
     Configuration configuration = new Configuration(properties);
@@ -894,7 +745,6 @@ public class ConfigurationTest {
     Assert.assertEquals(keytabFile.getAbsolutePath(), kerberosAuthenticationProperties.getSpnegoKeytabFilePath());
     Assert.assertEquals("spnego/principal@REALM", kerberosAuthenticationProperties.getSpnegoPrincipalName());
     Assert.assertEquals("DEFAULT", kerberosAuthenticationProperties.getAuthToLocalRules());
-    Assert.assertEquals(Arrays.asList(UserType.LDAP, UserType.LOCAL), kerberosAuthenticationProperties.getOrderedUserTypes());
   }
 
   /**
@@ -919,7 +769,6 @@ public class ConfigurationTest {
     Assert.assertEquals(keytabFile.getAbsolutePath(), kerberosAuthenticationProperties.getSpnegoKeytabFilePath());
     Assert.assertEquals("HTTP/" + StageUtils.getHostName(), kerberosAuthenticationProperties.getSpnegoPrincipalName());
     Assert.assertEquals("DEFAULT", kerberosAuthenticationProperties.getAuthToLocalRules());
-    Assert.assertEquals(Collections.singletonList(UserType.LDAP), kerberosAuthenticationProperties.getOrderedUserTypes());
   }
 
   /**
@@ -939,7 +788,6 @@ public class ConfigurationTest {
     Assert.assertNull(kerberosAuthenticationProperties.getSpnegoKeytabFilePath());
     Assert.assertNull(kerberosAuthenticationProperties.getSpnegoPrincipalName());
     Assert.assertNull(kerberosAuthenticationProperties.getAuthToLocalRules());
-    Assert.assertEquals(Collections.emptyList(), kerberosAuthenticationProperties.getOrderedUserTypes());
   }
 
   @Test
@@ -948,7 +796,6 @@ public class ConfigurationTest {
     properties.put(Configuration.KERBEROS_AUTH_ENABLED.getKey(), "false");
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey(), "/path/to/spnego/keytab/file");
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_PRINCIPAL.getKey(), "spnego/principal@REALM");
-    properties.put(Configuration.KERBEROS_AUTH_USER_TYPES.getKey(), "LDAP, LOCAL");
     properties.put(Configuration.KERBEROS_AUTH_AUTH_TO_LOCAL_RULES.getKey(), "DEFAULT");
 
     Configuration configuration = new Configuration(properties);
@@ -959,7 +806,6 @@ public class ConfigurationTest {
     Assert.assertNull(kerberosAuthenticationProperties.getSpnegoKeytabFilePath());
     Assert.assertNull(kerberosAuthenticationProperties.getSpnegoPrincipalName());
     Assert.assertNull(kerberosAuthenticationProperties.getAuthToLocalRules());
-    Assert.assertEquals(Collections.emptyList(), kerberosAuthenticationProperties.getOrderedUserTypes());
   }
 
   @Test(expected = IllegalArgumentException.class)
@@ -970,7 +816,6 @@ public class ConfigurationTest {
     properties.put(Configuration.KERBEROS_AUTH_ENABLED.getKey(), "true");
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey(), keytabFile.getAbsolutePath());
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_PRINCIPAL.getKey(), "");
-    properties.put(Configuration.KERBEROS_AUTH_USER_TYPES.getKey(), "LDAP, LOCAL");
     properties.put(Configuration.KERBEROS_AUTH_AUTH_TO_LOCAL_RULES.getKey(), "DEFAULT");
 
     new Configuration(properties);
@@ -982,19 +827,6 @@ public class ConfigurationTest {
     properties.put(Configuration.KERBEROS_AUTH_ENABLED.getKey(), "true");
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey(), "");
     properties.put(Configuration.KERBEROS_AUTH_SPNEGO_PRINCIPAL.getKey(), "spnego/principal@REALM");
-    properties.put(Configuration.KERBEROS_AUTH_USER_TYPES.getKey(), "LDAP, LOCAL");
-    properties.put(Configuration.KERBEROS_AUTH_AUTH_TO_LOCAL_RULES.getKey(), "DEFAULT");
-
-    new Configuration(properties);
-  }
-
-  @Test(expected = IllegalArgumentException.class)
-  public void testKerberosAuthenticationSPNEGOKeytabFileNotFound() {
-    Properties properties = new Properties();
-    properties.put(Configuration.KERBEROS_AUTH_ENABLED.getKey(), "true");
-    properties.put(Configuration.KERBEROS_AUTH_SPNEGO_KEYTAB_FILE.getKey(), "/path/to/missing/spnego/keytab/file");
-    properties.put(Configuration.KERBEROS_AUTH_SPNEGO_PRINCIPAL.getKey(), "spnego/principal@REALM");
-    properties.put(Configuration.KERBEROS_AUTH_USER_TYPES.getKey(), "LDAP, LOCAL");
     properties.put(Configuration.KERBEROS_AUTH_AUTH_TO_LOCAL_RULES.getKey(), "DEFAULT");
 
     new Configuration(properties);
@@ -1031,7 +863,7 @@ public class ConfigurationTest {
     Assert.assertTrue(priority > Thread.MIN_PRIORITY);
 
     Assert.assertTrue(cacheTimeout >= LOWEST_CACHE_TIMEOUT_MINUTES);
-    Assert.assertTrue(corePoolSize > 2 && corePoolSize <= 32);
+    Assert.assertTrue(corePoolSize > 2 && corePoolSize <= 128);
     Assert.assertTrue(maxPoolSize > 2 && maxPoolSize <= processorCount * 4);
     Assert.assertTrue(workerQueueSize >= processorCount * 10);
   }
@@ -1062,6 +894,87 @@ public class ConfigurationTest {
           "The configuration property " + configurationProperty.getKey()
               + " has a Markdown annotation with no description",
           StringUtils.isEmpty(markdown.description()));
+    }
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testRejectsInvalidDtKeySize() {
+    Properties properties = new Properties();
+    properties.put(Configuration.TLS_EPHEMERAL_DH_KEY_SIZE.getKey(), "invalid");
+    new Configuration(properties).getTlsEphemeralDhKeySize();
+  }
+
+  @Test
+  public void testDefaultDhKeySizeIs2048() {
+    Properties properties = new Properties();
+    Assert.assertEquals(2048, new Configuration(properties).getTlsEphemeralDhKeySize());
+  }
+
+  @Test
+  public void testOverridingDhtKeySize() {
+    Properties properties = new Properties();
+    properties.put(Configuration.TLS_EPHEMERAL_DH_KEY_SIZE.getKey(), "1024");
+    Assert.assertEquals(1024, new Configuration(properties).getTlsEphemeralDhKeySize());
+  }
+
+  @Test
+  public void canReadNonLatin1Properties() {
+    Assert.assertEquals("árvíztűrő tükörfúrógép", new Configuration().getProperty("encoding.test"));
+  }
+
+  @Test
+  public void testRemovingAmbariProperties() throws Exception {
+    final File ambariPropertiesFile = new File(Configuration.class.getClassLoader().getResource("ambari.properties").getPath());
+    final String originalContent = FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8);
+    assertTrue(originalContent.indexOf("testPropertyName") == -1);
+    try {
+      final String testambariProperties = "\ntestPropertyName1=testValue1\ntestPropertyName2=testValue2\ntestPropertyName3=testValue3";
+      FileUtils.writeStringToFile(ambariPropertiesFile, testambariProperties, Charsets.UTF_8, true);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName1") > -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName2") > -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName3") > -1);
+
+      final Configuration configuration = new Configuration();
+      configuration.removePropertiesFromAmbariProperties(Arrays.asList("testPropertyName2"));
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName1") > -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName2") == -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName3") > -1);
+
+      configuration.removePropertiesFromAmbariProperties(Arrays.asList("testPropertyName3"));
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName1") > -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName2") == -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName3") == -1);
+
+      configuration.removePropertiesFromAmbariProperties(Arrays.asList("testPropertyName1"));
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName1") == -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName2") == -1);
+      assertTrue(FileUtils.readFileToString(ambariPropertiesFile, Charsets.UTF_8).indexOf("testPropertyName3") == -1);
+    } finally {
+      FileUtils.writeStringToFile(ambariPropertiesFile, originalContent, Charsets.UTF_8);
+    }
+  }
+
+  @Test
+  public void testMaxAuthenticationFailureConfiguration() {
+    Configuration configuration;
+
+    // Test default value is 0
+    configuration = new Configuration();
+    assertEquals(0, configuration.getMaxAuthenticationFailures());
+
+    // Test configured value
+    Properties properties = new Properties();
+    properties.setProperty(Configuration.MAX_LOCAL_AUTHENTICATION_FAILURES.getKey(), "10");
+    configuration = new Configuration(properties);
+    assertEquals(10, configuration.getMaxAuthenticationFailures());
+
+    properties.setProperty(Configuration.MAX_LOCAL_AUTHENTICATION_FAILURES.getKey(), "not a number");
+    configuration = new Configuration(properties);
+    try {
+      configuration.getMaxAuthenticationFailures();
+      Assert.fail("Expected NumberFormatException");
+    } catch (NumberFormatException e) {
+      // This is expected
     }
   }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,7 +21,6 @@ package org.apache.ambari.server.state;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +29,7 @@ import java.util.Set;
 import org.apache.ambari.server.controller.ExtensionVersionResponse;
 import org.apache.ambari.server.stack.Validable;
 import org.apache.ambari.server.state.stack.ExtensionMetainfoXml;
+import org.apache.ambari.server.utils.VersionUtils;
 
 /**
  * An extension version is like a stack version but it contains custom services.  Linking an extension
@@ -45,6 +45,8 @@ public class ExtensionInfo implements Comparable<ExtensionInfo>, Validable{
   private List<ExtensionMetainfoXml.Stack> stacks;
   private List<ExtensionMetainfoXml.Extension> extensions;
   private boolean valid = true;
+  private boolean autoLink = false;
+  private boolean active = false;
 
   /**
    *
@@ -64,7 +66,7 @@ public class ExtensionInfo implements Comparable<ExtensionInfo>, Validable{
     this.valid = valid;
   }
 
-  private Set<String> errorSet = new HashSet<String>();
+  private Set<String> errorSet = new HashSet<>();
 
   @Override
   public void addError(String error) {
@@ -104,7 +106,7 @@ public class ExtensionInfo implements Comparable<ExtensionInfo>, Validable{
   }
 
   public synchronized Collection<ServiceInfo> getServices() {
-    if (services == null) services = new ArrayList<ServiceInfo>();
+    if (services == null) services = new ArrayList<>();
     return services;
   }
 
@@ -161,7 +163,7 @@ public class ExtensionInfo implements Comparable<ExtensionInfo>, Validable{
     // The collection of service descriptor files. A Set is being used because some Kerberos descriptor
     // files contain multiple services, therefore the same File may be encountered more than once.
     // For example the YARN directory may contain YARN and MAPREDUCE2 services.
-    Collection<File> serviceDescriptorFiles = new HashSet<File>();
+    Collection<File> serviceDescriptorFiles = new HashSet<>();
     if (serviceInfos != null) {
       for (ServiceInfo serviceInfo : serviceInfos) {
         File file = serviceInfo.getKerberosDescriptorFile();
@@ -185,9 +187,10 @@ public class ExtensionInfo implements Comparable<ExtensionInfo>, Validable{
 
   @Override
   public int compareTo(ExtensionInfo o) {
-    String myId = name + "-" + version;
-    String oId = o.name + "-" + o.version;
-    return myId.compareTo(oId);
+    if (name.equals(o.name)) {
+      return VersionUtils.compareVersions(version, o.version);
+    }
+    return name.compareTo(o.name);
   }
 
   public List<ExtensionMetainfoXml.Stack> getStacks() {
@@ -204,5 +207,21 @@ public class ExtensionInfo implements Comparable<ExtensionInfo>, Validable{
 
   public void setExtensions(List<ExtensionMetainfoXml.Extension> extensions) {
     this.extensions = extensions;
+  }
+
+  public boolean isAutoLink() {
+    return autoLink;
+  }
+
+  public void setAutoLink(boolean autoLink) {
+    this.autoLink = autoLink;
+  }
+
+  public boolean isActive() {
+    return active;
+  }
+
+  public void setActive(boolean active) {
+    this.active = active;
   }
 }

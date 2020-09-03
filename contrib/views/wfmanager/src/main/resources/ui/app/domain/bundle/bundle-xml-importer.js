@@ -16,14 +16,18 @@
 */
 import Ember from 'ember';
 import { Bundle } from '../bundle/bundle';
+import SchemaVersions from '../schema-versions';
+import CommonUtils from "../../utils/common-utils";
 
 var BundleXmlImporter= Ember.Object.extend({
   x2js : new X2JS(),
+  schemaVersions : SchemaVersions.create({}),
   importBundle (xml){
     var bundleJson = this.get("x2js").xml_str2json(xml);
     return this.processBundleXML(bundleJson);
   },
   processBundleXML(bundleJson){
+    var errors=Ember.A([]);
     var bundle = Bundle.create({
       name : '',
       kickOffTime : {
@@ -31,17 +35,29 @@ var BundleXmlImporter= Ember.Object.extend({
         displayValue : '',
         type : 'date'
       },
-      coordinators : Ember.A([])
+      coordinators : Ember.A([]),
+      schemaVersions : {
+        bundleVersion : this.get("schemaVersions").getDefaultVersion('bundle')
+      }
     });
+    if (!bundleJson || !bundleJson["bundle-app"]){
+      errors.push({message: "Could not import invalid bundle",dismissable:true});
+      return {bundle:null, errors: errors};
+    }
     var bundleApp=bundleJson["bundle-app"];
     bundle.name = bundleApp._name;
-    if(bundleApp.control && bundleApp.control["kick-off-time"]) {
-      bundle.kickOffTime = this.extractDateField(bundleApp["control"]["kick-off-time"]);
-    }else{
-
+    var bundleVersion=CommonUtils.extractSchemaVersion(bundleApp._xmlns);
+    var maxBundleVersion = Math.max.apply(Math, this.get('schemaVersions').getSupportedVersions('bundle'));
+    if (bundleVersion > maxBundleVersion) {
+      errors.push({message: "Unsupported bundle version - " + bundleVersion});
+    } else {
+      bundle.schemaVersions.bundleVersion = bundleVersion;
+    }
+    if(bundleApp.controls && bundleApp.controls["kick-off-time"]) {
+      bundle.kickOffTime = this.extractDateField(bundleApp["controls"]["kick-off-time"]);
     }
     this.processCoordinatorsJson(bundleApp, bundle);
-    return bundle;
+    return {bundle: bundle, errors: errors};
   },
   processCoordinatorsJson(bundleApp, bundle){
     if (bundleApp.coordinator){

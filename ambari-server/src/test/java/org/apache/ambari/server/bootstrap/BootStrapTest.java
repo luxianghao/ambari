@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,6 +20,7 @@ package org.apache.ambari.server.bootstrap;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -28,12 +29,12 @@ import org.apache.ambari.server.api.services.AmbariMetaInfo;
 import org.apache.ambari.server.bootstrap.BootStrapStatus.BSStat;
 import org.apache.ambari.server.configuration.Configuration;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import junit.framework.Assert;
 import junit.framework.TestCase;
@@ -42,7 +43,7 @@ import junit.framework.TestCase;
  * Test BootStrap Implementation.
  */
 public class BootStrapTest extends TestCase {
-  private static Log LOG = LogFactory.getLog(BootStrapTest.class);
+  private static final Logger LOG = LoggerFactory.getLogger(BootStrapTest.class);
   public TemporaryFolder temp = new TemporaryFolder();
 
   @Override
@@ -78,6 +79,7 @@ public class BootStrapTest extends TestCase {
     properties.setProperty(Configuration.METADATA_DIR_PATH.getKey(), metadetadir);
     properties.setProperty(Configuration.SERVER_VERSION_FILE.getKey(), serverVersionFilePath);
     properties.setProperty(Configuration.SHARED_RESOURCES_DIR.getKey(), sharedResourcesDir);
+    properties.setProperty(Configuration.MPACKS_V2_STAGING_DIR_PATH.getKey(), "src/main/resources/mpacks-v2");
 
     Configuration conf = new Configuration(properties);
     AmbariMetaInfo ambariMetaInfo = new AmbariMetaInfo(conf);
@@ -85,7 +87,7 @@ public class BootStrapTest extends TestCase {
     impl.init();
     SshHostInfo info = new SshHostInfo();
     info.setSshKey("xyz");
-    ArrayList<String> hosts = new ArrayList<String>();
+    ArrayList<String> hosts = new ArrayList<>();
     hosts.add("host1");
     hosts.add("host2");
     info.setUserRunAs("root");
@@ -124,7 +126,7 @@ public class BootStrapTest extends TestCase {
       File echo = new File(bootdir, "echo.py");
       //Ensure the file wasn't there
       echo.delete();
-      FileUtils.writeStringToFile(echo, pythonEcho);
+      FileUtils.writeStringToFile(echo, pythonEcho, Charset.defaultCharset());
 
       return echo.getPath();
     } else {
@@ -144,6 +146,7 @@ public class BootStrapTest extends TestCase {
 
     String sharedResourcesDir = "src/test/resources/";
     String serverKSTRDir = "target" + File.separator + "classes";
+    String mpacksv2staging = "src/main/resources/mpacks-v2";
     if (System.getProperty("os.name").contains("Windows")) {
       sharedResourcesDir = ClassLoader.getSystemClassLoader().getResource("").getPath();
       serverKSTRDir = new File(new File(ClassLoader.getSystemClassLoader().getResource("").getPath()).getParent(), "classes").getPath();
@@ -155,13 +158,14 @@ public class BootStrapTest extends TestCase {
     properties.setProperty(Configuration.METADATA_DIR_PATH.getKey(), metadetadir);
     properties.setProperty(Configuration.SERVER_VERSION_FILE.getKey(), serverVersionFilePath);
     properties.setProperty(Configuration.SHARED_RESOURCES_DIR.getKey(), sharedResourcesDir);
+    properties.setProperty(Configuration.MPACKS_V2_STAGING_DIR_PATH.getKey(), mpacksv2staging);
     Configuration conf = new Configuration(properties);
     AmbariMetaInfo ambariMetaInfo = new AmbariMetaInfo(conf);
     BootStrapImpl impl = new BootStrapImpl(conf, ambariMetaInfo);
     impl.init();
     SshHostInfo info = new SshHostInfo();
     info.setSshKey("xyz");
-    ArrayList<String> hosts = new ArrayList<String>();
+    ArrayList<String> hosts = new ArrayList<>();
     hosts.add("host1");
     hosts.add("host2");
     info.setHosts(hosts);
@@ -182,8 +186,8 @@ public class BootStrapTest extends TestCase {
     if (!requestDir.exists()) {
       LOG.warn("RequestDir does not exists");
     }
-    FileUtils.writeStringToFile(new File(requestDir, "host1.done"), "0");
-    FileUtils.writeStringToFile(new File(requestDir, "host2.done"), "1");
+    FileUtils.writeStringToFile(new File(requestDir, "host1.done"), "0", Charset.defaultCharset());
+    FileUtils.writeStringToFile(new File(requestDir, "host2.done"), "1", Charset.defaultCharset());
       /* do a query */
     BootStrapStatus status = impl.getStatus(response.getRequestId());
     LOG.info("Status " + status.getStatus());
@@ -207,12 +211,14 @@ public class BootStrapTest extends TestCase {
   public void testPolling() throws Exception {
     File tmpFolder = temp.newFolder("bootstrap");
     /* create log and done files */
-    FileUtils.writeStringToFile(new File(tmpFolder, "host1.done"), "0");
-    FileUtils.writeStringToFile(new File(tmpFolder, "host1.log"), "err_log_1");
-    FileUtils.writeStringToFile(new File(tmpFolder, "host2.done"), "1");
-    FileUtils.writeStringToFile(new File(tmpFolder, "host2.log"), "err_log_2");
+    FileUtils.writeStringToFile(new File(tmpFolder, "host1.done"), "0", Charset.defaultCharset());
+    FileUtils.writeStringToFile(new File(tmpFolder, "host1.log"), "err_log_1",
+            Charset.defaultCharset());
+    FileUtils.writeStringToFile(new File(tmpFolder, "host2.done"), "1", Charset.defaultCharset());
+    FileUtils.writeStringToFile(new File(tmpFolder, "host2.log"), "err_log_2",
+            Charset.defaultCharset());
 
-    List<String> listHosts = new ArrayList<String>();
+    List<String> listHosts = new ArrayList<>();
     listHosts.add("host1");
     listHosts.add("host2");
     BSHostStatusCollector collector = new BSHostStatusCollector(tmpFolder,

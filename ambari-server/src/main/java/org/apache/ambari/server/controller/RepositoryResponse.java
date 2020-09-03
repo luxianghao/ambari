@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,6 +18,13 @@
 
 package org.apache.ambari.server.controller;
 
+import java.util.List;
+import java.util.Set;
+
+import org.apache.ambari.annotations.Experimental;
+import org.apache.ambari.annotations.ExperimentalFeature;
+import org.apache.ambari.server.state.stack.RepoTag;
+
 public class RepositoryResponse {
 
   private String stackName;
@@ -26,23 +33,34 @@ public class RepositoryResponse {
   private String osType;
   private String repoId;
   private String repoName;
+  private String distribution;
+  private String components;
   private String mirrorsList;
   private String defaultBaseUrl;
-  private String latestBaseUrl;
   private Long repositoryVersionId;
   private String versionDefinitionId;
   private Long clusterVersionId;
   private boolean unique;
+  private Set<RepoTag> tags;
+
+  @Experimental(feature = ExperimentalFeature.CUSTOM_SERVICE_REPOS,
+    comment = "Remove logic for handling custom service repos after enabling multi-mpack cluster deployment")
+  private List<String> applicableServices;
 
   public RepositoryResponse(String baseUrl, String osType, String repoId,
-      String repoName, String mirrorsList, String defaultBaseUrl, String latestBaseUrl) {
+                            String repoName, String distribution, String components,
+                            String mirrorsList, String defaultBaseUrl,
+                            Set<RepoTag> repoTags, List<String> applicableServices) {
     setBaseUrl(baseUrl);
     setOsType(osType);
     setRepoId(repoId);
     setRepoName(repoName);
+    setDistribution(distribution);
+    setComponents(components);
     setMirrorsList(mirrorsList);
     setDefaultBaseUrl(defaultBaseUrl);
-    setLatestBaseUrl(latestBaseUrl);
+    setTags(repoTags);
+    setApplicableServices(applicableServices);
   }
 
   public String getStackName() {
@@ -65,31 +83,25 @@ public class RepositoryResponse {
     return baseUrl;
   }
 
-
   public void setBaseUrl(String baseUrl) {
     this.baseUrl = baseUrl;
   }
-
 
   public String getOsType() {
     return osType;
   }
 
-
   public void setOsType(String osType) {
     this.osType = osType;
   }
-
 
   public String getRepoId() {
     return repoId;
   }
 
-
   public void setRepoId(String repoId) {
     this.repoId = repoId;
   }
-
 
   public String getRepoName() {
     return repoName;
@@ -97,6 +109,22 @@ public class RepositoryResponse {
 
   public void setRepoName(String repoName) {
     this.repoName = repoName;
+  }
+
+  public String getDistribution() {
+    return distribution;
+  }
+
+  public void setDistribution(String distribution) {
+    this.distribution = distribution;
+  }
+
+  public String getComponents() {
+    return components;
+  }
+
+  public void setComponents(String components) {
+    this.components = components;
   }
 
   public String getMirrorsList() {
@@ -113,14 +141,6 @@ public class RepositoryResponse {
 
   public void setDefaultBaseUrl(String url) {
     this.defaultBaseUrl = url;
-  }
-
-  public String getLatestBaseUrl() {
-    return latestBaseUrl;
-  }
-
-  public void setLatestBaseUrl(String url) {
-    latestBaseUrl = url;
   }
 
   public Long getRepositoryVersionId() {
@@ -165,5 +185,32 @@ public class RepositoryResponse {
 
   public void setUnique(boolean unique) {
     this.unique = unique;
+  }
+
+
+  /**
+   * @return the repo tags
+   */
+  public Set<RepoTag> getTags() {
+    return tags;
+  }
+
+  /**
+   * @param repoTags    the repo tags
+   */
+  public void setTags(Set<RepoTag> repoTags) {
+    tags = repoTags;
+  }
+
+  @Experimental(feature = ExperimentalFeature.CUSTOM_SERVICE_REPOS,
+    comment = "Remove logic for handling custom service repos after enabling multi-mpack cluster deployment")
+  public List<String> getApplicableServices() {
+    return applicableServices;
+  }
+
+  @Experimental(feature = ExperimentalFeature.CUSTOM_SERVICE_REPOS,
+    comment = "Remove logic for handling custom service repos after enabling multi-mpack cluster deployment")
+  public void setApplicableServices(List<String> applicableServices) {
+    this.applicableServices = applicableServices;
   }
 }

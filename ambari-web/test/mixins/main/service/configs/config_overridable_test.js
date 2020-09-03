@@ -103,13 +103,11 @@ describe('App.ConfigOverridable', function () {
 
     beforeEach(function() {
       sinon.stub(configOverridable, 'launchConfigGroupSelectionCreationDialog');
-      sinon.stub(App.ModalPopup, 'show');
       sinon.stub(App.config, 'createOverride');
     });
 
     afterEach(function() {
       configOverridable.launchConfigGroupSelectionCreationDialog.restore();
-      App.ModalPopup.show.restore();
       App.config.createOverride.restore();
     });
 
@@ -179,6 +177,7 @@ describe('App.ConfigOverridable', function () {
             "ConfigGroup": {
               "group_name": 'cg1',
               "tag": 'S1',
+              "service_name": "S1",
               "description": '',
               "desired_configs": [],
               "hosts": [{host_name: 'host1'}]
@@ -195,8 +194,8 @@ describe('App.ConfigOverridable', function () {
   describe("#postNewConfigurationGroupSuccess()", function () {
 
     beforeEach(function() {
-      sinon.stub(App.store, 'load');
-      sinon.stub(App.store, 'commit');
+      sinon.stub(App.store, 'safeLoad');
+      sinon.stub(App.store, 'fastCommit');
       sinon.stub(App.ServiceConfigGroup, 'deleteTemporaryRecords');
       configOverridable.postNewConfigurationGroupSuccess({
         resources: [
@@ -211,16 +210,16 @@ describe('App.ConfigOverridable', function () {
 
     afterEach(function() {
       App.ServiceConfigGroup.deleteTemporaryRecords.restore();
-      App.store.commit.restore();
-      App.store.load.restore();
+      App.store.fastCommit.restore();
+      App.store.safeLoad.restore();
     });
 
     it("App.store.load should be called", function() {
-      expect(App.store.load.calledWith(App.ServiceConfigGroup, {id: 'cg1'})).to.be.true;
+      expect(App.store.safeLoad.calledWith(App.ServiceConfigGroup, {id: 'cg1'})).to.be.true;
     });
 
     it("App.store.commit should be called", function() {
-      expect(App.store.commit.calledOnce).to.be.true;
+      expect(App.store.fastCommit.calledOnce).to.be.true;
     });
 
     it("App.ServiceConfigGroup.deleteTemporaryRecords should be called", function() {
@@ -264,6 +263,7 @@ describe('App.ConfigOverridable', function () {
           group_name: 'cg1',
           description: 'dsc',
           tag: 'S1',
+          service_name: "S1",
           hosts: [{
             host_name: 'host1'
           }],
@@ -282,14 +282,12 @@ describe('App.ConfigOverridable', function () {
     };
 
     beforeEach(function() {
-      sinon.spy(App.ModalPopup, 'show');
       sinon.stub(configOverridable, 'updateConfigurationGroup');
       sinon.spy(mock, 'callback');
     });
 
     afterEach(function() {
       configOverridable.updateConfigurationGroup.restore();
-      App.ModalPopup.show.restore();
       mock.callback.restore();
     });
 
@@ -372,7 +370,6 @@ describe('App.ConfigOverridable', function () {
       });
       sinon.stub(configOverridable.get('controller'), 'doSelectConfigGroup');
       sinon.stub(App.ServiceConfigGroup, 'find').returns([group]);
-      sinon.spy(App.ModalPopup, 'show');
       sinon.stub(App.router, 'get').returns(mock);
       sinon.spy(mock, 'manageConfigurationGroups');
     });
@@ -381,7 +378,6 @@ describe('App.ConfigOverridable', function () {
       configOverridable.get('controller').loadConfigGroups.restore();
       configOverridable.get('controller').doSelectConfigGroup.restore();
       App.ServiceConfigGroup.find.restore();
-      App.ModalPopup.show.restore();
       App.router.get.restore();
       mock.manageConfigurationGroups.restore();
     });

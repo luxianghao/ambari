@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,7 +23,9 @@ import java.util.Map;
 
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.controller.ServiceComponentHostResponse;
-import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
+import org.apache.ambari.server.controller.internal.DeleteHostComponentStatusMetaData;
+import org.apache.ambari.server.orm.entities.HostComponentDesiredStateEntity;
+import org.apache.ambari.server.orm.entities.HostVersionEntity;
 import org.apache.ambari.server.state.fsm.InvalidStateTransitionException;
 
 
@@ -90,31 +92,9 @@ public interface ServiceComponentHost {
 
   void setDesiredState(State state);
 
-  StackId getDesiredStackVersion();
-
-  void setDesiredStackVersion(StackId stackVersion);
-
   State getState();
 
   void setState(State state);
-
-  /**
-   * Gets the current security state for this ServiceComponent
-   * <p/>
-   * The returned SecurityState may be any endpoint or transitional state.
-   *
-   * @return the current SecurityState for this ServiceComponent
-   */
-  SecurityState getSecurityState();
-
-  /**
-   * Sets the current security state for this ServiceComponent
-   * <p/>
-   * The new SecurityState may be any endpoint or transitional state.
-   *
-   * @param state the current SecurityState for this ServiceComponent
-   */
-  void setSecurityState(SecurityState state);
 
   /**
    * Gets the version of the component.
@@ -128,28 +108,7 @@ public interface ServiceComponentHost {
    *
    * @param version component version (e.g. 2.2.0.0-2041)
    */
-  void setVersion(String version);
-
-  /**
-   * Gets the desired security state for this ServiceComponent
-   * <p/>
-   * The returned SecurityState is a valid endpoint state where
-   * SecurityState.isEndpoint() == true.
-   *
-   * @return the desired SecurityState for this ServiceComponent
-   */
-  SecurityState getDesiredSecurityState();
-
-  /**
-   * Sets the desired security state for this ServiceComponent
-   * <p/>
-   * It is expected that the new SecurityState is a valid endpoint state such that
-   * SecurityState.isEndpoint() == true.
-   *
-   * @param securityState the desired SecurityState for this ServiceComponent
-   * @throws AmbariException if the new state is not an endpoint state
-   */
-  void setDesiredSecurityState(SecurityState securityState) throws AmbariException;
+  void setVersion(String version) throws AmbariException;
 
   /**
    * @param upgradeState the upgrade state
@@ -165,10 +124,6 @@ public interface ServiceComponentHost {
    * VERSION_MISMATCH - means that component reported unexpected version
    */
   UpgradeState getUpgradeState();
-
-  StackId getStackVersion();
-
-  void setStackVersion(StackId stackVersion);
 
   HostComponentAdminState getComponentAdminState();
 
@@ -187,18 +142,14 @@ public interface ServiceComponentHost {
    * @return
    */
   ServiceComponentHostResponse convertToResponse(Map<String, DesiredConfig> desiredConfigs);
+  ServiceComponentHostResponse convertToResponseStatusOnly(Map<String, DesiredConfig> desiredConfigs,
+                                                           boolean collectStaleConfigsStatus);
 
   void debugDump(StringBuilder sb);
 
   boolean canBeRemoved();
 
-  void delete() throws AmbariException;
-
-  /**
-   * Updates the tags that have been recognized by a START action.
-   * @param configTags
-   */
-  void updateActualConfigs(Map<String, Map<String, String>> configTags);
+  void delete(DeleteHostComponentStatusMetaData deleteMetaData);
 
   /**
    * Gets the actual config tags, if known.
@@ -234,16 +185,45 @@ public interface ServiceComponentHost {
    */
   boolean isRestartRequired();
 
+  boolean isRestartRequired(HostComponentDesiredStateEntity hostComponentDesiredStateEntity);
+
   /**
    * @param restartRequired the restartRequired flag
    */
   void setRestartRequired(boolean restartRequired);
 
   /**
-   * Changes host version state according to state of the components installed on the host.
-   * @return The Repository Version Entity with that component in the host
-   * @throws AmbariException if host is detached from the cluster
+   * Set restartRequired flag for appropriate HostComponentDesiredStateEntity
+   * @param restartRequired the restartRequired flag.
+   * @return true when restartRequired flag was changed.
    */
-  RepositoryVersionEntity recalculateHostVersionState() throws AmbariException;
+  boolean setRestartRequiredWithoutEventPublishing(boolean restartRequired);
+
+
+  HostComponentDesiredStateEntity getDesiredStateEntity();
+
+  /**
+   * Gets the service component.
+   *
+   * @return the service component (never {@code null}).
+   */
+  ServiceComponent getServiceComponent();
+
+  /**
+   * Updates an existing {@link HostVersionEntity} for the desired repository of
+   * this component, or create one if it doesn't exist.
+   *
+   * @return Returns either the newly created or the updated Host Version
+   *         Entity.
+   * @throws AmbariException
+   */
+  HostVersionEntity recalculateHostVersionState() throws AmbariException;
+
+  /**
+   * Convenience method to get the desired stack id from the service component
+   *
+   * @return the desired stack id
+   */
+  StackId getDesiredStackId();
 
 }

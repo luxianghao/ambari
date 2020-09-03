@@ -28,12 +28,13 @@ angular.module('ambariAdminConsole', [
 .constant('Settings', {
   siteRoot: '{proxy_root}/'.replace(/\{.+\}/g, ''),
 	baseUrl: '{proxy_root}/api/v1'.replace(/\{.+\}/g, ''),
-  testMode: (window.location.port == 8000),
+  testMode: false,
   mockDataPrefix: 'assets/data/',
   isLDAPConfigurationSupported: false,
   isLoginActivitiesSupported: false,
   maxStackTraceLength: 1000,
-  errorStorageSize: 500000
+  errorStorageSize: 500000,
+  minRowsToShowPagination: 10
 })
 .config(['RestangularProvider', '$httpProvider', '$provide', 'Settings', function(RestangularProvider, $httpProvider, $provide, Settings) {
   // Config Ajax-module
@@ -62,22 +63,15 @@ angular.module('ambariAdminConsole', [
     };
   }]);
 
-  $httpProvider.responseInterceptors.push(['$rootScope', '$q', function (scope, $q) {
-    function success(response) {
-      return response;
-    }
-
-    function error(response) {
-      if (response.status == 403) {
-        window.location = Settings.siteRoot;
-        return;
+  $httpProvider.interceptors.push(['$rootScope', '$q', function (scope, $q) {
+    return {
+      responseError: function (response) {
+        if (response.status === 403) {
+          window.location = Settings.siteRoot;
+        }
+        return $q.reject(response);
       }
-      return $q.reject(response);
-    }
-
-    return function (promise) {
-      return promise.then(success, error);
-    }
+    };
   }]);
 
   $provide.factory('TimestampHttpInterceptor', [function($q) {
@@ -93,47 +87,6 @@ angular.module('ambariAdminConsole', [
   }]);
   $httpProvider.interceptors.push('TimestampHttpInterceptor');
 
-  $provide.decorator('ngFormDirective', ['$delegate', function($delegate) {
-    var ngForm = $delegate[0], controller = ngForm.controller;
-    ngForm.controller = ['$scope', '$element', '$attrs', '$injector', function(scope, element, attrs, $injector) {
-    var $interpolate = $injector.get('$interpolate');
-      attrs.$set('name', $interpolate(attrs.name || '')(scope));
-      $injector.invoke(controller, this, {
-        '$scope': scope,
-        '$element': element,
-        '$attrs': attrs
-      });
-    }];
-    return $delegate;
-  }]);
-
-  $provide.decorator('ngModelDirective', ['$delegate', function($delegate) {
-    var ngModel = $delegate[0], controller = ngModel.controller;
-    ngModel.controller = ['$scope', '$element', '$attrs', '$injector', function(scope, element, attrs, $injector) {
-      var $interpolate = $injector.get('$interpolate');
-      attrs.$set('name', $interpolate(attrs.name || '')(scope));
-      $injector.invoke(controller, this, {
-        '$scope': scope,
-        '$element': element,
-        '$attrs': attrs
-      });
-    }];
-    return $delegate;
-  }]);
-
-  $provide.decorator('formDirective', ['$delegate', function($delegate) {
-    var form = $delegate[0], controller = form.controller;
-    form.controller = ['$scope', '$element', '$attrs', '$injector', function(scope, element, attrs, $injector) {
-      var $interpolate = $injector.get('$interpolate');
-      attrs.$set('name', $interpolate(attrs.name || attrs.ngForm || '')(scope));
-        $injector.invoke(controller, this, {
-        '$scope': scope,
-        '$element': element,
-        '$attrs': attrs
-      });
-    }];
-    return $delegate;
-  }]);
 
   $provide.decorator('$exceptionHandler', ['$delegate', 'Utility', '$window', function ($delegate, Utility, $window) {
     return function (error, cause) {

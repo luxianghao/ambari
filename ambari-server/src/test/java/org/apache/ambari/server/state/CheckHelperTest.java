@@ -19,47 +19,90 @@
 package org.apache.ambari.server.state;
 
 import java.util.ArrayList;
-import java.util.LinkedList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+
+import org.apache.ambari.annotations.UpgradeCheckInfo;
+import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.checks.ClusterCheck;
+import org.apache.ambari.server.checks.MockCheckHelper;
+import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.orm.dao.RepositoryVersionDAO;
+import org.apache.ambari.server.orm.entities.RepositoryVersionEntity;
+import org.apache.ambari.server.state.repository.ClusterVersionSummary;
+import org.apache.ambari.server.state.repository.VersionDefinitionXml;
+import org.apache.ambari.spi.ClusterInformation;
+import org.apache.ambari.spi.RepositoryType;
+import org.apache.ambari.spi.RepositoryVersion;
+import org.apache.ambari.spi.upgrade.UpgradeCheck;
+import org.apache.ambari.spi.upgrade.UpgradeCheckDescription;
+import org.apache.ambari.spi.upgrade.UpgradeCheckRequest;
+import org.apache.ambari.spi.upgrade.UpgradeCheckResult;
+import org.apache.ambari.spi.upgrade.UpgradeCheckStatus;
+import org.apache.ambari.spi.upgrade.UpgradeType;
+import org.easymock.EasyMock;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.runners.MockitoJUnitRunner;
+
+import com.google.inject.Provider;
 
 import junit.framework.Assert;
-
-import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.ClusterNotFoundException;
-import org.apache.ambari.server.api.services.AmbariMetaInfo;
-import org.apache.ambari.server.checks.AbstractCheckDescriptor;
-import org.apache.ambari.server.checks.CheckDescription;
-import org.apache.ambari.server.checks.ServicesUpCheck;
-import org.apache.ambari.server.controller.PrereqCheckRequest;
-import org.apache.ambari.server.orm.dao.ClusterVersionDAO;
-import org.apache.ambari.server.orm.dao.HostVersionDAO;
-import org.apache.ambari.server.orm.dao.RepositoryVersionDAO;
-import org.apache.ambari.server.orm.dao.UpgradeDAO;
-import org.apache.ambari.server.state.stack.OsFamily;
-import org.apache.ambari.server.state.stack.PrereqCheckStatus;
-import org.apache.ambari.server.state.stack.PrerequisiteCheck;
-import org.apache.ambari.server.state.stack.upgrade.RepositoryVersionHelper;
-import org.easymock.EasyMock;
-import org.junit.Test;
-import org.mockito.Mockito;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
-
-import com.google.inject.AbstractModule;
-import com.google.inject.Guice;
-import com.google.inject.Injector;
-import com.google.inject.util.Providers;
 
 
 /**
  * Tests the {@link CheckHelper} class
+ * Makes sure that people don't forget to add new checks to registry.
  */
-
+@RunWith(MockitoJUnitRunner.class)
 public class CheckHelperTest {
 
-/**
-   * Makes sure that people don't forget to add new checks to registry.
-   */
+  private final Clusters clusters = Mockito.mock(Clusters.class);
+
+  private MockCheck m_mockCheck;
+
+  private UpgradeCheckDescription m_mockUpgradeCheckDescription = Mockito.mock(UpgradeCheckDescription.class);
+
+  @Mock
+  private ClusterVersionSummary m_clusterVersionSummary;
+
+  @Mock
+  private VersionDefinitionXml m_vdfXml;
+
+  @Mock
+  private RepositoryVersion m_repositoryVersion;
+
+  @Mock
+  private RepositoryVersionEntity m_repositoryVersionEntity;
+
+  @Mock
+  private Object m_mockPerform;
+
+  @Mock
+  private RepositoryVersionDAO repositoryVersionDao;
+
+  final Set<String> m_services = new HashSet<>();
+
+  @Before
+  public void setup() throws Exception {
+    m_mockCheck = new MockCheck();
+
+    Mockito.when(m_mockPerform.toString()).thenReturn("Perform!");
+
+    m_services.clear();
+    Mockito.when(m_repositoryVersion.getId()).thenReturn(1L);
+    Mockito.when(m_repositoryVersion.getRepositoryType()).thenReturn(RepositoryType.STANDARD);
+    Mockito.when(repositoryVersionDao.findByPK(Mockito.anyLong())).thenReturn(m_repositoryVersionEntity);
+    Mockito.when(m_repositoryVersionEntity.getRepositoryXml()).thenReturn(m_vdfXml);
+    Mockito.when(m_vdfXml.getClusterSummary(Mockito.any(Cluster.class), Mockito.any(AmbariMetaInfo.class))).thenReturn(m_clusterVersionSummary);
+    Mockito.when(m_clusterVersionSummary.getAvailableServiceNames()).thenReturn(m_services);
+  }
 
   /**
    * Sunny case when applicable.
@@ -67,16 +110,22 @@ public class CheckHelperTest {
   @Test
   public void testPreUpgradeCheck() throws Exception {
     final CheckHelper helper = new CheckHelper();
-    List<AbstractCheckDescriptor> updateChecksRegistry = new ArrayList<AbstractCheckDescriptor>();
-    AbstractCheckDescriptor descriptor = EasyMock.createNiceMock(AbstractCheckDescriptor.class);
-    descriptor.perform(EasyMock.<PrerequisiteCheck> anyObject(), EasyMock.<PrereqCheckRequest> anyObject());
-    EasyMock.expectLastCall().times(1);
-    EasyMock.expect(descriptor.isApplicable(EasyMock.<PrereqCheckRequest> anyObject())).andReturn(true);
-    EasyMock.replay(descriptor);
-    updateChecksRegistry.add(descriptor);
+    helper.clustersProvider = () -> clusters;
+    helper.repositoryVersionDaoProvider = () -> repositoryVersionDao;
 
-    helper.performChecks(new PrereqCheckRequest("cluster"), updateChecksRegistry);
-    EasyMock.verify(descriptor);
+    Configuration configuration = EasyMock.createNiceMock(Configuration.class);
+    List<UpgradeCheck> updateChecksRegistry = new ArrayList<>();
+
+    EasyMock.expect(configuration.isUpgradePrecheckBypass()).andReturn(false);
+    EasyMock.replay(configuration);
+    updateChecksRegistry.add(m_mockCheck);
+
+    ClusterInformation clusterInformation = new ClusterInformation("cluster", false, null, null, null);
+    UpgradeCheckRequest request = new UpgradeCheckRequest(clusterInformation, UpgradeType.ROLLING, m_repositoryVersion, null, null);
+
+    helper.performChecks(request, updateChecksRegistry, configuration);
+
+    Assert.assertEquals(UpgradeCheckStatus.PASS, request.getResult(m_mockUpgradeCheckDescription));
   }
 
   /**
@@ -84,14 +133,34 @@ public class CheckHelperTest {
    */
   @Test
   public void testPreUpgradeCheckNotApplicable() throws Exception {
+    final Cluster cluster = Mockito.mock(Cluster.class);
+
+    m_services.add("KAFKA");
+
+    Mockito.when(cluster.getServices()).thenReturn(new HashMap<>());
+    Mockito.when(cluster.getClusterId()).thenReturn(1L);
+    Mockito.when(clusters.getCluster("cluster")).thenReturn(cluster);
+
     final CheckHelper helper = new CheckHelper();
-    List<AbstractCheckDescriptor> updateChecksRegistry = new ArrayList<AbstractCheckDescriptor>();
-    AbstractCheckDescriptor descriptor = EasyMock.createNiceMock(AbstractCheckDescriptor.class);
-    EasyMock.expect(descriptor.isApplicable(EasyMock.<PrereqCheckRequest> anyObject())).andReturn(false);
-    EasyMock.replay(descriptor);
-    updateChecksRegistry.add(descriptor);
-    helper.performChecks(new PrereqCheckRequest("cluster"), updateChecksRegistry);
-    EasyMock.verify(descriptor);
+    helper.clustersProvider = () -> clusters;
+    helper.repositoryVersionDaoProvider = () -> repositoryVersionDao;
+
+    Configuration configuration = EasyMock.createNiceMock(Configuration.class);
+    List<UpgradeCheck> updateChecksRegistry = new ArrayList<>();
+
+    EasyMock.expect(configuration.isUpgradePrecheckBypass()).andReturn(false);
+    EasyMock.replay(configuration);
+    updateChecksRegistry.add(m_mockCheck);
+
+    ClusterInformation clusterInformation = new ClusterInformation("cluster", false, null, null, null);
+    UpgradeCheckRequest request = new UpgradeCheckRequest(clusterInformation,
+        UpgradeType.NON_ROLLING, m_repositoryVersion, null, null);
+
+    helper.performChecks(request, updateChecksRegistry, configuration);
+
+    Assert.assertEquals(null, request.getResult(m_mockUpgradeCheckDescription));
+
+    request = new UpgradeCheckRequest(clusterInformation, UpgradeType.ROLLING, m_repositoryVersion, null, null);
   }
 
   /**
@@ -100,112 +169,126 @@ public class CheckHelperTest {
   @Test
   public void testPreUpgradeCheckThrowsException() throws Exception {
     final CheckHelper helper = new CheckHelper();
-    List<AbstractCheckDescriptor> updateChecksRegistry = new ArrayList<AbstractCheckDescriptor>();
-    AbstractCheckDescriptor descriptor = EasyMock.createNiceMock(AbstractCheckDescriptor.class);
+    helper.clustersProvider = () -> clusters;
+    helper.repositoryVersionDaoProvider = () -> repositoryVersionDao;
 
-    descriptor.perform(EasyMock.<PrerequisiteCheck> anyObject(), EasyMock.<PrereqCheckRequest> anyObject());
-    EasyMock.expectLastCall().andThrow(new AmbariException("error"));
-    EasyMock.expect(descriptor.isApplicable(EasyMock.<PrereqCheckRequest> anyObject())).andReturn(true);
-    EasyMock.expect(descriptor.getDescription()).andReturn(CheckDescription.HOSTS_HEARTBEAT).anyTimes();
-    EasyMock.replay(descriptor);
-    updateChecksRegistry.add(descriptor);
-    final List<PrerequisiteCheck> upgradeChecks = helper.performChecks(new PrereqCheckRequest("cluster"), updateChecksRegistry);
-    EasyMock.verify(descriptor);
-    Assert.assertEquals(PrereqCheckStatus.FAIL, upgradeChecks.get(0).getStatus());
+    Configuration configuration = EasyMock.createNiceMock(Configuration.class);
+    List<UpgradeCheck> updateChecksRegistry = new ArrayList<>();
+
+    EasyMock.expect(configuration.isUpgradePrecheckBypass()).andReturn(false);
+    EasyMock.replay(configuration);
+    updateChecksRegistry.add(m_mockCheck);
+
+    // this will cause an exception
+    Mockito.when(m_mockPerform.toString()).thenThrow(new RuntimeException());
+
+    ClusterInformation clusterInformation = new ClusterInformation("cluster", false, null, null, null);
+    UpgradeCheckRequest request = new UpgradeCheckRequest(clusterInformation, UpgradeType.ROLLING, m_repositoryVersion, null, null);
+
+    helper.performChecks(request, updateChecksRegistry, configuration);
+
+    Assert.assertEquals(UpgradeCheckStatus.FAIL, request.getResult(m_mockUpgradeCheckDescription));
   }
 
   /**
-   * Test that applicable tests that fail when configured to bypass failures results in a status of {@see PrereqCheckStatus.BYPASS}
+   * Test that applicable tests that fail when configured to bypass failures results in a status of {@see UpgradeCheckStatus.BYPASS}
    */
   @Test
   public void testPreUpgradeCheckBypassesFailure() throws Exception {
-    // This mock class extends CheckHelper and overrides the getPrerequisiteChecks method in order to return
-    // a PrerequisiteCheck object whose status is FAIL.
-    final CheckHelperMock helper =  new CheckHelperMock();
-    List<AbstractCheckDescriptor> updateChecksRegistry = new ArrayList<AbstractCheckDescriptor>();
+    final CheckHelper helper = new CheckHelper();
+    helper.clustersProvider = () -> clusters;
+    helper.repositoryVersionDaoProvider = () -> repositoryVersionDao;
 
-    PrereqCheckRequest checkRequest = EasyMock.createNiceMock(PrereqCheckRequest.class);
-    EasyMock.expect(checkRequest.getClusterName()).andReturn("c1").anyTimes();
-    EasyMock.replay(checkRequest);
+    Configuration configuration = EasyMock.createNiceMock(Configuration.class);
+    List<UpgradeCheck> updateChecksRegistry = new ArrayList<>();
 
-    final List<PrerequisiteCheck> upgradeChecks = helper.performChecks(checkRequest, updateChecksRegistry);
-    Assert.assertEquals(1, upgradeChecks.size());
-    Assert.assertEquals(PrereqCheckStatus.BYPASS, upgradeChecks.get(0).getStatus());
+    EasyMock.expect(configuration.isUpgradePrecheckBypass()).andReturn(true);
+    EasyMock.replay(configuration);
+    updateChecksRegistry.add(m_mockCheck);
+
+    // this will cause an exception, triggering the bypass
+    Mockito.when(m_mockPerform.toString()).thenThrow(new RuntimeException());
+
+    ClusterInformation clusterInformation = new ClusterInformation("cluster", false, null, null, null);
+    UpgradeCheckRequest request = new UpgradeCheckRequest(clusterInformation, UpgradeType.ROLLING, m_repositoryVersion, null, null);
+
+    helper.performChecks(request, updateChecksRegistry, configuration);
+
+    Assert.assertEquals(UpgradeCheckStatus.BYPASS, request.getResult(m_mockUpgradeCheckDescription));
   }
 
   @Test
   public void testPreUpgradeCheckClusterMissing() throws Exception {
-    final Clusters clusters = Mockito.mock(Clusters.class);
-    Mockito.when(clusters.getCluster(Mockito.anyString())).thenAnswer(new Answer<Cluster>() {
+    final Cluster cluster = Mockito.mock(Cluster.class);
+    final Service service = Mockito.mock(Service.class);
+
+    m_services.add("KAFKA");
+
+    Mockito.when(cluster.getServices()).thenReturn(new HashMap<>());
+    Mockito.when(cluster.getClusterId()).thenReturn(1L);
+
+    Mockito.when(clusters.getCluster(Mockito.anyString())).thenReturn(cluster);
+
+    final MockCheckHelper helper = new MockCheckHelper();
+    helper.m_clusters = clusters;
+    helper.m_repositoryVersionDAO = repositoryVersionDao;
+    helper.clustersProvider = () -> clusters;
+
+    final AmbariMetaInfo metaInfo = Mockito.mock(AmbariMetaInfo.class);
+    helper.metaInfoProvider = new Provider<AmbariMetaInfo>() {
       @Override
-      public Cluster answer(InvocationOnMock invocation) throws Throwable {
-        final String clusterName = invocation.getArguments()[0].toString();
-        if (clusterName.equals("existing")) {
-          return Mockito.mock(Cluster.class);
-        } else {
-          throw new ClusterNotFoundException(clusterName);
-        }
+      public AmbariMetaInfo get() {
+        return metaInfo;
       }
-    });
+    };
 
-    final OsFamily osFamily = Mockito.mock(OsFamily.class);
+    Configuration configuration = EasyMock.createNiceMock(Configuration.class);
+    List<UpgradeCheck> updateChecksRegistry = new ArrayList<>();
 
-    final Injector injector = Guice.createInjector(new AbstractModule() {
+    EasyMock.expect(configuration.isUpgradePrecheckBypass()).andReturn(false);
+    EasyMock.replay(configuration);
+    updateChecksRegistry.add(m_mockCheck);
 
-      @Override
-      protected void configure() {
-        bind(Clusters.class).toInstance(clusters);
-        bind(ClusterVersionDAO.class).toProvider(Providers.<ClusterVersionDAO>of(null));
-        bind(HostVersionDAO.class).toProvider(Providers.<HostVersionDAO>of(null));
-        bind(UpgradeDAO.class).toProvider(Providers.<UpgradeDAO>of(null));
-        bind(RepositoryVersionDAO.class).toProvider(Providers.<RepositoryVersionDAO>of(null));
-        bind(RepositoryVersionHelper.class).toProvider(Providers.<RepositoryVersionHelper>of(null));
-        bind(AmbariMetaInfo.class).toProvider(Providers.<AmbariMetaInfo>of(null));
-        bind(ServicesUpCheck.class).toInstance(new ServicesUpCheck());
-        bind(OsFamily.class).toInstance(osFamily);
-      }
-    });
+    // this will cause an exception, triggering the fail
+    Mockito.when(m_mockPerform.toString()).thenThrow(new RuntimeException());
 
-    final CheckHelper helper = injector.getInstance(CheckHelper.class);
-    List<AbstractCheckDescriptor> updateChecksRegistry = new ArrayList<AbstractCheckDescriptor>();
+    ClusterInformation clusterInformation = new ClusterInformation("cluster", false, null, null, null);
+    UpgradeCheckRequest request = new UpgradeCheckRequest(clusterInformation, UpgradeType.ROLLING, m_repositoryVersion, null, null);
 
-    // mocked Cluster has no services, so the check should always be PASS
-    updateChecksRegistry.add(injector.getInstance(ServicesUpCheck.class));
-    List<PrerequisiteCheck> upgradeChecks = helper.performChecks(new PrereqCheckRequest("existing"), updateChecksRegistry);
-    Assert.assertEquals(PrereqCheckStatus.PASS, upgradeChecks.get(0).getStatus());
-    upgradeChecks = helper.performChecks(new PrereqCheckRequest("non-existing"), updateChecksRegistry);
-    Assert.assertEquals(PrereqCheckStatus.FAIL, upgradeChecks.get(0).getStatus());
-    //non existing cluster is an expected error
-    Assert.assertTrue(!upgradeChecks.get(0).getFailReason().equals("Unexpected server error happened"));
+    helper.performChecks(request, updateChecksRegistry, configuration);
+
+    Assert.assertEquals(UpgradeCheckStatus.FAIL, request.getResult(m_mockUpgradeCheckDescription));
   }
 
-  class CheckHelperMock extends CheckHelper {
+  @UpgradeCheckInfo(
+      required = { UpgradeType.ROLLING })
+  class MockCheck extends ClusterCheck {
+
+    protected MockCheck() {
+      super(m_mockUpgradeCheckDescription);
+
+      clustersProvider = new Provider<Clusters>() {
+
+        @Override
+        public Clusters get() {
+          return clusters;
+        }
+      };
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     @Override
-    public List<DescriptorPreCheck> getApplicablePrerequisiteChecks(PrereqCheckRequest request,
-                                                          List<AbstractCheckDescriptor> checksRegistry) {
+    public Set<String> getApplicableServices() {
+      return m_services;
+    }
 
-      List<DescriptorPreCheck> applicablePreChecks = new LinkedList<>();
-
-      try {
-        CheckDescription description = CheckDescription.SERVICES_UP;
-        PrerequisiteCheck check = new PrerequisiteCheck(description, "c1");
-        check.setStatus(PrereqCheckStatus.FAIL);
-
-        AbstractCheckDescriptor descriptor = EasyMock.createNiceMock(AbstractCheckDescriptor.class);
-        EasyMock.expect(descriptor.isApplicable(EasyMock.<PrereqCheckRequest>anyObject())).andReturn(true);
-        EasyMock.expect(descriptor.getDescription()).andReturn(description).anyTimes();
-
-        // Allow bypassing failures
-        EasyMock.expect(descriptor.isStackUpgradeAllowedToBypassPreChecks()).andReturn(true);
-        EasyMock.replay(descriptor);
-
-        applicablePreChecks.add(new DescriptorPreCheck(descriptor, check));
-      } catch (AmbariException e) {
-        ;
-      }
-
-      return applicablePreChecks;
+    @Override
+    public UpgradeCheckResult perform(UpgradeCheckRequest request)
+        throws AmbariException {
+      m_mockPerform.toString();
+      return new UpgradeCheckResult(this);
     }
   }
 }
-

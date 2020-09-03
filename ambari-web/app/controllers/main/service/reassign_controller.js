@@ -65,7 +65,10 @@ App.ReassignMasterController = App.WizardController.extend({
     hasCheckDBStep: false,
     componentsWithCheckDBStep: ['HIVE_METASTORE', 'HIVE_SERVER', 'OOZIE_SERVER'],
     componentsWithoutSecurityConfigs: ['MYSQL_SERVER'],
-    reassignComponentsInMM: []
+    componentsToStopAllServices: ['NAMENODE', 'SECONDARY_NAMENODE'],
+    reassignComponentsInMM: [],
+    configs: null,
+    configsAttributes: null
   }),
 
   /**
@@ -131,6 +134,8 @@ App.ReassignMasterController = App.WizardController.extend({
           this.loadTasksRequestIds();
           this.loadRequestIds();
           this.loadReassignComponentsInMM();
+          this.loadConfigs();
+          this.loadSecureConfigs();
         }
       }
     ],
@@ -138,12 +143,47 @@ App.ReassignMasterController = App.WizardController.extend({
       {
         type: 'sync',
         callback: function () {
-          this.loadSecureConfigs();
           this.loadComponentDir();
+          this.updateUserConfigs();
         }
       }
     ]
   },
+
+  serviceToConfigSiteMap: {
+    'NAMENODE': ['hdfs-site', 'core-site', 'hadoop-env', 'cluster-env'],
+    'SECONDARY_NAMENODE': ['hdfs-site', 'core-site', 'hadoop-env', 'cluster-env'],
+    'JOBTRACKER': ['mapred-site'],
+    'RESOURCEMANAGER': ['yarn-site'],
+    'WEBHCAT_SERVER': ['hive-env', 'webhcat-site', 'core-site'],
+    'APP_TIMELINE_SERVER': ['yarn-site', 'yarn-env'],
+    'OOZIE_SERVER': ['oozie-site', 'core-site', 'oozie-env'],
+    'HIVE_SERVER': ['hive-site', 'webhcat-site', 'hive-env', 'core-site'],
+    'HIVE_METASTORE': ['hive-site', 'webhcat-site', 'hive-env', 'core-site'],
+    'MYSQL_SERVER': ['hive-site'],
+    'HISTORYSERVER': ['mapred-site'],
+    'TIMELINE_READER' : ['yarn-site']
+  },
+
+  /**
+   * Map with lists of related services.
+   * Used to define list of services to stop/start.
+   */
+  relatedServicesMap: {
+    'RESOURCEMANAGER': ['YARN', 'MAPREDUCE2', 'TEZ', 'HIVE', 'PIG', 'OOZIE', 'SLIDER', 'SPARK'],
+    'APP_TIMELINE_SERVER': ['YARN', 'MAPREDUCE2', 'TEZ', 'HIVE', 'OOZIE', 'SLIDER', 'SPARK'],
+    'HISTORYSERVER': ['MAPREDUCE2', 'HIVE', 'PIG', 'OOZIE'],
+    'HIVE_SERVER': ['HIVE', 'FALCON', 'ATLAS', 'OOZIE'],
+    'HIVE_METASTORE': ['HIVE', 'PIG', 'FALCON', 'ATLAS', 'OOZIE'],
+    'WEBHCAT_SERVER': ['HIVE'],
+    'OOZIE_SERVER': ['OOZIE', 'FALCON', 'KNOX'],
+    'MYSQL_SERVER': ['HIVE', 'OOZIE', 'RANGER', 'RANGER_KMS'],
+    'METRICS_COLLECTOR': ['AMBARI_METRICS']
+  },
+
+  isComponentWithReconfiguration: function () {
+    return this.get('serviceToConfigSiteMap').hasOwnProperty(this.get('content.reassign.component_name'));
+  }.property('content.reassign.component_name'),
 
   addManualSteps: function () {
     var hasManualSteps = this.get('content.componentsWithManualCommands').contains(this.get('content.reassign.component_name'));
@@ -161,6 +201,14 @@ App.ReassignMasterController = App.WizardController.extend({
   loadTasksStatuses: function () {
     var statuses = App.db.getReassignTasksStatuses();
     this.set('content.tasksStatuses', statuses);
+  },
+  
+  /**
+   * Update hdfs-user and group with actual value from configs
+   */
+  updateUserConfigs: function() {
+    this.set('content.hdfsUser', this.get('content.configs')['hadoop-env']['hdfs_user']);
+    this.set('content.group', this.get('content.configs')['cluster-env']['user_group']);
   },
 
   /**
@@ -283,6 +331,20 @@ App.ReassignMasterController = App.WizardController.extend({
   loadServiceProperties: function () {
     var serviceProperties = this.getDBProperty('serviceProperties');
     this.set('content.serviceProperties', serviceProperties);
+  },
+
+  saveConfigs: function (configs, attributes) {
+    var configsObject = {
+      configs: configs,
+      configsAttributes: attributes
+    };
+    this.setDBProperties(configsObject);
+    this.get('content').setProperties(configsObject);
+  },
+
+  loadConfigs: function () {
+    var configsObject = this.getDBProperties(['configs', 'configsAttributes']);
+    this.get('content').setProperties(configsObject);
   },
 
   saveDatabaseType: function (type) {

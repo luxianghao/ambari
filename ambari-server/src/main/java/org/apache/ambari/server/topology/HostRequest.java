@@ -25,17 +25,14 @@ import static org.apache.ambari.server.controller.internal.ProvisionAction.START
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.ambari.server.actionmanager.HostRoleCommand;
+import org.apache.ambari.server.actionmanager.HostRoleStatus;
 import org.apache.ambari.server.api.predicate.InvalidQueryException;
 import org.apache.ambari.server.api.predicate.PredicateCompiler;
-import org.apache.ambari.server.controller.RequestStatusResponse;
-import org.apache.ambari.server.controller.ShortTaskStatus;
 import org.apache.ambari.server.controller.internal.HostResourceProvider;
-import org.apache.ambari.server.controller.internal.ProvisionAction;
 import org.apache.ambari.server.controller.internal.ResourceImpl;
 import org.apache.ambari.server.controller.internal.Stack;
 import org.apache.ambari.server.controller.spi.Predicate;
@@ -44,9 +41,19 @@ import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
 import org.apache.ambari.server.orm.entities.TopologyHostRequestEntity;
 import org.apache.ambari.server.orm.entities.TopologyHostTaskEntity;
 import org.apache.ambari.server.orm.entities.TopologyLogicalTaskEntity;
-import org.apache.ambari.server.state.host.HostImpl;
+import org.apache.ambari.server.state.Host;
+import org.apache.ambari.server.topology.tasks.InstallHostTask;
+import org.apache.ambari.server.topology.tasks.PersistHostResourcesTask;
+import org.apache.ambari.server.topology.tasks.RegisterWithConfigGroupTask;
+import org.apache.ambari.server.topology.tasks.StartHostTask;
+import org.apache.ambari.server.topology.tasks.TopologyHostTask;
+import org.apache.ambari.server.topology.tasks.TopologyTask;
+import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.google.common.base.Optional;
+import com.google.common.base.Throwables;
 
 /**
  * Represents a set of requests to a single host such as install, start, etc.
@@ -66,15 +73,17 @@ public class HostRequest implements Comparable<HostRequest> {
   private final long id;
   private boolean isOutstanding = true;
   private final boolean skipFailure;
+  private HostRoleStatus status = HostRoleStatus.PENDING;
+  private String statusMessage;
 
-  private Map<TopologyTask, Map<String, Long>> logicalTaskMap = new HashMap<TopologyTask, Map<String, Long>>();
+  private Map<TopologyTask, Map<String, Long>> logicalTaskMap = new HashMap<>();
 
-  Map<Long, HostRoleCommand> logicalTasks = new HashMap<Long, HostRoleCommand>();
+  Map<Long, HostRoleCommand> logicalTasks = new HashMap<>();
 
   // logical task id -> physical tasks
-  private Map<Long, Long> physicalTasks = new HashMap<Long, Long>();
+  private Map<Long, Long> physicalTasks = new HashMap<>();
 
-  private List<TopologyTask> topologyTasks = new ArrayList<TopologyTask>();
+  private List<TopologyHostTask> topologyTasks = new ArrayList<>();
 
   private ClusterTopology topology;
 
@@ -116,6 +125,8 @@ public class HostRequest implements Comparable<HostRequest> {
     hostgroupName = entity.getTopologyHostGroupEntity().getName();
     hostGroup = topology.getBlueprint().getHostGroup(hostgroupName);
     hostname = entity.getHostName();
+    setStatus(entity.getStatus());
+    statusMessage = entity.getStatusMessage();
     this.predicate = toPredicate(predicate);
     containsMaster = hostGroup.containsMasterComponent();
     this.topology = topology;
@@ -131,8 +142,17 @@ public class HostRequest implements Comparable<HostRequest> {
         (hostname == null ? "Host Assignment Pending" : hostname));
   }
 
+  void markHostRequestFailed(HostRoleStatus status, Throwable cause, PersistedState persistedState) {
+    String errorMessage = StringUtils.substringBefore(Throwables.getRootCause(cause).getMessage(), "\n");
+    LOG.info("HostRequest: marking host request {} for {} as {} due to {}", id, hostname, status, errorMessage);
+    abortPendingTasks();
+    setStatus(status);
+    setStatusMessage(errorMessage);
+    persistedState.setHostRequestStatus(id, status, errorMessage);
+  }
+
   //todo: synchronization
-  public synchronized HostOfferResponse offer(HostImpl host) {
+  public synchronized HostOfferResponse offer(Host host) {
     if (!isOutstanding) {
       return HostOfferResponse.DECLINED_DUE_TO_DONE;
     }
@@ -144,6 +164,24 @@ public class HostRequest implements Comparable<HostRequest> {
     } else {
       return HostOfferResponse.DECLINED_DUE_TO_PREDICATE;
     }
+  }
+
+  public HostRoleStatus getStatus() {
+    return status;
+  }
+
+  public void setStatus(HostRoleStatus status) {
+    if (status != null) {
+      this.status = status;
+    }
+  }
+
+  public void setStatusMessage(String errorMessage) {
+    this.statusMessage = errorMessage;
+  }
+
+  public Optional<String> getStatusMessage() {
+    return Optional.fromNullable(statusMessage);
   }
 
   public void setHostName(String hostName) {
@@ -183,21 +221,21 @@ public class HostRequest implements Comparable<HostRequest> {
 
   private void createTasks(boolean skipFailure) {
     // high level topology tasks such as INSTALL, START, ...
-    topologyTasks.add(new PersistHostResourcesTask());
-    topologyTasks.add(new RegisterWithConfigGroupTask());
+    topologyTasks.add(new PersistHostResourcesTask(topology, this));
+    topologyTasks.add(new RegisterWithConfigGroupTask(topology, this));
 
-    InstallHostTask installTask = new InstallHostTask(skipFailure);
+    InstallHostTask installTask = new InstallHostTask(topology, this, skipFailure);
     topologyTasks.add(installTask);
-    logicalTaskMap.put(installTask, new HashMap<String, Long>());
+    logicalTaskMap.put(installTask, new HashMap<>());
 
     boolean skipStartTaskCreate = topology.getProvisionAction().equals(INSTALL_ONLY);
     boolean skipInstallTaskCreate = topology.getProvisionAction().equals(START_ONLY);
 
     StartHostTask startTask = null;
     if (!skipStartTaskCreate) {
-      startTask = new StartHostTask(skipFailure);
+      startTask = new StartHostTask(topology, this, skipFailure);
       topologyTasks.add(startTask);
-      logicalTaskMap.put(startTask, new HashMap<String, Long>());
+      logicalTaskMap.put(startTask, new HashMap<>());
     } else {
       LOG.info("Skipping Start task creation since provision action = " + topology.getProvisionAction());
     }
@@ -249,18 +287,18 @@ public class HostRequest implements Comparable<HostRequest> {
   }
 
   private void createTasksForReplay(TopologyHostRequestEntity entity) {
-    topologyTasks.add(new PersistHostResourcesTask());
-    topologyTasks.add(new RegisterWithConfigGroupTask());
-    InstallHostTask installTask = new InstallHostTask(skipFailure);
+    topologyTasks.add(new PersistHostResourcesTask(topology, this));
+    topologyTasks.add(new RegisterWithConfigGroupTask(topology, this));
+    InstallHostTask installTask = new InstallHostTask(topology, this, skipFailure);
     topologyTasks.add(installTask);
-    logicalTaskMap.put(installTask, new HashMap<String, Long>());
+    logicalTaskMap.put(installTask, new HashMap<>());
 
     boolean skipStartTaskCreate = topology.getProvisionAction().equals(INSTALL_ONLY);
 
     if (!skipStartTaskCreate) {
-      StartHostTask startTask = new StartHostTask(skipFailure);
+      StartHostTask startTask = new StartHostTask(topology, this, skipFailure);
       topologyTasks.add(startTask);
-      logicalTaskMap.put(startTask, new HashMap<String, Long>());
+      logicalTaskMap.put(startTask, new HashMap<>());
     }
 
     AmbariContext ambariContext = topology.getAmbariContext();
@@ -298,13 +336,13 @@ public class HostRequest implements Comparable<HostRequest> {
         AmbariContext.TaskType.START;
   }
 
-  private void setHostOnTasks(HostImpl host) {
+  private void setHostOnTasks(Host host) {
     for (HostRoleCommand task : getLogicalTasks()) {
       task.setHost(host.getHostId(), host.getHostName());
     }
   }
 
-  public List<TopologyTask> getTopologyTasks() {
+  public List<TopologyHostTask> getTopologyTasks() {
     return topologyTasks;
   }
 
@@ -313,7 +351,7 @@ public class HostRequest implements Comparable<HostRequest> {
     for (HostRoleCommand logicalTask : logicalTasks.values()) {
       // set host on command detail if it is set to null
       String commandDetail = logicalTask.getCommandDetail();
-      if (commandDetail != null && commandDetail.contains("null")) {
+      if (commandDetail != null && commandDetail.contains("null") && hostname != null) {
         logicalTask.setCommandDetail(commandDetail.replace("null", hostname));
       }
       Long physicalTaskId = physicalTasks.get(logicalTask.getTaskId());
@@ -338,12 +376,15 @@ public class HostRequest implements Comparable<HostRequest> {
           logicalTask.setStructuredOut(physicalTask.getStructuredOut());
         }
       }
+      if (logicalTask.getStatus() == HostRoleStatus.PENDING && status != HostRoleStatus.PENDING) {
+        logicalTask.setStatus(status);
+      }
     }
     return logicalTasks.values();
   }
 
   public Map<String, Long> getLogicalTasksForTopologyTask(TopologyTask topologyTask) {
-    return new HashMap<String, Long>(logicalTaskMap.get(topologyTask));
+    return new HashMap<>(logicalTaskMap.get(topologyTask));
   }
 
   public HostRoleCommand getLogicalTask(long logicalTaskId) {
@@ -351,7 +392,7 @@ public class HostRequest implements Comparable<HostRequest> {
   }
 
   public Collection<HostRoleCommandEntity> getTaskEntities() {
-    Collection<HostRoleCommandEntity> taskEntities = new ArrayList<HostRoleCommandEntity>();
+    Collection<HostRoleCommandEntity> taskEntities = new ArrayList<>();
     for (HostRoleCommand task : logicalTasks.values()) {
       HostRoleCommandEntity entity = task.constructNewPersistenceEntity();
       // the above method doesn't set all of the fields for some unknown reason
@@ -390,7 +431,7 @@ public class HostRequest implements Comparable<HostRequest> {
     return containsMaster;
   }
 
-  public boolean matchesHost(HostImpl host) {
+  public boolean matchesHost(Host host) {
     return (hostname != null) ?
         host.getHostName().equals(hostname) :
         predicate == null || predicate.evaluate(new HostResourceAdapter(host));
@@ -433,9 +474,16 @@ public class HostRequest implements Comparable<HostRequest> {
   //todo: once we have logical tasks, move tracking of physical tasks there
   public void registerPhysicalTaskId(long logicalTaskId, long physicalTaskId) {
     physicalTasks.put(logicalTaskId, physicalTaskId);
+    topology.getAmbariContext().getPersistedTopologyState().registerPhysicalTask(logicalTaskId, physicalTaskId);
+    getLogicalTask(logicalTaskId).incrementAttemptCount();
+  }
 
-    topology.getAmbariContext().getPersistedTopologyState().
-        registerPhysicalTask(logicalTaskId, physicalTaskId);
+  public void abortPendingTasks() {
+    for (HostRoleCommand command : getLogicalTasks()) {
+      if (command.getStatus() == HostRoleStatus.PENDING) {
+        command.setStatus(HostRoleStatus.ABORTED);
+      }
+    }
   }
 
   private Predicate toPredicate(String predicate) {
@@ -451,156 +499,10 @@ public class HostRequest implements Comparable<HostRequest> {
     return compiledPredicate;
   }
 
-  private class PersistHostResourcesTask implements TopologyTask {
-    private AmbariContext ambariContext;
-
-    @Override
-    public Type getType() {
-      return Type.RESOURCE_CREATION;
-    }
-
-    @Override
-    public void init(ClusterTopology topology, AmbariContext ambariContext) {
-      this.ambariContext = ambariContext;
-    }
-
-    @Override
-    public void run() {
-      LOG.info("HostRequest: Executing RESOURCE_CREATION task for host: {}", hostname);
-      HostGroup group = topology.getBlueprint().getHostGroup(getHostgroupName());
-      Map<String, Collection<String>> serviceComponents = new HashMap<String, Collection<String>>();
-      for (String service : group.getServices()) {
-        serviceComponents.put(service, new HashSet<String> (group.getComponents(service)));
-      }
-      ambariContext.createAmbariHostResources(getClusterId(), getHostName(), serviceComponents);
-    }
-  }
-
-  private class RegisterWithConfigGroupTask implements TopologyTask {
-    private ClusterTopology clusterTopology;
-    private AmbariContext ambariContext;
-
-    @Override
-    public Type getType() {
-      return Type.CONFIGURE;
-    }
-
-    @Override
-    public void init(ClusterTopology topology, AmbariContext ambariContext) {
-      clusterTopology = topology;
-      this.ambariContext = ambariContext;
-    }
-
-    @Override
-    public void run() {
-      LOG.info("HostRequest: Executing CONFIGURE task for host: {}", hostname);
-      ambariContext.registerHostWithConfigGroup(getHostName(), clusterTopology, getHostgroupName());
-    }
-  }
-
-  //todo: extract
-  private class InstallHostTask implements TopologyTask {
-    private ClusterTopology clusterTopology;
-    private final boolean skipFailure;
-
-    public InstallHostTask(boolean skipFailure) {
-      this.skipFailure = skipFailure;
-    }
-
-    @Override
-    public Type getType() {
-      return Type.INSTALL;
-    }
-
-    @Override
-    public void init(ClusterTopology topology, AmbariContext ambariContext) {
-      clusterTopology = topology;
-    }
-
-    @Override
-    public void run() {
-      LOG.info("HostRequest: Executing INSTALL task for host: {}", hostname);
-      boolean skipInstallTaskCreate = topology.getProvisionAction().equals(ProvisionAction.START_ONLY);
-      RequestStatusResponse response = clusterTopology.installHost(hostname, skipInstallTaskCreate, skipFailure);
-      // map logical install tasks to physical install tasks
-      List<ShortTaskStatus> underlyingTasks = response.getTasks();
-      for (ShortTaskStatus task : underlyingTasks) {
-        Long logicalInstallTaskId = logicalTaskMap.get(this).get(task.getRole());
-        if(logicalInstallTaskId == null) {
-          LOG.info("Skipping physical install task registering, because component {} cannot be found", task.getRole());
-          continue;
-        }
-        //todo: for now only one physical task per component
-        long taskId = task.getTaskId();
-        registerPhysicalTaskId(logicalInstallTaskId, taskId);
-
-        //todo: move this to provision
-        //todo: shouldn't have to iterate over all tasks to find install task
-        //todo: we are doing the same thing in the above registerPhysicalTaskId() call
-        // set attempt count on task
-        for (HostRoleCommand logicalTask : logicalTasks.values()) {
-          if (logicalTask.getTaskId() == logicalInstallTaskId) {
-            logicalTask.incrementAttemptCount();
-          }
-        }
-      }
-
-      LOG.info("HostRequest: Exiting INSTALL task for host: {}", hostname);
-    }
-  }
-
-  //todo: extract
-  private class StartHostTask implements TopologyTask {
-    private ClusterTopology clusterTopology;
-    private final boolean skipFailure;
-
-    public StartHostTask(boolean skipFailure) {
-      this.skipFailure = skipFailure;
-    }
-
-    @Override
-    public Type getType() {
-      return Type.START;
-    }
-
-    @Override
-    public void init(ClusterTopology topology, AmbariContext ambariContext) {
-      clusterTopology = topology;
-    }
-
-    @Override
-    public void run() {
-      LOG.info("HostRequest: Executing START task for host: {}", hostname);
-      RequestStatusResponse response = clusterTopology.startHost(hostname, skipFailure);
-      // map logical install tasks to physical install tasks
-      List<ShortTaskStatus> underlyingTasks = response.getTasks();
-      for (ShortTaskStatus task : underlyingTasks) {
-        String component = task.getRole();
-        Long logicalStartTaskId = logicalTaskMap.get(this).get(component);
-        if(logicalStartTaskId == null) {
-          LOG.info("Skipping physical start task registering, because component {} cannot be found", task.getRole());
-          continue;
-        }
-        // for now just set on outer map
-        registerPhysicalTaskId(logicalStartTaskId, task.getTaskId());
-
-        //todo: move this to provision
-        // set attempt count on task
-        for (HostRoleCommand logicalTask : logicalTasks.values()) {
-          if (logicalTask.getTaskId() == logicalStartTaskId) {
-            logicalTask.incrementAttemptCount();
-          }
-        }
-      }
-
-      LOG.info("HostRequest: Exiting START task for host: {}", hostname);
-    }
-  }
-
   private class HostResourceAdapter implements Resource {
     Resource hostResource;
 
-    public HostResourceAdapter(HostImpl host) {
+    public HostResourceAdapter(Host host) {
       buildPropertyMap(host);
     }
 
@@ -629,10 +531,10 @@ public class HostRequest implements Comparable<HostRequest> {
       // read only, nothing to do
     }
 
-    private void buildPropertyMap(HostImpl host) {
+    private void buildPropertyMap(Host host) {
       hostResource = new ResourceImpl(Resource.Type.Host);
 
-      hostResource.setProperty(HostResourceProvider.HOST_NAME_PROPERTY_ID,
+      hostResource.setProperty(HostResourceProvider.HOST_HOST_NAME_PROPERTY_ID,
           host.getHostName());
       hostResource.setProperty(HostResourceProvider.HOST_PUBLIC_NAME_PROPERTY_ID,
           host.getPublicHostName());

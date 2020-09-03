@@ -23,7 +23,7 @@ import os
 import re
 import shutil
 import socket
-import subprocess
+from ambari_commons import subprocess32
 import sys
 import time
 import pwd
@@ -46,7 +46,7 @@ from ambari_server.serverConfiguration import encrypt_password, store_password_f
     PERSISTENCE_TYPE_PROPERTY, JDBC_CONNECTION_POOL_TYPE, JDBC_CONNECTION_POOL_ACQUISITION_SIZE, \
     JDBC_CONNECTION_POOL_IDLE_TEST_INTERVAL, JDBC_CONNECTION_POOL_MAX_AGE, JDBC_CONNECTION_POOL_MAX_IDLE_TIME, \
     JDBC_CONNECTION_POOL_MAX_IDLE_TIME_EXCESS, JDBC_SQLA_SERVER_NAME, LOCAL_DATABASE_ADMIN_PROPERTY
-
+from ambari_commons.inet_utils import wait_for_port_opened
 from ambari_commons.constants import AMBARI_SUDO_BINARY
 
 from ambari_server.userInput import get_YN_input, get_validated_string_input, read_password
@@ -58,6 +58,10 @@ ORACLE_DB_ID_TYPES = ["Service Name", "SID"]
 ORACLE_SNAME_PATTERN = "jdbc:oracle:thin:@.+:.+:.+"
 
 JDBC_PROPERTIES_PREFIX = "server.jdbc.properties."
+
+PG_PORT_CHECK_TRIES_COUNT = 30
+PG_PORT_CHECK_INTERVAL = 1
+PG_PORT = 5432
 
 class LinuxDBMSConfig(DBMSConfig):
   def __init__(self, options, properties, storage_type):
@@ -78,6 +82,14 @@ class LinuxDBMSConfig(DBMSConfig):
     self.local_admin_user = DBMSConfig._init_member_with_prop_default(options, "local_admin_user",
                                                                        properties, LOCAL_DATABASE_ADMIN_PROPERTY, "postgres")
     self.database_password = getattr(options, "database_password", "")
+
+    self.jdbc_connection_pool_type = DBMSConfig._init_member_with_prop_default(options, "jdbc_connection_pool_type", properties, JDBC_CONNECTION_POOL_TYPE, "internal")
+    self.jdbc_connection_pool_acquisition_size = DBMSConfig._init_member_with_prop_default(options, "jdbc_connection_pool_acquisition_size", properties, JDBC_CONNECTION_POOL_ACQUISITION_SIZE, "5")
+    self.jdbc_connection_pool_idle_test_interval = DBMSConfig._init_member_with_prop_default(options, "jdbc_connection_pool_idle_test_interval", properties, JDBC_CONNECTION_POOL_IDLE_TEST_INTERVAL, "7200")
+    self.jdbc_connection_pool_max_idle_time = DBMSConfig._init_member_with_prop_default(options, "jdbc_connection_pool_max_idle_time", properties, JDBC_CONNECTION_POOL_MAX_IDLE_TIME, "14400")
+    self.jdbc_connection_pool_max_idle_time_excess = DBMSConfig._init_member_with_prop_default(options, "jdbc_connection_pool_max_idle_time_excess", properties, JDBC_CONNECTION_POOL_MAX_IDLE_TIME_EXCESS, "0")
+    self.jdbc_connection_pool_max_age = DBMSConfig._init_member_with_prop_default(options, "jdbc_connection_pool_max_age", properties, JDBC_CONNECTION_POOL_MAX_AGE, "0")
+
     if not self.database_password:
       self.database_password = DBMSConfig._read_password_from_properties(properties, options)
 
@@ -156,16 +168,19 @@ class LinuxDBMSConfig(DBMSConfig):
       if not retcode == 0:
         err = 'Error while configuring connection properties. Exiting'
         raise FatalException(retcode, err)
+    else:
+      err = 'Error while configuring connection properties. Exiting'
+      raise FatalException(-1, err)
 
   def _reset_remote_database(self):
     client_usage_cmd_drop = self._get_remote_script_line(self.drop_tables_script_file)
     client_usage_cmd_init = self._get_remote_script_line(self.init_script_file)
 
     print_warning_msg('To reset Ambari Server schema ' +
-                      'you must run the following DDL against the database to '
+                      'you must run the following DDL directly from the database shell to '
                       + 'drop the schema:' + os.linesep + client_usage_cmd_drop
                       + os.linesep + 'Then you must run the following DDL ' +
-                      'against the database to create the schema: ' + os.linesep +
+                      'directly from the database shell to create the schema: ' + os.linesep +
                       client_usage_cmd_init + os.linesep)
 
   def _get_default_driver_path(self, properties):
@@ -257,7 +272,7 @@ class LinuxDBMSConfig(DBMSConfig):
   # Let the console user initialize the remote database schema
   def _setup_remote_db(self):
     setup_msg = "Before starting Ambari Server, you must run the following DDL " \
-                "against the database to create the schema: {0}".format(self.init_script_file)
+                "directly from the database shell to create the schema: {0}".format(self.init_script_file)
 
     print_warning_msg(setup_msg)
 
@@ -316,9 +331,17 @@ class LinuxDBMSConfig(DBMSConfig):
     properties.process_pair(JDBC_RCA_USER_NAME_PROPERTY, self.database_username)
 
     self._store_password_property(properties, JDBC_RCA_PASSWORD_FILE_PROPERTY, options)
+    self._store_connection_pool_properties(properties)
 
-    # connection pooling (internal JPA by default)
-    properties.process_pair(JDBC_CONNECTION_POOL_TYPE, "internal")
+  # Store set of properties for JDBC connection pooling
+  def _store_connection_pool_properties(self, properties):
+    properties.process_pair(JDBC_CONNECTION_POOL_TYPE, self.jdbc_connection_pool_type)
+    if self.jdbc_connection_pool_type == "c3p0":
+      properties.process_pair(JDBC_CONNECTION_POOL_ACQUISITION_SIZE, self.jdbc_connection_pool_acquisition_size)
+      properties.process_pair(JDBC_CONNECTION_POOL_IDLE_TEST_INTERVAL, self.jdbc_connection_pool_idle_test_interval)
+      properties.process_pair(JDBC_CONNECTION_POOL_MAX_IDLE_TIME, self.jdbc_connection_pool_max_idle_time)
+      properties.process_pair(JDBC_CONNECTION_POOL_MAX_IDLE_TIME_EXCESS, self.jdbc_connection_pool_max_idle_time_excess)
+      properties.process_pair(JDBC_CONNECTION_POOL_MAX_AGE, self.jdbc_connection_pool_max_age)
 
 
 # PostgreSQL configuration and setup
@@ -334,19 +357,43 @@ class PGConfig(LinuxDBMSConfig):
 
   PG_ERROR_BLOCKED = "is being accessed by other users"
   PG_STATUS_RUNNING = None
-  SERVICE_CMD = "/usr/bin/env service"
+  PG_STATUS_STOPPED = "stopped"
   PG_SERVICE_NAME = "postgresql"
   PG_HBA_DIR = None
 
-  PG_ST_CMD = "%s %s status" % (SERVICE_CMD, PG_SERVICE_NAME)
-  if os.path.isfile("/usr/bin/postgresql-setup"):
+  if OSCheck.is_redhat_family() and OSCheck.get_os_major_version() in OSConst.systemd_redhat_os_major_versions:
+    if os.path.isfile("/usr/bin/postgresql-setup"):
       PG_INITDB_CMD = "/usr/bin/postgresql-setup initdb"
-  else:
-      PG_INITDB_CMD = "%s %s initdb" % (SERVICE_CMD, PG_SERVICE_NAME)
+    else:
+      versioned_script_path = glob.glob("/usr/pgsql-*/bin/postgresql*-setup")
+      # versioned version of psql
+      if versioned_script_path:
+        PG_INITDB_CMD = "{0} initdb".format(versioned_script_path[0])
 
-  PG_START_CMD = AMBARI_SUDO_BINARY + " %s %s start" % (SERVICE_CMD, PG_SERVICE_NAME)
-  PG_RESTART_CMD = AMBARI_SUDO_BINARY + " %s %s restart" % (SERVICE_CMD, PG_SERVICE_NAME)
-  PG_HBA_RELOAD_CMD = AMBARI_SUDO_BINARY + " %s %s reload" % (SERVICE_CMD, PG_SERVICE_NAME)
+        psql_service_file = glob.glob("/usr/lib/systemd/system/postgresql-*.service")
+        if psql_service_file:
+          psql_service_file_name = os.path.basename(psql_service_file[0])
+          PG_SERVICE_NAME = psql_service_file_name[:-8] # remove .service
+      else:
+        raise FatalException(1, "Cannot find postgresql-setup script.")
+
+    SERVICE_CMD = "/usr/bin/env systemctl"
+    PG_ST_CMD = "%s status %s" % (SERVICE_CMD, PG_SERVICE_NAME)
+
+    PG_START_CMD = AMBARI_SUDO_BINARY + " %s start %s" % (SERVICE_CMD, PG_SERVICE_NAME)
+    PG_RESTART_CMD = AMBARI_SUDO_BINARY + " %s restart %s" % (SERVICE_CMD, PG_SERVICE_NAME)
+    PG_HBA_RELOAD_CMD = AMBARI_SUDO_BINARY + " %s reload %s" % (SERVICE_CMD, PG_SERVICE_NAME)
+  else:
+    SERVICE_CMD = "/usr/bin/env service"
+    PG_ST_CMD = "%s %s status" % (SERVICE_CMD, PG_SERVICE_NAME)
+    if os.path.isfile("/usr/bin/postgresql-setup"):
+        PG_INITDB_CMD = "/usr/bin/postgresql-setup initdb"
+    else:
+        PG_INITDB_CMD = "%s %s initdb" % (SERVICE_CMD, PG_SERVICE_NAME)
+
+    PG_START_CMD = AMBARI_SUDO_BINARY + " %s %s start" % (SERVICE_CMD, PG_SERVICE_NAME)
+    PG_RESTART_CMD = AMBARI_SUDO_BINARY + " %s %s restart" % (SERVICE_CMD, PG_SERVICE_NAME)
+    PG_HBA_RELOAD_CMD = AMBARI_SUDO_BINARY + " %s %s reload" % (SERVICE_CMD, PG_SERVICE_NAME)
 
   PG_HBA_CONF_FILE = None
   PG_HBA_CONF_FILE_BACKUP = None
@@ -578,8 +625,7 @@ class PGConfig(LinuxDBMSConfig):
     properties.process_pair(JDBC_POSTGRES_SCHEMA_PROPERTY, self.postgres_schema)
     properties.process_pair(JDBC_USER_NAME_PROPERTY, self.database_username)
 
-    # connection pooling (internal JPA by default)
-    properties.process_pair(JDBC_CONNECTION_POOL_TYPE, "internal")
+    self._store_connection_pool_properties(properties)
 
     properties.process_pair(LOCAL_DATABASE_ADMIN_PROPERTY, self.local_admin_user)
 
@@ -591,13 +637,13 @@ class PGConfig(LinuxDBMSConfig):
     retcode, out, err = run_os_command(PGConfig.PG_ST_CMD)
     # on RHEL and SUSE PG_ST_COMD returns RC 0 for running and 3 for stoppped
     if retcode == 0:
-      if out.strip() == "Running clusters:":
-        pg_status = "stopped"
+      if out.strip() == "Running clusters:" or "active: inactive" in out.lower():
+        pg_status = PGConfig.PG_STATUS_STOPPED
       else:
         pg_status = PGConfig.PG_STATUS_RUNNING
     else:
       if retcode == 3:
-        pg_status = "stopped"
+        pg_status = PGConfig.PG_STATUS_STOPPED
       else:
         pg_status = None
     return pg_status, retcode, out, err
@@ -617,24 +663,19 @@ class PGConfig(LinuxDBMSConfig):
           print out
       print "About to start PostgreSQL"
       try:
-        process = subprocess.Popen(PGConfig.PG_START_CMD.split(' '),
-                                   stdout=subprocess.PIPE,
-                                   stdin=subprocess.PIPE,
-                                   stderr=subprocess.PIPE
+        process = subprocess32.Popen(PGConfig.PG_START_CMD.split(' '),
+                                   stdout=subprocess32.PIPE,
+                                   stdin=subprocess32.PIPE,
+                                   stderr=subprocess32.PIPE
         )
-        if OSCheck.is_suse_family():
-          time.sleep(20)
-          result = process.poll()
-          print_info_msg("Result of postgres start cmd: " + str(result))
-          if result is None:
-            process.kill()
-            pg_status, retcode, out, err = PGConfig._get_postgre_status()
-          else:
-            retcode = result
-        else:
-          out, err = process.communicate()
-          retcode = process.returncode
-          pg_status, retcode, out, err = PGConfig._get_postgre_status()
+        out, err = process.communicate()
+        retcode = process.returncode
+
+        print_info_msg("Waiting for postgres to start at port {0}...".format(PG_PORT))
+        wait_for_port_opened('127.0.0.1', PG_PORT, PG_PORT_CHECK_TRIES_COUNT, PG_PORT_CHECK_INTERVAL)
+
+        pg_status, retcode, out, err = PGConfig._get_postgre_status()
+
         if pg_status == PGConfig.PG_STATUS_RUNNING:
           print_info_msg("Postgres process is running. Returning...")
           return pg_status, 0, out, err
@@ -736,7 +777,7 @@ class PGConfig(LinuxDBMSConfig):
     PGConfig._configure_postgresql_conf()
     #restart postgresql if already running
     pg_status, retcode, out, err = PGConfig._get_postgre_status()
-    if pg_status == PGConfig.PG_STATUS_RUNNING:
+    if pg_status != PGConfig.PG_STATUS_STOPPED:
       retcode, out, err = PGConfig._restart_postgres()
       return retcode, out, err
     return 0, "", ""
@@ -744,10 +785,10 @@ class PGConfig(LinuxDBMSConfig):
   @staticmethod
   def _restart_postgres():
     print "Restarting PostgreSQL"
-    process = subprocess.Popen(PGConfig.PG_RESTART_CMD.split(' '),
-                               stdout=subprocess.PIPE,
-                               stdin=subprocess.PIPE,
-                               stderr=subprocess.PIPE
+    process = subprocess32.Popen(PGConfig.PG_RESTART_CMD.split(' '),
+                               stdout=subprocess32.PIPE,
+                               stdin=subprocess32.PIPE,
+                               stderr=subprocess32.PIPE
     )
     time.sleep(5)
     result = process.poll()
@@ -756,7 +797,7 @@ class PGConfig(LinuxDBMSConfig):
       process.kill()
       pg_status, retcode, out, err = PGConfig._get_postgre_status()
       # SUSE linux set status of stopped postgresql proc to unused
-      if pg_status == "unused" or pg_status == "stopped":
+      if pg_status == "unused" or pg_status == PGConfig.PG_STATUS_STOPPED:
         print_info_msg("PostgreSQL is stopped. Restarting ...")
         retcode, out, err = run_os_command(PGConfig.PG_START_CMD)
         return retcode, out, err
@@ -1037,15 +1078,10 @@ class MySQLConfig(LinuxDBMSConfig):
     :param properties:  the properties object to set MySQL specific properties on
     :return:
     """
-    super(MySQLConfig, self)._store_remote_properties(properties, options)
-
     # connection pooling (c3p0 used by MySQL by default)
-    properties.process_pair(JDBC_CONNECTION_POOL_TYPE, "c3p0")
-    properties.process_pair(JDBC_CONNECTION_POOL_ACQUISITION_SIZE, "5")
-    properties.process_pair(JDBC_CONNECTION_POOL_IDLE_TEST_INTERVAL, "7200")
-    properties.process_pair(JDBC_CONNECTION_POOL_MAX_IDLE_TIME, "14400")
-    properties.process_pair(JDBC_CONNECTION_POOL_MAX_IDLE_TIME_EXCESS, "0")
-    properties.process_pair(JDBC_CONNECTION_POOL_MAX_AGE, "0")
+    self.jdbc_connection_pool_type = "c3p0"
+
+    super(MySQLConfig, self)._store_remote_properties(properties, options)
 
 
 def createMySQLConfig(options, properties, storage_type, dbId):
@@ -1192,10 +1228,10 @@ class SQLAConfig(LinuxDBMSConfig):
     cmd = SQLAConfig.EXTRACT_CMD.format(files[0], get_resources_location(properties))
 
 
-    process = subprocess.Popen(cmd.split(' '),
-                               stdout=subprocess.PIPE,
-                               stdin=subprocess.PIPE,
-                               stderr=subprocess.PIPE
+    process = subprocess32.Popen(cmd.split(' '),
+                               stdout=subprocess32.PIPE,
+                               stdin=subprocess32.PIPE,
+                               stderr=subprocess32.PIPE
     )
 
     out, err = process.communicate()

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -42,7 +42,7 @@ public class StackVersionResourceDefinitionTest {
     ResourceDefinition def = new StackVersionResourceDefinition();
 
     Set<SubResourceDefinition> subResources = def.getSubResourceDefinitions();
-    assertEquals(6, subResources.size());
+    assertEquals(7, subResources.size());
 
     boolean operatingSystemFound = false;
     boolean serviceFound = false;

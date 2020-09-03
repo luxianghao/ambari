@@ -18,11 +18,11 @@
 
 package org.apache.ambari.server.security;
 
-import com.google.inject.Singleton;
-
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
+
+import com.google.inject.Singleton;
 
 @Singleton
 public class SecurePasswordHelper {
@@ -55,23 +55,23 @@ public class SecurePasswordHelper {
   /**
    * The set of available lowercase letters to use when generating a secure password
    */
-  protected final static char[] SECURE_PASSWORD_CHARACTER_CLASS_LOWERCASE_LETTERS = "abcdefghijklmnopqrstuvwxyz".toCharArray();
+  final static char[] SECURE_PASSWORD_CHARACTER_CLASS_LOWERCASE_LETTERS = "abcdefghijklmnopqrstuvwxyz".toCharArray();
   /**
    * The set of available uppercase letters to use when generating a secure password
    */
-  protected final static char[] SECURE_PASSWORD_CHARACTER_CLASS_UPPERCASE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
+  final static char[] SECURE_PASSWORD_CHARACTER_CLASS_UPPERCASE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
   /**
    * The set of available digits to use when generating a secure password
    */
-  protected final static char[] SECURE_PASSWORD_CHARACTER_CLASS_DIGITS = "0123456789".toCharArray();
+  final static char[] SECURE_PASSWORD_CHARACTER_CLASS_DIGITS = "0123456789".toCharArray();
   /**
    * The set of available punctuation characters to use when generating a secure password
    */
-  protected final static char[] SECURE_PASSWORD_CHARACTER_CLASS_PUNCTUATION = "?.!$%^*()-_+=~".toCharArray();
+  final static char[] SECURE_PASSWORD_CHARACTER_CLASS_PUNCTUATION = "?.!$%^*()-_+=~".toCharArray();
   /**
    * The set of available whitespace characters to use when generating a secure password
    */
-  protected final static char[] SECURE_PASSWORD_CHARACTER_CLASS_WHITESPACE = " ".toCharArray();
+  final static char[] SECURE_PASSWORD_CHARACTER_CLASS_WHITESPACE = " ".toCharArray();
   /**
    * The collection of available character classes
    */
@@ -146,7 +146,7 @@ public class SecurePasswordHelper {
     }
 
     // Gather the set of characters that meet the specified requirements
-    List<Character> characters = new ArrayList<Character>(length);
+    List<Character> characters = new ArrayList<>(length);
 
     for (int i = 0; i < minLowercaseLetters; i++) {
       characters.add(SecurePasswordHelper.SECURE_PASSWORD_CHARACTER_CLASS_LOWERCASE_LETTERS[secureRandom.nextInt(SecurePasswordHelper.SECURE_PASSWORD_CHARACTER_CLASS_LOWERCASE_LETTERS.length)]);

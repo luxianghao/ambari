@@ -19,40 +19,42 @@ package org.apache.ambari.server.checks;
 
 import java.text.SimpleDateFormat;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
+import javax.annotation.Nullable;
+
+import org.apache.ambari.annotations.UpgradeCheckInfo;
 import org.apache.ambari.server.AmbariException;
-import org.apache.ambari.server.Role;
-import org.apache.ambari.server.RoleCommand;
-import org.apache.ambari.server.controller.PrereqCheckRequest;
-import org.apache.ambari.server.controller.internal.PageRequestImpl;
-import org.apache.ambari.server.controller.internal.RequestImpl;
-import org.apache.ambari.server.controller.internal.SortRequestImpl;
-import org.apache.ambari.server.controller.internal.TaskResourceProvider;
-import org.apache.ambari.server.controller.spi.PageRequest;
-import org.apache.ambari.server.controller.spi.Predicate;
-import org.apache.ambari.server.controller.spi.SortRequest;
-import org.apache.ambari.server.controller.spi.SortRequestProperty;
-import org.apache.ambari.server.controller.utilities.PredicateBuilder;
+import org.apache.ambari.server.metadata.ActionMetadata;
 import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
+import org.apache.ambari.server.orm.dao.HostRoleCommandDAO.LastServiceCheckDTO;
 import org.apache.ambari.server.orm.dao.ServiceConfigDAO;
-import org.apache.ambari.server.orm.entities.HostRoleCommandEntity;
 import org.apache.ambari.server.orm.entities.ServiceConfigEntity;
 import org.apache.ambari.server.state.Cluster;
 import org.apache.ambari.server.state.MaintenanceState;
 import org.apache.ambari.server.state.Service;
 import org.apache.ambari.server.state.ServiceComponent;
-import org.apache.ambari.server.state.stack.PrereqCheckStatus;
-import org.apache.ambari.server.state.stack.PrerequisiteCheck;
+import org.apache.ambari.server.state.StackId;
+import org.apache.ambari.spi.upgrade.UpgradeCheckDescription;
+import org.apache.ambari.spi.upgrade.UpgradeCheckGroup;
+import org.apache.ambari.spi.upgrade.UpgradeCheckRequest;
+import org.apache.ambari.spi.upgrade.UpgradeCheckResult;
+import org.apache.ambari.spi.upgrade.UpgradeCheckStatus;
+import org.apache.ambari.spi.upgrade.UpgradeCheckType;
+import org.apache.ambari.spi.upgrade.UpgradeType;
 import org.apache.commons.lang.StringUtils;
+import org.codehaus.jackson.annotate.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -63,21 +65,14 @@ import com.google.inject.Singleton;
  * That is a potential problem when doing stack update.
  */
 @Singleton
-@UpgradeCheck(group = UpgradeCheckGroup.DEFAULT, required = true)
-public class ServiceCheckValidityCheck extends AbstractCheckDescriptor {
+@UpgradeCheckInfo(
+    group = UpgradeCheckGroup.DEFAULT,
+    required = { UpgradeType.ROLLING, UpgradeType.NON_ROLLING, UpgradeType.HOST_ORDERED })
+public class ServiceCheckValidityCheck extends ClusterCheck {
 
   private static final Logger LOG = LoggerFactory.getLogger(ServiceCheckValidityCheck.class);
 
   private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("MM-dd-yyyy hh:mm:ss");
-  private static List<SortRequestProperty> sortRequestProperties =
-      Collections.singletonList(new SortRequestProperty(TaskResourceProvider.TASK_START_TIME_PROPERTY_ID, SortRequest.Order.DESC));
-  private static SortRequest sortRequest = new SortRequestImpl(sortRequestProperties);
-  private static final PageRequestImpl PAGE_REQUEST = new PageRequestImpl(PageRequest.StartingPoint.End, 1000, 0, null, null);
-  private static final RequestImpl REQUEST = new RequestImpl(null, null, null, null, sortRequest, PAGE_REQUEST);
-  private static final Predicate PREDICATE = new PredicateBuilder().property(TaskResourceProvider.TASK_COMMAND_PROPERTY_ID)
-      .equals(RoleCommand.SERVICE_CHECK.name()).toPredicate();
-
-
 
   @Inject
   Provider<ServiceConfigDAO> serviceConfigDAOProvider;
@@ -85,19 +80,30 @@ public class ServiceCheckValidityCheck extends AbstractCheckDescriptor {
   @Inject
   Provider<HostRoleCommandDAO> hostRoleCommandDAOProvider;
 
+  @Inject
+  Provider<ActionMetadata> actionMetadataProvider;
+
+  static final UpgradeCheckDescription SERVICE_CHECK = new UpgradeCheckDescription("SERVICE_CHECK",
+      UpgradeCheckType.SERVICE,
+      "Last Service Check should be more recent than the last configuration change for the given service",
+      new ImmutableMap.Builder<String, String>()
+        .put(UpgradeCheckDescription.DEFAULT,
+            "The following service configurations have been updated and their Service Checks should be run again: %s").build());
+
   /**
    * Constructor.
    */
   public ServiceCheckValidityCheck() {
-    super(CheckDescription.SERVICE_CHECK);
+    super(SERVICE_CHECK);
   }
 
   /**
    * {@inheritDoc}
    */
   @Override
-  public void perform(PrerequisiteCheck prerequisiteCheck, PrereqCheckRequest request)
+  public UpgradeCheckResult perform(UpgradeCheckRequest request)
       throws AmbariException {
+    UpgradeCheckResult result = new UpgradeCheckResult(this);
 
     ServiceConfigDAO serviceConfigDAO = serviceConfigDAOProvider.get();
     HostRoleCommandDAO hostRoleCommandDAO = hostRoleCommandDAOProvider.get();
@@ -106,63 +112,69 @@ public class ServiceCheckValidityCheck extends AbstractCheckDescriptor {
     final Cluster cluster = clustersProvider.get().getCluster(clusterName);
     long clusterId = cluster.getClusterId();
 
+    // build a mapping of the last config changes by service
     Map<String, Long> lastServiceConfigUpdates = new HashMap<>();
-
     for (Service service : cluster.getServices().values()) {
       if (service.getMaintenanceState() != MaintenanceState.OFF || !hasAtLeastOneComponentVersionAdvertised(service)) {
         continue;
       }
-
-      ServiceConfigEntity lastServiceConfig = serviceConfigDAO.getLastServiceConfig(clusterId, service.getName());
-      lastServiceConfigUpdates.put(service.getName(), lastServiceConfig.getCreateTimestamp());
-    }
-
-    List<HostRoleCommandEntity> commands = hostRoleCommandDAO.findAll(REQUEST, PREDICATE);
-
-    // !!! build a map of Role to latest-config-check in case it was rerun multiple times, we want the latest
-    Map<Role, HostRoleCommandEntity> latestTimestamps = new HashMap<>();
-    for (HostRoleCommandEntity command : commands) {
-      Role role = command.getRole();
-
-      // Because results are already sorted by start_time desc, first occurrence is guaranteed to have max(start_time).
-      if (!latestTimestamps.containsKey(role)) {
-        latestTimestamps.put(role, command);
+      StackId stackId = service.getDesiredStackId();
+      boolean isServiceWitNoConfigs = ambariMetaInfo.get().isServiceWithNoConfigs(stackId.getStackName(), stackId.getStackVersion(), service.getName());
+      if (isServiceWitNoConfigs){
+        LOG.info(String.format("%s in %s version %s does not have customizable configurations. Skip checking service configuration history.", service.getName(), stackId.getStackName(), stackId.getStackVersion()));
+      } else {
+        LOG.info(String.format("%s in %s version %s has customizable configurations. Check service configuration history.", service.getName(), stackId.getStackName(), stackId.getStackVersion()));
+        ServiceConfigEntity lastServiceConfig = serviceConfigDAO.getLastServiceConfig(clusterId, service.getName());
+        lastServiceConfigUpdates.put(service.getName(), lastServiceConfig.getCreateTimestamp());
       }
     }
 
-    LinkedHashSet<String> failedServiceNames = new LinkedHashSet<>();
-    for (Map.Entry<String, Long> serviceEntry : lastServiceConfigUpdates.entrySet()) {
-      String serviceName = serviceEntry.getKey();
-      Long configTimestamp = serviceEntry.getValue();
+    // get the latest service checks, grouped by role
+    List<LastServiceCheckDTO> lastServiceChecks = hostRoleCommandDAO.getLatestServiceChecksByRole(clusterId);
+    Map<String, Long> lastServiceChecksByRole = new HashMap<>();
+    for( LastServiceCheckDTO lastServiceCheck : lastServiceChecks ) {
+      lastServiceChecksByRole.put(lastServiceCheck.role, lastServiceCheck.endTime);
+    }
 
-      boolean serviceCheckWasExecuted = false;
-      for (HostRoleCommandEntity command : latestTimestamps.values()) {
-        if (command.getCommandDetail().contains(serviceName)) {
-          serviceCheckWasExecuted = true;
-          Long serviceCheckTimestamp = command.getStartTime();
+    LinkedHashSet<ServiceCheckConfigDetail> failures = new LinkedHashSet<>();
 
-          if (serviceCheckTimestamp < configTimestamp) {
-            failedServiceNames.add(serviceName);
-            LOG.info("Service {} latest config change is {}, latest service check executed at {}",
-                serviceName,
-                DATE_FORMAT.format(new Date(configTimestamp)),
-                DATE_FORMAT.format(new Date(serviceCheckTimestamp)));
-          }
-        }
+    // for every service, see if there was a service check executed and then
+    for( Entry<String, Long> entry : lastServiceConfigUpdates.entrySet() ) {
+      String serviceName = entry.getKey();
+      long configCreationTime = entry.getValue();
+      String role = actionMetadataProvider.get().getServiceCheckAction(serviceName);
+
+      if(!lastServiceChecksByRole.containsKey(role) ) {
+        LOG.info("There was no service check found for service {} matching role {}", serviceName, role);
+        failures.add(new ServiceCheckConfigDetail(serviceName, null, null));
+        continue;
       }
 
-      if (!serviceCheckWasExecuted) {
-        failedServiceNames.add(serviceName);
-        LOG.info("Service {} service check has never been executed", serviceName);
+      long lastServiceCheckTime = lastServiceChecksByRole.get(role);
+      if (lastServiceCheckTime < configCreationTime) {
+        failures.add(
+            new ServiceCheckConfigDetail(serviceName, lastServiceCheckTime, configCreationTime));
+
+        LOG.info(
+            "The {} service (role {}) had its configurations updated on {}, but the last service check was {}",
+            serviceName, role, DATE_FORMAT.format(new Date(configCreationTime)),
+            DATE_FORMAT.format(new Date(lastServiceCheckTime)));
       }
     }
 
-    if (!failedServiceNames.isEmpty()) {
-      prerequisiteCheck.setFailedOn(failedServiceNames);
-      prerequisiteCheck.setStatus(PrereqCheckStatus.FAIL);
-      String failReason = getFailReason(prerequisiteCheck, request);
-      prerequisiteCheck.setFailReason(String.format(failReason, StringUtils.join(failedServiceNames, ", ")));
+    if (!failures.isEmpty()) {
+      result.getFailedDetail().addAll(failures);
+
+      LinkedHashSet<String> failedServiceNames = failures.stream().map(
+          failure -> failure.serviceName).collect(Collectors.toCollection(LinkedHashSet::new));
+
+      result.setFailedOn(failedServiceNames);
+      result.setStatus(UpgradeCheckStatus.FAIL);
+      String failReason = getFailReason(result, request);
+      result.setFailReason(String.format(failReason, StringUtils.join(failedServiceNames, ", ")));
     }
+
+    return result;
   }
 
   private boolean hasAtLeastOneComponentVersionAdvertised(Service service) {
@@ -175,4 +187,64 @@ public class ServiceCheckValidityCheck extends AbstractCheckDescriptor {
     return false;
   }
 
+  /**
+   * Used to represent information about a service component. This class is safe
+   * to use in sorted & unique collections.
+   */
+  static class ServiceCheckConfigDetail implements Comparable<ServiceCheckConfigDetail> {
+    @JsonProperty("service_name")
+    final String serviceName;
+
+    @JsonProperty("service_check_date")
+    final Long serviceCheckDate;
+
+    @JsonProperty("configuration_date")
+    final Long configurationDate;
+
+    ServiceCheckConfigDetail(String serviceName, @Nullable Long serviceCheckDate,
+        @Nullable Long configurationDate) {
+      this.serviceName = serviceName;
+      this.serviceCheckDate = serviceCheckDate;
+      this.configurationDate = configurationDate;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public int hashCode() {
+      return Objects.hash(serviceName, serviceCheckDate, configurationDate);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object obj) {
+      if (this == obj) {
+        return true;
+      }
+
+      if (obj == null) {
+        return false;
+      }
+
+      if (getClass() != obj.getClass()) {
+        return false;
+      }
+
+      ServiceCheckConfigDetail other = (ServiceCheckConfigDetail) obj;
+      return Objects.equals(serviceName, other.serviceName)
+          && Objects.equals(serviceCheckDate, other.serviceCheckDate)
+          && Objects.equals(configurationDate, other.configurationDate);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public int compareTo(ServiceCheckConfigDetail other) {
+      return serviceName.compareTo(other.serviceName);
+    }
+  }
 }

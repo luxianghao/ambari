@@ -220,7 +220,9 @@ App.AddMetricExpressionView = Em.View.extend({
       placeholder_text: Em.I18n.t('dashboard.widgets.wizard.step2.selectMetric'),
       no_results_text: Em.I18n.t('widget.create.wizard.step2.noMetricFound'),
       onChangeCallback: function (event, obj) {
-        var filteredComponentMetrics = self.get('controller.filteredMetrics').filterProperty('component_name', self.get('currentSelectedComponent.componentName')).filterProperty('level', self.get('currentSelectedComponent.level'));
+        var filteredComponentMetrics = self.get('controller.filteredMetrics')
+        .filterProperty('component_name', self.get('currentSelectedComponent.componentName'))
+        .filterProperty('level', self.get('currentSelectedComponent.level'));
         var filteredMetric = filteredComponentMetrics.findProperty('name', obj.selected);
         var selectedMetric = Em.Object.create({
           name: obj.selected,
@@ -232,8 +234,11 @@ App.AddMetricExpressionView = Em.View.extend({
         if (self.get('currentSelectedComponent.hostComponentCriteria')) {
           selectedMetric.hostComponentCriteria = self.get('currentSelectedComponent.hostComponentCriteria');
         }
+        if (self.get('currentSelectedComponent.tag')) {
+          selectedMetric.tag = self.get('currentSelectedComponent.tag');
+        }
         self.set('currentSelectedComponent.selectedMetric', selectedMetric);
-        if (self.get('currentSelectedComponent.selectedAggregation') == Em.I18n.t('dashboard.widgets.wizard.step2.aggregateFunction.scanOps')) {
+        if (self.get('currentSelectedComponent.selectedAggregation') === Em.I18n.t('dashboard.widgets.wizard.step2.aggregateFunction.scanOps')) {
           var defaultAggregator = self.get('parentView.AGGREGATE_FUNCTIONS')[0];
           self.set('currentSelectedComponent.selectedAggregation', defaultAggregator);
         }
@@ -263,9 +268,8 @@ App.AddMetricExpressionView = Em.View.extend({
    * @param {object} event
    */
   selectComponents: function (event) {
-    var component = this.get('componentMap').findProperty('serviceName', event.context.get('serviceName'))
-      .get('components').findProperty('id', event.context.get('id'));
-    this.set('currentSelectedComponent', component);
+    this.set('currentSelectedComponent', event.context);
+    event.stopPropagation();
   },
 
   /**
@@ -309,22 +313,82 @@ App.AddMetricExpressionView = Em.View.extend({
    * has following hierarchy: service -> component -> metrics
    */
   componentMap: function () {
-    var servicesMap = {};
+    var hasNameNodeFederation = App.get('hasNameNodeFederation');
+    var servicesMap = this.getServicesMap();
     var result = [];
-    var masterNames = App.StackServiceComponent.find().filterProperty('isMaster').mapProperty('componentName');
+    var nameServiceGroups = this.getNameServiceGroups();
     var parentView = this.get('parentView');
     var expressionId = "_" + parentView.get('expression.id');
+
+    for (var serviceName in servicesMap) {
+      var components = [];
+      for (var componentId in servicesMap[serviceName].components) {
+        // Hide the option if none of the hostComponent is created in the cluster yet
+        var componentName = servicesMap[serviceName].components[componentId].component_name;
+        if (App.HostComponent.getCount(componentName, 'totalCount') === 0) continue;
+        if (hasNameNodeFederation && componentName === 'NAMENODE') {
+          nameServiceGroups.forEach(function(group) {
+            group.component = this.createComponentItem(servicesMap[serviceName], serviceName, componentId, expressionId, group.tag);
+          }, this);
+        } else {
+          components.push(this.createComponentItem(servicesMap[serviceName], serviceName, componentId, expressionId));
+        }
+      }
+      if (hasNameNodeFederation && serviceName === 'HDFS') {
+        components.push(Em.Object.create({
+          displayName: 'NameNodes',
+          isGroup: true,
+          components: nameServiceGroups
+        }));
+      }
+      result.push(Em.Object.create({
+        serviceName: serviceName,
+        //in order to support panel lists
+        href: '#' + serviceName,
+        displayName: App.StackService.find(serviceName).get('displayName'),
+        count: servicesMap[serviceName].count,
+        components: components
+      }));
+    }
+
+    return this.putContextServiceOnTop(result);
+  }.property('controller.filteredMetrics', 'App.router.clusterController.isComponentsStateLoaded'),
+  
+  getNameServiceGroups: function() {
+    const hasNameNodeFederation = App.get('hasNameNodeFederation');
+    const nameServiceGroups = [];
+  
+    if (hasNameNodeFederation) {
+      App.HDFSService.find('HDFS').get('masterComponentGroups').forEach(function(group) {
+        nameServiceGroups.push({
+          tag: group.name,
+          displayName: Em.I18n.t('dashboard.widgets.wizard.step2.nameSpaceDropDownItem').format(group.name),
+          component: null
+        });
+      });
+    }
+    return nameServiceGroups;
+  },
+  
+  getServicesMap: function() {
+    const servicesMap = {};
+    const hasNameNodeFederation = App.get('hasNameNodeFederation');
+    const masterNames = App.StackServiceComponent.find().filterProperty('isMaster').mapProperty('componentName');
+  
     if (this.get('controller.filteredMetrics')) {
       this.get('controller.filteredMetrics').forEach(function (metric) {
+        // ignore NameNode component level metrics on federated cluster
+        if (hasNameNodeFederation && metric.component_name === 'NAMENODE' && metric.level === 'COMPONENT') return false;
+      
         var service = servicesMap[metric.service_name];
         if (!service) {
           service = {
-              count: 0,
-              components: {}
+            count: 0,
+            components: {}
           };
           servicesMap[metric.service_name] = service;
         }
-
+      
         var componentId = masterNames.contains(metric.component_name) ? metric.component_name + '_' + metric.level : metric.component_name;
         service.count++;
         if (service.components[componentId]) {
@@ -341,62 +405,42 @@ App.AddMetricExpressionView = Em.View.extend({
         }
       }, this);
     }
+    return servicesMap;
+  },
 
-    for (var serviceName in servicesMap) {
-      var components = [];
-      for (var componentId in servicesMap[serviceName].components) {
-        // Hide the option if none of the hostComponent is created in the cluster yet
-        var componentName = servicesMap[serviceName].components[componentId].component_name;
-        if (App.HostComponent.getCount(componentName, 'totalCount') === 0) continue;
-        var component = Em.Object.create({
-          componentName: servicesMap[serviceName].components[componentId].component_name,
-          level: servicesMap[serviceName].components[componentId].level,
-          displayName: function() {
-            var stackComponent = App.StackServiceComponent.find(this.get('componentName'));
-            if (stackComponent.get('isMaster')) {
-              if (this.get('level') === 'HOSTCOMPONENT') {
-                return Em.I18n.t('widget.create.wizard.step2.activeComponents').format(stackComponent.get('displayName'));
-              }
-            }
-            return Em.I18n.t('widget.create.wizard.step2.allComponents').format(pluralize(stackComponent.get('displayName')));
-          }.property('componentName', 'level'),
-          count: servicesMap[serviceName].components[componentId].count,
-          metrics: servicesMap[serviceName].components[componentId].metrics.uniq().sort(),
-          selected: false,
-          id: componentId + expressionId,
-          aggregatorId: componentId + expressionId + '_aggregator',
-          serviceName: serviceName,
-          showAggregateSelect: Em.computed.equal('level', 'COMPONENT'),
-          selectedMetric: null,
-          selectedAggregation: Em.I18n.t('dashboard.widgets.wizard.step2.aggregateFunction.scanOps'),
-          isAddEnabled: function () {
-            var selectedMetric = this.get('selectedMetric'),
-              aggregateFunction = this.get('selectedAggregation');
-            if (this.get('showAggregateSelect')) {
-              return (!!selectedMetric && !!aggregateFunction &&
-                aggregateFunction != Em.I18n.t('dashboard.widgets.wizard.step2.aggregateFunction.scanOps'));
-            } else {
-              return (!!selectedMetric);
-            }
-          }.property('selectedMetric', 'selectedAggregation')
-        });
-        if (component.get('level') === 'HOSTCOMPONENT') {
-          component.set('hostComponentCriteria', servicesMap[serviceName].components[componentId].hostComponentCriteria);
+  createComponentItem: function (service, serviceName, componentId, expressionId, tag) {
+    var stackComponent = App.StackServiceComponent.find(service.components[componentId].component_name);
+    var component = service.components[componentId];
+    tag = tag || '';
+    return Em.Object.create({
+      componentName: component.component_name,
+      level: component.level,
+      displayName: stackComponent.get('isMaster') && component.level  === 'HOSTCOMPONENT' ?
+        Em.I18n.t('widget.create.wizard.step2.activeComponents').format(stackComponent.get('displayName')) :
+        Em.I18n.t('widget.create.wizard.step2.allComponents').format(pluralize(stackComponent.get('displayName'))),
+      tag: tag,
+      count: component.count,
+      metrics: component.metrics.uniq().sort(),
+      selected: false,
+      id: componentId + expressionId + tag,
+      aggregatorId: componentId + expressionId + '_aggregator',
+      serviceName: serviceName,
+      showAggregateSelect: Em.computed.equal('level', 'COMPONENT'),
+      selectedMetric: null,
+      selectedAggregation: Em.I18n.t('dashboard.widgets.wizard.step2.aggregateFunction.scanOps'),
+      hostComponentCriteria: component.level === 'HOSTCOMPONENT' ? component.hostComponentCriteria : null,
+      isAddEnabled: function () {
+        var selectedMetric = this.get('selectedMetric'),
+          aggregateFunction = this.get('selectedAggregation');
+        if (this.get('showAggregateSelect')) {
+          return (!!selectedMetric && !!aggregateFunction &&
+          aggregateFunction != Em.I18n.t('dashboard.widgets.wizard.step2.aggregateFunction.scanOps'));
+        } else {
+          return (!!selectedMetric);
         }
-        components.push(component);
-      }
-      result.push(Em.Object.create({
-        serviceName: serviceName,
-        //in order to support panel lists
-        href: '#' + serviceName,
-        displayName: App.StackService.find(serviceName).get('displayName'),
-        count: servicesMap[serviceName].count,
-        components: components
-      }));
-    }
-
-    return this.putContextServiceOnTop(result);
-  }.property('controller.filteredMetrics'),
+      }.property('selectedMetric', 'selectedAggregation')
+    });
+  },
 
   /**
    * returns the input array with the context service (service from which widget browser is launched) as the first element of the array

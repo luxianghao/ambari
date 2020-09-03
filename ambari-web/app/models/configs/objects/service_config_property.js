@@ -160,6 +160,21 @@ App.ServiceConfigProperty = Em.Object.extend({
   isConfigIdentity: false,
   copy: '',
 
+  /**
+   * Determines if config exists in the non-default config group but is loaded for default config group
+   *
+   * @type {boolean}
+   */
+  isCustomGroupConfig: false,
+
+  /**
+   * Determines if config is Undefined label, used for overrides, that do not have original property in default group
+   * @type {boolean}
+   */
+  isUndefinedLabel: function () {
+    return this.get('displayType') === 'label' && this.get('value') === 'Undefined';
+  }.property('displayType', 'value'),
+
   error: Em.computed.bool('errorMessage.length'),
   warn: Em.computed.bool('warnMessage.length'),
   hasValidationErrors: Em.computed.bool('validationErrors.length'),
@@ -209,9 +224,7 @@ App.ServiceConfigProperty = Em.Object.extend({
    * When <code>true</code> means that property is shown and may affect validation process.
    * When <code>false</code> means that property won't affect validation.
    */
-  isActive: function() {
-    return this.get('isVisible') && !this.get('hiddenBySubSection') && !this.get('hiddenBySection');
-  }.property('isVisible', 'hiddenBySubSection', 'hiddenBySection'),
+  isActive: Em.computed.and('isVisible', '!hiddenBySubSection', '!hiddenBySection'),
 
   /**
    * @type {boolean}
@@ -265,9 +278,7 @@ App.ServiceConfigProperty = Em.Object.extend({
     return overrideable && (editable || !overrides || !overrides.length) && (!["componentHost", "password"].contains(dt));
   }.property('isEditable', 'displayType', 'isOverridable', 'overrides.length'),
 
-  isOverridden: function() {
-    return (this.get('overrides') != null && this.get('overrides.length') > 0) || !this.get('isOriginalSCP');
-  }.property('overrides', 'overrides.length', 'isOriginalSCP'),
+  isOverridden: Em.computed.or('overrides.length', '!isOriginalSCP'),
 
   isOverrideChanged: function () {
     if (Em.isNone(this.get('overrides')) && this.get('overrideValues.length') === 0) return false;
@@ -335,9 +346,6 @@ App.ServiceConfigProperty = Em.Object.extend({
       isFinal = this.get('isFinal'),
       savedIsFinal = this.get('savedIsFinal');
 
-    if (this.get('name') === 'kdc_type') {
-      return App.router.get('mainAdminKerberosController.kdcTypesValues')[savedValue] !== value;
-    }
     // ignore precision difference for configs with type of `float` which value may ends with 0
     // e.g. between 0.4 and 0.40
     if (this.get('stackConfigProperty') && this.get('stackConfigProperty.valueAttributes.type') == 'float') {
@@ -353,18 +361,9 @@ App.ServiceConfigProperty = Em.Object.extend({
   cantBeUndone: Em.computed.existsIn('displayType', ["componentHost", "componentHosts", "radio button"]),
 
   validate: function () {
-    if (!this.get('isEditable')) {
-      this.set('errorMessage', ''); // do not perform validation for not editable configs
-    } else if ((typeof this.get('value') != 'object') && ((this.get('value') + '').length === 0)) {
+    if ((typeof this.get('value') != 'object') && ((this.get('value') + '').length === 0)) {
       var widgetType = this.get('widgetType');
       this.set('errorMessage', (this.get('isRequired') && (!['test-db-connection','label'].contains(widgetType))) ? Em.I18n.t('errorMessage.config.required') : '');
-    } else if (this.get('name') === 'llap_queue_capacity') {
-      if (!isNaN(parseInt(this.get('value'), 10)) && parseInt(this.get('value'), 10) === 100) {
-        this.set('warnMessage', Em.I18n.t('config.warnMessage.llap_queue_capacity.max'));
-      } else {
-        this.set('warnMessage', '');
-        this.set('errorMessage', this.validateErrors(this.get('value'), this.get('name'), this.get('retypedPassword')));
-      }
     } else {
       this.set('errorMessage', this.validateErrors(this.get('value'), this.get('name'), this.get('retypedPassword')));
     }

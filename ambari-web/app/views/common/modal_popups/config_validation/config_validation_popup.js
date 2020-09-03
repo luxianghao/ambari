@@ -23,11 +23,11 @@ var App = require('app');
  *
  * @return {*}
  */
-App.showConfigValidationPopup = function (configErrors, primary, secondary) {
+App.showConfigValidationPopup = function (configErrors, primary, secondary, controller) {
   return App.ModalPopup.show({
     header: Em.I18n.t('installer.step7.popup.validation.warning.header'),
-    classNames: ['common-modal-wrapper','modal-full-width'],
-    modalDialogClasses: ['modal-lg'],
+    classNames: ['common-modal-wrapper'],
+    modalDialogClasses: ['modal-xlg'],
     primary: Em.I18n.t('common.proceedAnyway'),
     primaryClass: 'btn-danger',
     marginBottom: 200,
@@ -43,13 +43,14 @@ App.showConfigValidationPopup = function (configErrors, primary, secondary) {
       this._super();
       secondary();
     },
-    bodyClass: Em.View.extend({
-      templateName: require('templates/common/modal_popups/config_recommendation_popup'),
-      configErrors: configErrors,
-      configValidationError: Em.computed.someBy('configErrors', 'isError', true),
-      messageBody: Em.I18n.t(this.get('configValidationError')
-        ? 'installer.step7.popup.validation.error.body'
-        : 'installer.step7.popup.validation.warning.body')
+    disablePrimary: !!configErrors.get('criticalIssues.length'),
+    bodyClass: App.ValidationsView.extend({
+      controller: controller,
+      configErrors: configErrors
     })
   });
 };
+
+App.ValidationsView = Em.View.extend({
+  templateName: require('templates/common/modal_popups/config_recommendation_popup')
+});

@@ -153,8 +153,8 @@ App.ConfigOverridable = Em.Mixin.create({
             });
           } else {
             newConfigGroup.is_temporary = true;
-            App.store.load(App.ServiceConfigGroup, newConfigGroup);
-            App.store.commit();
+            App.store.safeLoad(App.ServiceConfigGroup, newConfigGroup);
+            App.store.fastCommit();
             newConfigGroup = App.ServiceConfigGroup.find(newConfigGroup.id);
             configGroups.pushObject(newConfigGroup);
             self.persistConfigGroups();
@@ -241,11 +241,11 @@ App.ConfigOverridable = Em.Mixin.create({
         "group_name": newConfigGroupData.name,
         "tag": newConfigGroupData.service_id,
         "description": newConfigGroupData.description,
+        "service_name": newConfigGroupData.service_id,
         "desired_configs": newConfigGroupData.desired_configs.map(function (cst) {
           var type = Em.get(cst, 'site') || Em.get(cst, 'type');
           return {
             type: type,
-            tag: 'version' + (new Date).getTime(),
             properties: typeToPropertiesMap[type]
           };
         }),
@@ -281,8 +281,8 @@ App.ConfigOverridable = Em.Mixin.create({
   postNewConfigurationGroupSuccess: function (response, opt, params) {
     var modelData = params.modelData;
     modelData.id = response.resources[0].ConfigGroup.id;
-    App.store.load(App.ServiceConfigGroup, modelData);
-    App.store.commit();
+    App.store.safeLoad(App.ServiceConfigGroup, modelData);
+    App.store.fastCommit();
     App.ServiceConfigGroup.deleteTemporaryRecords();
   },
 
@@ -342,6 +342,7 @@ App.ConfigOverridable = Em.Mixin.create({
         group_name: configGroup.get('name'),
         description: configGroup.get('description'),
         tag: configGroup.get('service.id'),
+        service_name: configGroup.get('service.id'),
         hosts: configGroup.get('hosts').map(function (h) {
           return {
             host_name: h
@@ -369,6 +370,7 @@ App.ConfigOverridable = Em.Mixin.create({
   launchSwitchConfigGroupOfHostDialog: function (selectedGroup, configGroups, hostName, callback) {
     var self = this;
     return App.ModalPopup.show({
+      classNames: ['change-config-group-modal'],
       header: Em.I18n.t('config.group.host.switch.dialog.title'),
       configGroups: configGroups,
       selectedConfigGroup: selectedGroup,

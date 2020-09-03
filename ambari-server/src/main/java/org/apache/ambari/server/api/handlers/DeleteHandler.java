@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,12 +20,11 @@ package org.apache.ambari.server.api.handlers;
 
 import org.apache.ambari.server.ConfigGroupNotFoundException;
 import org.apache.ambari.server.api.resources.ResourceInstance;
-
 import org.apache.ambari.server.api.services.DeleteResultMetadata;
 import org.apache.ambari.server.api.services.RequestBody;
 import org.apache.ambari.server.api.services.Result;
-import org.apache.ambari.server.api.services.ResultMetadata;
 import org.apache.ambari.server.api.services.ResultImpl;
+import org.apache.ambari.server.api.services.ResultMetadata;
 import org.apache.ambari.server.api.services.ResultStatus;
 import org.apache.ambari.server.controller.internal.DeleteStatusMetaData;
 import org.apache.ambari.server.controller.spi.NoSuchParentResourceException;
@@ -84,8 +83,10 @@ public class DeleteHandler extends BaseManagementHandler implements RequestHandl
       return null;
     }
 
-    if (requestStatusMetaData.getClass() != DeleteStatusMetaData.class) {
-      throw new IllegalArgumentException("RequestStatusDetails is not of type DeleteStatusDetails");
+    if (!(requestStatusMetaData instanceof DeleteStatusMetaData)) {
+      throw new IllegalArgumentException(
+		  String.format("Wrong status details class received - expecting: %s; actual: %s", 
+			   DeleteStatusMetaData.class, requestStatusMetaData.getClass()));
     }
 
     DeleteStatusMetaData statusDetails = (DeleteStatusMetaData) requestStatusMetaData;

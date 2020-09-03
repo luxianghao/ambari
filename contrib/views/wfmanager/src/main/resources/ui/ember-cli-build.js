@@ -20,8 +20,15 @@
 var EmberApp = require('ember-cli/lib/broccoli/ember-app');
 
 module.exports = function(defaults) {
+
+
     var app = new EmberApp(defaults, {
         // Add options here
+  codemirror: {
+     modes: ['xml'],
+     keyMaps: ['vim'],
+     themes: ['solarized']
+  }
     });
 
     // Use `app.import` to add additional libraries to the generated
@@ -40,7 +47,7 @@ module.exports = function(defaults) {
     app.import('bower_components/bootstrap/dist/css/bootstrap.css');
     app.import('bower_components/bootstrap/dist/js/bootstrap.js');
 
-    app.import('bower_components/jsPlumb/dist/js/jsPlumb-2.0.7.js');
+    
 
     app.import('bower_components/bootstrap/dist/fonts/glyphicons-halflings-regular.woff', {
         destDir: 'fonts'
@@ -116,7 +123,11 @@ module.exports = function(defaults) {
 
 	//cytoscape-panzoom
 	app.import('bower_components/cytoscape-panzoom/cytoscape-panzoom.js');
-	app.import('bower_components/cytoscape-panzoom/cytoscape.js-panzoom.css');	
+	app.import('bower_components/cytoscape-panzoom/cytoscape.js-panzoom.css');
+
+	// Fuse js
+	app.import('bower_components/fuse.js/src/fuse.min.js');
+  app.import('bower_components/jsog/lib/JSOG.js');
 
     return app.toTree();
 };

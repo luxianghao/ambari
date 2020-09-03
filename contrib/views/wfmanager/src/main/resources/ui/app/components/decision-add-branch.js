@@ -54,12 +54,9 @@ export default Ember.Component.extend(Validations, FindNodeMixin,{
         }
         self.set("isInsertAction",false);
         this.set("newNodeType",null);
-        var commonTarget=this.findCommonTargetNode(this.workflow.startNode,this.get('node'));
-        var descendantNodes=this.getDesendantNodes(this.get('node'));
-        if (commonTarget){
-          descendantNodes.removeObject(commonTarget);
-          descendantNodes.unshiftObject(commonTarget);
-        }
+        this.get('flowRenderer').populateOkToandErrorTONodes(node);
+        var descendantNodes= Ember.A([]);
+        descendantNodes.pushObjects(this.get('node.validOkToNodes'));
         this.set('descendantNodes',descendantNodes);
         self.$("#selector-content").show();
       }
@@ -73,7 +70,7 @@ export default Ember.Component.extend(Validations, FindNodeMixin,{
       this.set("newNodeType",type);
     },
     onTargetNodeChange(value){
-      var node = this.get('descendantNodes').findBy('id',value);
+      var node = this.get('descendantNodes').findBy('id',value) || this.get('killNodes').findBy('id',value);
       this.set('targetNode', node);
     },
     save(){

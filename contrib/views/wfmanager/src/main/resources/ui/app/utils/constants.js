@@ -32,23 +32,25 @@ export default Ember.Object.create({
   rmDefaultValue: "${resourceManager}",
   defaultNameNodeValue : "${nameNode}",
   useCytoscape : true,
+  isProjectManagerEnabled : false,
   autoRestoreWorkflowEnabled : true,
-  actions:{
-    hiveAction:{name : "hive",supportsSchema : true, currentVersion:''},
-    hive2Action:{name : "hive2",supportsSchema : true, currentVersion:''},
-    javaAction:{name : "java",supportsSchema : false, currentVersion:''},
-    pigAction:{name : "pig",supportsSchema : true, currentVersion:''},
-    sqoopAction:{name : "sqoop",supportsSchema : true, currentVersion:''},
-    shellAction:{name : "shell",supportsSchema : true, currentVersion:''},
-    sparkAction:{name : "spark",supportsSchema : true, currentVersion:''},
-    mapReduceAction:{name : "map-reduce",supportsSchema : false, currentVersion:''},
-    subWorkflowAction:{name : "sub-workflow",supportsSchema : false, currentVersion:''},
-    distcpAction:{name : "distcp",supportsSchema : true, currentVersion:''},
-    sshAction:{name : "ssh",supportsSchema : false, currentVersion:''},
-    emailAction:{name : "email",supportsSchema : true, currentVersion:''}
-  },
+  actions: Ember.A([
+    {name : "hive",supportsSchema : true, currentVersion:''},
+    {name : "hive2",supportsSchema : true, currentVersion:''},
+    {name : "java",supportsSchema : false, currentVersion:''},
+    {name : "pig",supportsSchema : false, currentVersion:''},
+    {name : "sqoop",supportsSchema : true, currentVersion:''},
+    {name : "shell",supportsSchema : true, currentVersion:''},
+    {name : "spark",supportsSchema : true, currentVersion:''},
+    {name : "map-reduce",supportsSchema : false, currentVersion:''},
+    {name : "sub-workflow",supportsSchema : false, currentVersion:''},
+    {name : "distcp",supportsSchema : true, currentVersion:''},
+    {name : "fs",supportsSchema : true, currentVersion:''},
+    {name : "ssh",supportsSchema : false, currentVersion:''},
+    {name : "email",supportsSchema : true, currentVersion:''}
+  ]),
   sparkMasterList :Ember.A([{value:'yarn-cluster',displayName:'Yarn Cluster'},
-                            {value:'yarn-client',displayName:'Yarn Client'},
+                            /*{value:'yarn-client',displayName:'Yarn Client'},*/
                             {value:'local',displayName:'Local'}]),
   timezoneList : Ember.A([
     {displayName:'UTC',gmtOffset:0, value:'UTC'},
@@ -85,4 +87,11 @@ export default Ember.Object.create({
     {displayName:'(GMT +12:00) Auckland, Wellington, Fiji, Kamchatka',gmtOffset:-12, value:'GMT+12:00'}
   ]),
   persistWorkInProgressInterval : 30000,
+  elConstants : [
+    '${YEAR}', '${MONTH}', '${DAY}', '${HOUR}', '${MINUTE}'
+  ],
+  customActionEnabled : true,
+  successfulFlowColor : '#5bb75b',
+  defaultFlowColor : '#808080',
+  flowGraphMaxNodeCount : 400
 });

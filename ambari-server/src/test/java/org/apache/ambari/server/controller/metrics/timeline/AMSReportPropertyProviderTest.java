@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -17,24 +17,8 @@
  */
 package org.apache.ambari.server.controller.metrics.timeline;
 
-import org.apache.ambari.server.configuration.ComponentSSLConfiguration;
-import org.apache.ambari.server.configuration.Configuration;
-import org.apache.ambari.server.controller.internal.PropertyInfo;
-import org.apache.ambari.server.controller.internal.ResourceImpl;
-import org.apache.ambari.server.controller.internal.TemporalInfoImpl;
-import org.apache.ambari.server.controller.internal.URLStreamProvider;
-import org.apache.ambari.server.controller.metrics.ganglia.TestStreamProvider;
-import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheEntryFactory;
-import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheProvider;
-import org.apache.ambari.server.controller.spi.Request;
-import org.apache.ambari.server.controller.spi.Resource;
-import org.apache.ambari.server.controller.spi.TemporalInfo;
-import org.apache.ambari.server.controller.utilities.PropertyHelper;
-import org.apache.ambari.server.controller.utilities.StreamProvider;
-import org.apache.http.client.utils.URIBuilder;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import static org.mockito.Mockito.mock;
+
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Collections;
@@ -42,8 +26,24 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-import static org.apache.ambari.server.controller.metrics.timeline.AMSPropertyProviderTest.TestMetricHostProvider;
-import static org.mockito.Mockito.mock;
+import org.apache.ambari.server.configuration.ComponentSSLConfiguration;
+import org.apache.ambari.server.configuration.Configuration;
+import org.apache.ambari.server.controller.internal.PropertyInfo;
+import org.apache.ambari.server.controller.internal.ResourceImpl;
+import org.apache.ambari.server.controller.internal.TemporalInfoImpl;
+import org.apache.ambari.server.controller.internal.URLStreamProvider;
+import org.apache.ambari.server.controller.metrics.ganglia.TestStreamProvider;
+import org.apache.ambari.server.controller.metrics.timeline.AMSPropertyProviderTest.TestMetricHostProvider;
+import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheEntryFactory;
+import org.apache.ambari.server.controller.metrics.timeline.cache.TimelineMetricCacheProvider;
+import org.apache.ambari.server.controller.spi.Request;
+import org.apache.ambari.server.controller.spi.Resource;
+import org.apache.ambari.server.controller.spi.TemporalInfo;
+import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.http.client.utils.URIBuilder;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 public class AMSReportPropertyProviderTest {
   private static final String CLUSTER_NAME_PROPERTY_ID = PropertyHelper.getPropertyId("Clusters", "cluster_name");
@@ -83,7 +83,7 @@ public class AMSReportPropertyProviderTest {
     String propertyId = PropertyHelper.getPropertyId("metrics/cpu", "User");
     Resource resource = new ResourceImpl(Resource.Type.Cluster);
     resource.setProperty(CLUSTER_NAME_PROPERTY_ID, "c1");
-    Map<String, TemporalInfo> temporalInfoMap = new HashMap<String, TemporalInfo>();
+    Map<String, TemporalInfo> temporalInfoMap = new HashMap<>();
     temporalInfoMap.put(propertyId, new TemporalInfoImpl(1416445244800L, 1416448936474L, 1L));
     Request request = PropertyHelper.getReadRequest(
       Collections.singleton(propertyId), temporalInfoMap);
@@ -126,7 +126,7 @@ public class AMSReportPropertyProviderTest {
     String propertyId = PropertyHelper.getPropertyId("metrics/cpu", "User._sum");
     Resource resource = new ResourceImpl(Resource.Type.Cluster);
     resource.setProperty(CLUSTER_NAME_PROPERTY_ID, "c1");
-    Map<String, TemporalInfo> temporalInfoMap = new HashMap<String, TemporalInfo>();
+    Map<String, TemporalInfo> temporalInfoMap = new HashMap<>();
     temporalInfoMap.put(propertyId, new TemporalInfoImpl(1432033257812L, 1432035927922L, 1L));
     Request request = PropertyHelper.getReadRequest(
       Collections.singleton(propertyId), temporalInfoMap);

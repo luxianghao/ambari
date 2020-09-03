@@ -46,20 +46,6 @@ describe('App.KerberosWizardStep1Controller', function() {
       controller.set('options', []);
     });
 
-    it("enableIpa is true", function() {
-      App.set('supports.enableIpa', true);
-      controller.loadStep();
-      expect(controller.get('selectedItem')).to.be.equal(Em.I18n.t('admin.kerberos.wizard.step1.option.kdc'));
-      expect(controller.get('options')).to.not.be.empty;
-    });
-
-    it("enableIpa is false", function() {
-      App.set('supports.enableIpa', false);
-      controller.loadStep();
-      expect(controller.get('selectedItem')).to.be.equal(Em.I18n.t('admin.kerberos.wizard.step1.option.kdc'));
-      expect(controller.get('options')).to.be.empty;
-    });
-    
     it("on load selected item should not change", function() {
       controller.set('selectedItem',Em.I18n.t('admin.kerberos.wizard.step3.option.kdc'));	
       controller.loadStep();
@@ -67,7 +53,7 @@ describe('App.KerberosWizardStep1Controller', function() {
     });
   });
 
-  describe("#next()", function () {
+  describe("#submit()", function () {
 
     beforeEach(function() {
       sinon.stub(App.router, 'send');
@@ -81,7 +67,7 @@ describe('App.KerberosWizardStep1Controller', function() {
       controller.reopen({
         'isSubmitDisabled': false
       });
-      controller.next();
+      controller.submit();
       expect(App.router.send.calledOnce).to.be.true;
     });
 
@@ -89,7 +75,7 @@ describe('App.KerberosWizardStep1Controller', function() {
       controller.reopen({
         'isSubmitDisabled': true
       });
-      controller.next();
+      controller.submit();
       expect(App.router.send.called).to.be.false;
     });
   });

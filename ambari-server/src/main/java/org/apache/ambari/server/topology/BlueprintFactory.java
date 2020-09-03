@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -10,8 +10,7 @@
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distribut
- * ed on an "AS IS" BASIS,
+ * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
@@ -19,11 +18,17 @@
 
 package org.apache.ambari.server.topology;
 
-import com.google.inject.Inject;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
 import org.apache.ambari.server.AmbariException;
 import org.apache.ambari.server.ObjectNotFoundException;
-import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.controller.AmbariServer;
+import org.apache.ambari.server.controller.RootComponent;
 import org.apache.ambari.server.controller.internal.ProvisionAction;
 import org.apache.ambari.server.controller.internal.Stack;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
@@ -31,12 +36,7 @@ import org.apache.ambari.server.orm.dao.BlueprintDAO;
 import org.apache.ambari.server.orm.entities.BlueprintEntity;
 import org.apache.ambari.server.stack.NoSuchStackException;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import com.google.inject.Inject;
 
 /**
  * Create a Blueprint instance.
@@ -136,7 +136,7 @@ public class BlueprintFactory {
       throw new IllegalArgumentException("At least one host group must be specified in a blueprint");
     }
 
-    Collection<HostGroup> hostGroups = new ArrayList<HostGroup>();
+    Collection<HostGroup> hostGroups = new ArrayList<>();
     for (HashMap<String, Object> hostGroupProperties : hostGroupProps) {
       String hostGroupName = (String) hostGroupProperties.get(HOST_GROUP_NAME_PROPERTY_ID);
       if (hostGroupName == null || hostGroupName.isEmpty()) {
@@ -166,7 +166,7 @@ public class BlueprintFactory {
     }
 
     Collection<String> stackComponentNames = getAllStackComponents(stack);
-    Collection<Component> components = new ArrayList<Component>();
+    Collection<Component> components = new ArrayList<>();
 
     for (HashMap<String, String> componentProperties : componentProps) {
       String componentName = componentProperties.get(COMPONENT_NAME_PROPERTY_ID);
@@ -199,12 +199,12 @@ public class BlueprintFactory {
    * @throws IllegalArgumentException if the specified stack doesn't exist
    */
   private Collection<String> getAllStackComponents(Stack stack) {
-    Collection<String> allComponents = new HashSet<String>();
+    Collection<String> allComponents = new HashSet<>();
     for (Collection<String> components: stack.getComponents().values()) {
       allComponents.addAll(components);
     }
     // currently ambari server is no a recognized component
-    allComponents.add("AMBARI_SERVER");
+    allComponents.add(RootComponent.AMBARI_SERVER.name());
 
     return allComponents;
   }
@@ -220,26 +220,4 @@ public class BlueprintFactory {
     blueprintDAO   = dao;
   }
 
-  /**
-   * Internal interface used to abstract out the process of creating the Stack object.
-   *
-   * This is used to simplify unit testing, since a new Factory can be provided to
-   * simulate various Stack or error conditions.
-   */
-  interface StackFactory {
-      public Stack createStack(String stackName, String stackVersion, AmbariManagementController managementController) throws AmbariException;
-  }
-
-  /**
-   * Default implementation of StackFactory.
-   *
-   * Calls the Stack constructor to create the Stack instance.
-   *
-   */
-  private static class DefaultStackFactory implements StackFactory {
-    @Override
-    public Stack createStack(String stackName, String stackVersion, AmbariManagementController managementController) throws AmbariException {
-      return new Stack(stackName, stackVersion, managementController);
-    }
-  }
 }

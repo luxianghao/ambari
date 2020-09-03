@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -41,6 +41,8 @@ import org.apache.ambari.server.controller.spi.Resource;
 import org.apache.ambari.server.controller.spi.SystemException;
 import org.apache.ambari.server.controller.spi.UnsupportedPropertyException;
 import org.apache.ambari.server.controller.utilities.PropertyHelper;
+import org.apache.ambari.server.orm.dao.HostRoleCommandDAO;
+import org.apache.ambari.server.orm.dao.HostRoleCommandStatusSummaryDTO;
 import org.apache.ambari.server.orm.dao.StageDAO;
 import org.apache.ambari.server.orm.dao.UpgradeDAO;
 import org.apache.ambari.server.orm.entities.StageEntity;
@@ -53,11 +55,12 @@ import org.apache.ambari.server.security.authorization.AuthorizationHelper;
 import org.apache.ambari.server.security.authorization.ResourceType;
 import org.apache.ambari.server.security.authorization.RoleAuthorization;
 import org.apache.ambari.server.state.Cluster;
-import org.apache.ambari.server.state.UpgradeHelper;
-
-import com.google.inject.Inject;
 import org.apache.ambari.server.utils.SecretReference;
 import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.inject.Inject;
 
 /**
  * Manages the ability to get the status of upgrades.
@@ -65,18 +68,20 @@ import org.apache.commons.lang.StringUtils;
 @StaticallyInject
 public class UpgradeItemResourceProvider extends ReadOnlyResourceProvider {
 
+  private static final Logger LOG = LoggerFactory.getLogger(UpgradeItemResourceProvider.class);
+
   public static final String UPGRADE_CLUSTER_NAME = "UpgradeItem/cluster_name";
   public static final String UPGRADE_REQUEST_ID = "UpgradeItem/request_id";
   public static final String UPGRADE_GROUP_ID = "UpgradeItem/group_id";
   public static final String UPGRADE_ITEM_STAGE_ID = "UpgradeItem/stage_id";
   public static final String UPGRADE_ITEM_TEXT = "UpgradeItem/text";
 
-  private static final Set<String> PK_PROPERTY_IDS = new HashSet<String>(
-      Arrays.asList(UPGRADE_REQUEST_ID, UPGRADE_ITEM_STAGE_ID));
-  private static final Set<String> PROPERTY_IDS = new HashSet<String>();
+  private static final Set<String> PK_PROPERTY_IDS = new HashSet<>(
+    Arrays.asList(UPGRADE_REQUEST_ID, UPGRADE_ITEM_STAGE_ID));
+  private static final Set<String> PROPERTY_IDS = new HashSet<>();
 
-  private static final Map<Resource.Type, String> KEY_PROPERTY_IDS = new HashMap<Resource.Type, String>();
-  private static Map<String, String> STAGE_MAPPED_IDS = new HashMap<String, String>();
+  private static final Map<Resource.Type, String> KEY_PROPERTY_IDS = new HashMap<>();
+  private static Map<String, String> STAGE_MAPPED_IDS = new HashMap<>();
 
   @Inject
   private static UpgradeDAO s_dao;
@@ -84,12 +89,8 @@ public class UpgradeItemResourceProvider extends ReadOnlyResourceProvider {
   @Inject
   private static StageDAO s_stageDao;
 
-  /**
-   * Used to generated the correct tasks and stages during an upgrade.
-   */
   @Inject
-  private static UpgradeHelper s_upgradeHelper;
-
+  private static HostRoleCommandDAO s_hostRoleCommandDAO;
 
   static {
     // properties
@@ -118,7 +119,7 @@ public class UpgradeItemResourceProvider extends ReadOnlyResourceProvider {
    * @param controller  the controller
    */
   UpgradeItemResourceProvider(AmbariManagementController controller) {
-    super(PROPERTY_IDS, KEY_PROPERTY_IDS, controller);
+    super(Resource.Type.UpgradeItem, PROPERTY_IDS, KEY_PROPERTY_IDS, controller);
   }
 
   @Override
@@ -191,11 +192,10 @@ public class UpgradeItemResourceProvider extends ReadOnlyResourceProvider {
       throws SystemException, UnsupportedPropertyException,
       NoSuchResourceException, NoSuchParentResourceException {
 
-    Set<Resource> results = new LinkedHashSet<Resource>();
+    Set<Resource> results = new LinkedHashSet<>();
     Set<String> requestPropertyIds = getRequestPropertyIds(request, predicate);
 
     for (Map<String, Object> propertyMap : getPropertyMaps(predicate)) {
-      String clusterName = (String) propertyMap.get(UPGRADE_CLUSTER_NAME);
       String requestIdStr = (String) propertyMap.get(UPGRADE_REQUEST_ID);
       String groupIdStr = (String) propertyMap.get(UPGRADE_GROUP_ID);
       String stageIdStr = (String) propertyMap.get(UPGRADE_ITEM_STAGE_ID);
@@ -215,7 +215,7 @@ public class UpgradeItemResourceProvider extends ReadOnlyResourceProvider {
         stageId = Long.valueOf(stageIdStr);
       }
 
-      List<UpgradeItemEntity> entities = new ArrayList<UpgradeItemEntity>();
+      List<UpgradeItemEntity> entities = new ArrayList<>();
       if (null == stageId) {
         UpgradeGroupEntity group = s_dao.findUpgradeGroup(groupId);
 
@@ -232,38 +232,36 @@ public class UpgradeItemResourceProvider extends ReadOnlyResourceProvider {
         }
       }
 
+      Map<Long, HostRoleCommandStatusSummaryDTO> requestAggregateCounts = s_hostRoleCommandDAO.findAggregateCounts(requestId);
+      Map<Long, Map<Long, HostRoleCommandStatusSummaryDTO>> cache = new HashMap<>();
+      cache.put(requestId, requestAggregateCounts);
+
       // !!! need to do some lookup for stages, so use a stageid -> resource for
       // when that happens
-      Map<Long, Resource> resultMap = new HashMap<Long, Resource>();
-
       for (UpgradeItemEntity entity : entities) {
-        Resource r = toResource(entity, requestPropertyIds);
-        resultMap.put(entity.getStageId(), r);
-      }
+        Resource upgradeItemResource = toResource(entity, requestPropertyIds);
 
-      if (!resultMap.isEmpty()) {
-        if (null != clusterName) {
-          Set<Resource> stages = s_upgradeHelper.getStageResources(clusterName,
-              requestId, new ArrayList<Long>(resultMap.keySet()));
+        StageEntityPK stagePrimaryKey = new StageEntityPK();
+        stagePrimaryKey.setRequestId(requestId);
+        stagePrimaryKey.setStageId(entity.getStageId());
 
-          for (Resource stage : stages) {
-            Long l = (Long) stage.getPropertyValue(StageResourceProvider.STAGE_STAGE_ID);
+        StageEntity stageEntity = s_stageDao.findByPK(stagePrimaryKey);
+        Resource stageResource = StageResourceProvider.toResource(cache, stageEntity,
+            StageResourceProvider.PROPERTY_IDS);
 
-            Resource r = resultMap.get(l);
-            if (null != r) {
-              for (String propertyId : StageResourceProvider.PROPERTY_IDS) {
-                // Attempt to mask any passwords in fields that are property maps.
-                Object value = stage.getPropertyValue(propertyId);
-                if (StageResourceProvider.PROPERTIES_TO_MASK_PASSWORD_IN.contains(propertyId) &&
-                    value.getClass().equals(String.class) && !StringUtils.isBlank((String) value)) {
-                  value = SecretReference.maskPasswordInPropertyMap((String) value);
-                }
-                setResourceProperty(r, STAGE_MAPPED_IDS.get(propertyId), value, requestPropertyIds);
-              }
-            }
+        for (String propertyId : StageResourceProvider.PROPERTY_IDS) {
+          // Attempt to mask any passwords in fields that are property maps.
+          Object value = stageResource.getPropertyValue(propertyId);
+          if (StageResourceProvider.PROPERTIES_TO_MASK_PASSWORD_IN.contains(propertyId)
+              && value.getClass().equals(String.class) && !StringUtils.isBlank((String) value)) {
+            value = SecretReference.maskPasswordInPropertyMap((String) value);
           }
+
+          setResourceProperty(upgradeItemResource, STAGE_MAPPED_IDS.get(propertyId), value,
+              requestPropertyIds);
         }
-        results.addAll(resultMap.values());
+
+        results.add(upgradeItemResource);
       }
     }
     return results;

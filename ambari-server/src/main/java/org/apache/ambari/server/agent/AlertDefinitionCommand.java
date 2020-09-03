@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,6 +26,7 @@ import org.apache.ambari.server.state.ConfigHelper;
 import org.apache.ambari.server.state.alert.AlertDefinition;
 import org.apache.ambari.server.state.alert.AlertDefinitionHash;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.gson.annotations.SerializedName;
 
 /**
@@ -46,13 +47,18 @@ public class AlertDefinitionCommand extends AgentCommand {
   @SerializedName("hostName")
   private final String m_hostName;
 
+  @SerializedName("publicHostName")
+  private final String m_publicHostName;
+
   @SerializedName("hash")
   private final String m_hash;
 
   @SerializedName("alertDefinitions")
+  @JsonProperty("alertDefinitions")
   private final List<AlertDefinition> m_definitions;
 
   @SerializedName("configurations")
+  @JsonProperty("configurations")
   private Map<String, Map<String, String>> m_configurations;
 
   /**
@@ -61,17 +67,19 @@ public class AlertDefinitionCommand extends AgentCommand {
    * @param clusterName
    *          the name of the cluster this response is for (
    * @param hostName
+   * @param publicHostName
    * @param hash
    * @param definitions
    *
    * @see AlertDefinitionHash
    */
-  public AlertDefinitionCommand(String clusterName, String hostName,
+  public AlertDefinitionCommand(String clusterName, String hostName, String publicHostName,
       String hash, List<AlertDefinition> definitions) {
     super(AgentCommandType.ALERT_DEFINITION_COMMAND);
 
     m_clusterName = clusterName;
     m_hostName = hostName;
+    m_publicHostName = publicHostName;
     m_hash = hash;
     m_definitions = definitions;
   }
@@ -107,6 +115,7 @@ public class AlertDefinitionCommand extends AgentCommand {
    *
    * @return the cluster name (not {@code null}).
    */
+  @JsonProperty("clusterName")
   public String getClusterName() {
     return m_clusterName;
   }
@@ -116,6 +125,7 @@ public class AlertDefinitionCommand extends AgentCommand {
    *
    * @return the host name (not {@code null}).
    */
+  @JsonProperty("hostName")
   public String getHostName() {
     return m_hostName;
   }

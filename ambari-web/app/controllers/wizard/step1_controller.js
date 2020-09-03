@@ -61,7 +61,19 @@ App.WizardStep1Controller = Em.Controller.extend({
    *
    * @type {boolean}
    */
-  networkIssuesExist: Em.computed.everyBy('content.stacks', 'stackDefault', true),
+  networkIssuesExist: function() {
+    if (this.get('content.stacks') && this.get('content.stacks.length') > 1) {
+      return this.get('content.stacks').everyProperty('stackDefault', true);
+    }
+    return false;
+  }.property('content.stacks.@each.stackDefault'),
+
+  /**
+   * No stacks have repo update URL section (aka "latest") defined in repoinfo.xml
+   *
+   * @type {boolean}
+   */
+  stackRepoUpdateLinkExists: Em.computed.someBy('content.stacks', 'stackRepoUpdateLinkExists', true),
 
   optionsToSelect: {
     'usePublicRepo': {
@@ -129,6 +141,8 @@ App.WizardStep1Controller = Em.Controller.extend({
    */
   selectedStackType: Em.computed.findBy('availableStackTypes', 'isSelected', true),
 
+  isLoadingComplete: Em.computed.equal('wizardController.loadStacksRequestsCounter', 0),
+
   /**
    * Load selected file to current page content
    */
@@ -179,12 +193,14 @@ App.WizardStep1Controller = Em.Controller.extend({
    */
   onNetworkIssuesExist: function() {
     if (this.get('networkIssuesExist')) {
-      this.get('content.stacks').forEach(function (stack) {
-        stack.setProperties({
-          usePublicRepo: false,
-          useLocalRepo: true
-        });
-        stack.cleanReposBaseUrls();
+      this.get('content.stacks').forEach(function(stack) {
+        if (stack.get('useLocalRepo') !== true) {
+          stack.setProperties({
+            usePublicRepo: false,
+            useLocalRepo: true
+          });
+          stack.cleanReposBaseUrls();
+        }
       });
     }
   }.observes('networkIssuesExist'),
@@ -272,25 +288,6 @@ App.WizardStep1Controller = Em.Controller.extend({
     this.selectStackBy('id', event.context.get('id'));
   },
 
-  inappropriateUrlForStackVersion: function (repo, stackVersion) {
-    var baseUrl = repo.get('baseUrl'),
-      splittedBaseUrlArray = baseUrl.split('/'),
-      versionInUrl =  baseUrl[baseUrl.length - 1] === '/' ? splittedBaseUrlArray[splittedBaseUrlArray.length - 2] :
-                      splittedBaseUrlArray[splittedBaseUrlArray.length - 1],
-      versionInUrlString = String(parseFloat(versionInUrl)),
-      UrlIsInvalidForStackVersion = versionInUrlString !== stackVersion;
-
-    if (UrlIsInvalidForStackVersion) {
-      repo.setProperties({
-        validation: App.Repository.validation.INVALID,
-        errorTitle: Em.I18n.t("installer.step1.error.inappropriateUrlForStackVersion.title"),
-        errorContent: Em.I18n.t("installer.step1.error.inappropriateUrlForStackVersion.content").format(stackVersion, versionInUrlString)
-      });
-    }
-
-    return UrlIsInvalidForStackVersion;
-  },
-
   /**
    * Show popup with options to upload new version
    *
@@ -306,6 +303,8 @@ App.WizardStep1Controller = Em.Controller.extend({
       primary: Em.I18n.t('installer.step1.useLocalRepo.readButton'),
 
       disablePrimary: Em.computed.alias('controller.readInfoIsNotProvided'),
+
+      'data-qa': 'vdf-modal',
 
       /**
        * Try to read version info from the url or file (if provided)
@@ -400,9 +399,7 @@ App.WizardStep1Controller = Em.Controller.extend({
            * @type {Em.View}
            */
           fileInputView: Em.View.extend({
-            template: Em.Handlebars.compile('<input type="file" {{bindAttr class="controller.optionsToSelect.useLocalRepo.enterUrl.isSelected:disabled"}} />'),
-
-            classNames: ['vdf-input-indentation'],
+            template: Em.Handlebars.compile('<input type="file" {{bindAttr class="controller.optionsToSelect.useLocalRepo.enterUrl.isSelected:disabled"}} {{QAAttr "vdf-input"}}/>'),
 
             change: function (e) {
               var self = this;
@@ -461,7 +458,7 @@ App.WizardStep1Controller = Em.Controller.extend({
            */
           enterUrlRadioButton: App.RadioButtonView.extend({
             labelTranslate: 'installer.step1.useLocalRepo.enterUrl',
-            checked: Em.computed.alias('controller.optionsToSelect.useLocalRepo.enterUrl.isSelected'),
+            checked: Em.computed.alias('controller.optionsToSelect.useLocalRepo.enterUrl.isSelected')
           }),
 
           click: function () {

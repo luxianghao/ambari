@@ -94,36 +94,19 @@ describe('App.MainHostComboSearchBoxView', function () {
   describe("#search()", function () {
 
     beforeEach(function() {
-      view.set('parentView.parentView', Em.Object.create({
+      view.set('parentView', Em.Object.create({
         updateComboFilter: Em.K,
         controller: {name: 'ctrl1'}
       }));
-      sinon.stub(view.get('parentView.parentView'), 'updateComboFilter');
+      sinon.stub(view.get('parentView'), 'updateComboFilter');
       sinon.stub(view, 'createFilterConditions').returns([{}]);
-      sinon.stub(view, 'clearErrMsg');
-      sinon.stub(view, 'showErrMsg');
       sinon.stub(App.db, 'setComboSearchQuery');
-      this.mockFacet = sinon.stub(view, 'findInvalidFacet');
     });
 
     afterEach(function() {
       App.db.setComboSearchQuery.restore();
-      view.clearErrMsg.restore();
-      view.showErrMsg.restore();
-      this.mockFacet.restore();
       view.createFilterConditions.restore();
-      view.get('parentView.parentView').updateComboFilter.restore();
-    });
-
-    it("clearErrMsg should be called", function() {
-      view.search('query', {});
-      expect(view.clearErrMsg.calledOnce).to.be.true;
-    });
-
-    it("showErrMsg should be called", function() {
-      this.mockFacet.returns({});
-      view.search('query', {});
-      expect(view.showErrMsg.calledWith({})).to.be.true;
+      view.get('parentView').updateComboFilter.restore();
     });
 
     it("App.db.setComboSearchQuery should be called", function() {
@@ -133,7 +116,7 @@ describe('App.MainHostComboSearchBoxView', function () {
 
     it("updateComboFilter should be called", function() {
       view.search('query', {});
-      expect(view.get('parentView.parentView').updateComboFilter.calledWith([{}])).to.be.true;
+      expect(view.get('parentView').updateComboFilter.calledWith([{}])).to.be.true;
     });
   });
 
@@ -533,33 +516,6 @@ describe('App.MainHostComboSearchBoxView', function () {
     });
   });
 
-  describe("#findInvalidFacet()", function () {
-
-    beforeEach(function() {
-      sinon.stub(App.router, 'get').returns({});
-    });
-
-    afterEach(function() {
-      App.router.get.restore();
-    });
-
-    it("empty searchCollection", function() {
-      expect(view.findInvalidFacet({models: []})).to.be.null;
-    });
-
-    it("searchCollection has values", function() {
-      expect(view.findInvalidFacet({models: [{
-        attributes: {
-          category: 'cat1'
-        }
-      }]})).to.be.eql({
-          attributes: {
-            category: 'cat1'
-          }
-        });
-    });
-  });
-
   describe("#showErrMsg()", function () {
 
     it("errMsg should be set", function() {
@@ -573,64 +529,6 @@ describe('App.MainHostComboSearchBoxView', function () {
     it("errMsg should be empty", function() {
       view.clearErrMsg();
       expect(view.get('errMsg')).to.be.empty;
-    });
-  });
-
-  describe("#showHideClearButton()", function () {
-    var container = {
-      removeClass: Em.K,
-      addClass: Em.K
-    };
-
-    beforeEach(function() {
-      sinon.stub(window, '$').returns(container);
-      sinon.spy(container, 'removeClass');
-      sinon.spy(container, 'addClass');
-      this.mock = sinon.stub(visualSearch.searchQuery, 'toJSON');
-    });
-
-    afterEach(function() {
-      window.$.restore();
-      container.removeClass.restore();
-      container.addClass.restore();
-      visualSearch.searchQuery.toJSON.restore();
-    });
-
-    it("class should be added", function() {
-      this.mock.returns([]);
-      view.showHideClearButton();
-      expect(container.addClass.calledWith('hide')).to.be.true;
-    });
-
-    it("class should be removed", function() {
-      this.mock.returns(['f']);
-      view.showHideClearButton();
-      expect(container.removeClass.calledWith('hide')).to.be.true;
-    });
-  });
-
-  describe("#restoreComboFilterQuery()", function () {
-
-    beforeEach(function() {
-      this.mockQuery = sinon.stub(App.db, 'getComboSearchQuery');
-      sinon.stub(visualSearch.searchBox, 'setQuery');
-    });
-
-    afterEach(function() {
-      this.mockQuery.restore();
-      visualSearch.searchBox.setQuery.restore();
-    });
-
-    it("query is empty", function() {
-      this.mockQuery.returns('');
-      view.restoreComboFilterQuery();
-      expect(visualSearch.searchBox.setQuery.called).to.be.false;
-    });
-
-    it("query has value", function() {
-      this.mockQuery.returns('query');
-      view.restoreComboFilterQuery();
-      expect(visualSearch.searchBox.setQuery.calledWith('query')).to.be.true;
     });
   });
 
@@ -663,11 +561,11 @@ describe('App.MainHostComboSearchBoxView', function () {
       App.router.get.restore();
     });
 
-    it("should return host-component list", function() {
+    it("should return sorted host-component list", function() {
       expect(view.getHostComponentList()).to.be.eql([
+        {label: 'cc1', category: 'Component'},
         {label: 'mc1', category: 'Component'},
-        {label: 'sc1', category: 'Component'},
-        {label: 'cc1', category: 'Component'}
+        {label: 'sc1', category: 'Component'}
       ]);
       expect(labelValueMap).to.be.eql({
         mc1: 'MC1',

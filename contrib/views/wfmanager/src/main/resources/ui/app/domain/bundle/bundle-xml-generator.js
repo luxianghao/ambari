@@ -20,13 +20,12 @@ var BundleGenerator= Ember.Object.extend({
   bundle: null,
   process (){
     var xmlJson={"bundle-app":{}};
-    console.log(this.bundle);
     var bundleApp=xmlJson["bundle-app"];
-    bundleApp._xmlns = "uri:oozie:bundle:0.1";
+    bundleApp._xmlns = "uri:oozie:bundle:"+this.bundle.schemaVersions.bundleVersion;
     bundleApp._name = this.bundle.name;
     if(!Ember.isEmpty(this.bundle.kickOffTime.value)){
-      bundleApp["control"] = {};
-      bundleApp["control"]["kick-off-time"] = this.bundle.kickOffTime.value;
+      bundleApp["controls"] = {};
+      bundleApp["controls"]["kick-off-time"] = this.bundle.kickOffTime.value;
     }
     this.generateCoordinatorsJson(bundleApp);
     var xmlAsStr = this.get("x2js").json2xml_str(xmlJson);

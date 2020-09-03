@@ -109,11 +109,6 @@ describe('App.ConfigsComparator', function() {
         expect(mixin.initCompareConfig.calledWith([config], {})).to.be.true;
       });
 
-      it("compareServiceVersion should be null", function() {
-        mixin.loadCompareVersionConfigs([config]);
-        expect(mixin.get('compareServiceVersion')).to.be.null;
-      });
-
       it("isCompareMode should be true", function() {
         mixin.loadCompareVersionConfigs([config]);
         expect(mixin.get('isCompareMode')).to.be.true;
@@ -226,6 +221,7 @@ describe('App.ConfigsComparator', function() {
       expect(mixin.addCompareConfigs.getCall(0).args[2]).to.be.eql({
         v1: {
           'prop1-t1': {
+            filename: 't1.xml',
             name: 'prop1',
             value: 'val1',
             type: 't1',
@@ -236,6 +232,7 @@ describe('App.ConfigsComparator', function() {
         },
         v2: {
           'prop2-t2': {
+            filename: 't2.xml',
             name: 'prop2',
             value: 'val2',
             type: 't2',

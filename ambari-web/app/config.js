@@ -45,8 +45,6 @@ App.alertGroupsUpdateInterval = 10000;
 App.clusterEnvUpdateInterval = 10000;
 App.pageReloadTime = 3600000;
 App.nnCheckpointAgeAlertThreshold = 12; // in hours
-App.singleNodeInstall = false;
-App.singleNodeAlias = document.location.hostname;
 App.minDiskSpace = 2.0; // minimum disk space required for '/' for each host before install, unit GB
 App.minDiskSpaceUsrLib = 1.0; // minimum disk space for '/usr/lib' for each host before install, unit GB
 App.healthIconClassGreen = 'glyphicon glyphicon-ok-sign'; // bootstrap icon class for healthy/started service/host/host-component
@@ -55,9 +53,12 @@ App.healthIconClassOrange = 'glyphicon glyphicon-minus-sign'; // bootstrap icon 
 App.healthIconClassYellow = 'glyphicon glyphicon-question-sign'; // bootstrap icon class for heartbeat lost service/host/host-component
 App.isManagedMySQLForHiveEnabled = false;
 App.isStormMetricsSupported = true;
-App.healthStatusRed = '#ff0000';
-App.healthStatusGreen = '#5AB400';
-App.healthStatusOrange = '#FF8E00';
+App.healthStatusRed = '#EF6162';
+App.healthStatusGreen = '#1EB475';
+App.healthStatusOrange = '#E98A40';
+App.widgetContentColor = '#666666';
+App.gaugeWidgetRemainingAreaColor = '#DDDDDD';
+App.dataVisualizationColorScheme = ['#41bfae', '#79e3d1', '#63c2e5', '#c4aeff', '#b991d9', '#ffb9bf', '#ffae65', '#f6d151', '#a7cf82', '#abdfd5', '#3aac9c', '#6dccbc', '#59aece', '#b09ce5', '#a682c3', '#e5a6ac', '#e59c5b', '#ddbc49', '#96ba75', '#9ac8bf', '#83d5ca', '#a8ede1', '#99d7ee', '#d9caff', '#d1b7e6', '#ffd1d5', '#ffca9b', '#f9e18e', '#c6e0ae', '#c8eae4'];
 App.inactivityRemainTime = 60; // in seconds
 App.enableLogger = true;
 App.stackVersionsAvailable = true;
@@ -68,7 +69,6 @@ App.enableDigitalClock = false;
 App.enableExperimental = false;
 
 App.supports = {
-  disableHostCheckOnAddHostWizard: false,
   preUpgradeCheck: true,
   displayOlderVersions: false,
   autoRollbackHA: false,
@@ -81,16 +81,19 @@ App.supports = {
   showPageLoadTime: false,
   skipComponentStartAfterInstall: false,
   preInstallChecks: false,
-  hostComboSearchBox: true,
   serviceAutoStart: true,
   logSearch: true,
   redhatSatellite: false,
-  enableIpa: false,
   addingNewRepository: false,
   kerberosStackAdvisor: true,
   logCountVizualization: false,
+  createAlerts: false,
+  enabledWizardForHostOrderedUpgrade: true,
   manageJournalNode: true,
-  enabledWizardForHostOrderedUpgrade: true
+  enableToggleKerberos: true,
+  enableAddDeleteServices: true,
+  regenerateKeytabsOnSingleHost: false,
+  enableNewServiceRestartOptions: false
 };
 
 if (App.enableExperimental) {
